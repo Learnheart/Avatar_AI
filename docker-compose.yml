@@ -1,0 +1,43 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: avatar-backend
+    env_file: .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app/backend        # Hot reload in dev
+    devices:
+      - /dev/video0:/dev/video0       # USB camera passthrough
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: avatar-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/src:/app/src       # Hot reload in dev
+    depends_on:
+      - backend
+    restart: unless-stopped
+    environment:
+      - VITE_WS_URL=ws://localhost:8000/ws
