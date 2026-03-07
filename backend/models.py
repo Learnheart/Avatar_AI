@@ -32,6 +32,14 @@ class HeadRotation:
 
 
 @dataclass
+class TrackingResult:
+    """Output from VisionModule: rotation + face detection status."""
+    rotation: HeadRotation = field(default_factory=HeadRotation)
+    face_detected: bool = False
+    face_count: int = 0
+
+
+@dataclass
 class VadEvent:
     """Voice Activity Detection event."""
     event_type: str  # "speech_start" | "speech_end"

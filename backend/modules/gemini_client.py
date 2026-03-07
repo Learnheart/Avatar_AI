@@ -71,9 +71,17 @@ class GeminiClient:
         )
         logger.info({"msg": "Gemini session starting"})
 
+    async def wait_ready(self, timeout: float = 5.0) -> bool:
+        """Wait for the Live session to be connected. Returns False on timeout."""
+        try:
+            await asyncio.wait_for(self._session_ready.wait(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
+
     async def send_audio(self, pcm_bytes: bytes) -> None:
         """Queue PCM 16kHz mono Int16 audio for sending to Gemini."""
-        if not self.is_active:
+        if not self.is_active or not self._session_ready.is_set():
             return
         try:
             self._send_queue.put_nowait(("audio", pcm_bytes))
@@ -82,7 +90,7 @@ class GeminiClient:
 
     async def send_image(self, jpeg_bytes: bytes) -> None:
         """Queue JPEG snapshot for Gemini visual context."""
-        if not self.is_active:
+        if not self.is_active or not self._session_ready.is_set():
             return
         try:
             self._send_queue.put_nowait(("image", jpeg_bytes))

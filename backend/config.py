@@ -32,6 +32,8 @@ class AppConfig:
 
     # ── Camera ──────────────────────────────────────────────────────────
     CAMERA_INDEX: int = field(default_factory=lambda: _env_int("CAMERA_INDEX", 0))
+    CAMERA_URL: str = field(default_factory=lambda: _env("CAMERA_URL", ""))
+    CAMERA_ROTATE: int = field(default_factory=lambda: _env_int("CAMERA_ROTATE", 0))
     TRACKING_FPS: int = field(default_factory=lambda: _env_int("TRACKING_FPS", 30))
     SNAPSHOT_INTERVAL_SEC: float = field(
         default_factory=lambda: _env_float("SNAPSHOT_INTERVAL_SEC", 2.5)
@@ -54,7 +56,7 @@ class AppConfig:
     # ── Gemini ──────────────────────────────────────────────────────────
     GEMINI_API_KEY: str = field(default_factory=lambda: _env("GEMINI_API_KEY", ""))
     GEMINI_MODEL: str = field(
-        default_factory=lambda: _env("GEMINI_MODEL", "gemini-2.0-flash-live-001")
+        default_factory=lambda: _env("GEMINI_MODEL", "gemini-2.5-flash-native-audio-latest")
     )
     GEMINI_RESPONSE_TIMEOUT_SEC: float = field(
         default_factory=lambda: _env_float("GEMINI_RESPONSE_TIMEOUT_SEC", 15.0)

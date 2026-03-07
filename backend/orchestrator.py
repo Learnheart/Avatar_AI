@@ -14,7 +14,7 @@ import time
 from typing import Optional
 
 from backend.config import AppConfig
-from backend.models import AvatarState, HeadRotation, SessionState, SpeechOutput
+from backend.models import AvatarState, HeadRotation, SessionState, SpeechOutput, TrackingResult
 from backend.modules.gemini_client import GeminiClient
 from backend.modules.tts import TTSModule
 from backend.modules.vad import VADModule
@@ -136,7 +136,7 @@ class Orchestrator:
             vad_event = self._vad.process_audio(pcm_bytes)
             if vad_event and vad_event.event_type == "speech_start":
                 await self._handle_barge_in()
-                return
+            return  # Don't double-process audio through VAD when speaking
 
         vad_event = self._vad.process_audio(pcm_bytes)
 
@@ -164,6 +164,15 @@ class Orchestrator:
                 self._vad.reset()
                 await self._gemini.start_session(self.config.SYSTEM_PROMPT)
                 self.session_state.gemini_session_active = True
+
+                # Wait for session to connect before streaming audio
+                ready = await self._gemini.wait_ready(timeout=5.0)
+                if not ready:
+                    logger.error({"msg": "Gemini session failed to connect in time"})
+                    await self._gemini.close_session()
+                    self.session_state.gemini_session_active = False
+                    await self._transition(AvatarState.TRACKING)
+                    return
 
             self._last_speech_activity = time.time()
             logger.info({"msg": "Speech started → LISTENING"})
@@ -267,14 +276,13 @@ class Orchestrator:
         """Continuously read head rotation from Vision and send to frontend."""
         while True:
             try:
-                rotation: HeadRotation = await asyncio.wait_for(
-                    self._vision.get_rotation(), timeout=0.1
+                tracking: TrackingResult = await asyncio.wait_for(
+                    self._vision.get_tracking(), timeout=0.1
                 )
-                self.session_state.last_head_rotation = rotation
+                self.session_state.last_head_rotation = tracking.rotation
                 now = time.time()
 
-                face_detected = not self._is_zero_rotation(rotation)
-                if face_detected:
+                if tracking.face_detected:
                     self.session_state.last_face_detected_at = now
 
                     if self.session_state.avatar_state == AvatarState.IDLE:
@@ -284,7 +292,7 @@ class Orchestrator:
                     "type": "tracking_update",
                     "timestamp": now,
                     "avatar_control": {
-                        "head_rotation": rotation.to_dict(),
+                        "head_rotation": tracking.rotation.to_dict(),
                         "is_speaking": self.session_state.is_speaking,
                     },
                 })
@@ -329,6 +337,13 @@ class Orchestrator:
                         await self._transition(AvatarState.IDLE)
                         logger.info({"msg": "No face detected → IDLE"})
 
+                # Detect dead Gemini session (ISS-10)
+                if self.session_state.gemini_session_active and not self._gemini.is_active:
+                    logger.warning({"msg": "Gemini session died unexpectedly, resetting"})
+                    self.session_state.gemini_session_active = False
+                    if state in (AvatarState.LISTENING, AvatarState.SPEAKING):
+                        await self._transition(AvatarState.TRACKING)
+
                 # Gemini idle timeout → close session (BR-005)
                 if self._gemini.is_active and self.session_state.last_speech_activity_at:
                     idle_time = now - self.session_state.last_speech_activity_at
@@ -365,7 +380,3 @@ class Orchestrator:
                 },
             })
 
-    # ── Helpers ───────────────────────────────────────────────────────────
-
-    def _is_zero_rotation(self, r: HeadRotation) -> bool:
-        return abs(r.pitch) < 0.01 and abs(r.yaw) < 0.01 and abs(r.roll) < 0.01

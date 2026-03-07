@@ -20,7 +20,7 @@ import mediapipe as mp
 import numpy as np
 
 from backend.config import AppConfig
-from backend.models import HeadRotation
+from backend.models import HeadRotation, TrackingResult
 from backend.utils.logging import get_logger
 
 logger = get_logger("vision")
@@ -61,7 +61,7 @@ class VisionModule:
 
     def __init__(self, config: AppConfig) -> None:
         self.config = config
-        self._rotation_queue: asyncio.Queue[HeadRotation] = asyncio.Queue(maxsize=2)
+        self._tracking_queue: asyncio.Queue[TrackingResult] = asyncio.Queue(maxsize=2)
         self._snapshot_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=1)
 
         self._thread: Optional[threading.Thread] = None
@@ -86,9 +86,9 @@ class VisionModule:
             self._thread.join(timeout=3.0)
         logger.info({"msg": "Vision module stopped"})
 
-    async def get_rotation(self) -> HeadRotation:
-        """Get the latest head rotation (blocks until available)."""
-        return await self._rotation_queue.get()
+    async def get_tracking(self) -> TrackingResult:
+        """Get the latest tracking result (blocks until available)."""
+        return await self._tracking_queue.get()
 
     async def get_snapshot(self) -> Optional[bytes]:
         """Get the latest JPEG snapshot (non-blocking)."""
@@ -128,9 +128,18 @@ class VisionModule:
                     cap = self._retry_camera(cap)
                     continue
 
+                # Rotate frame if configured (e.g. phone mounted sideways)
+                rotate = self.config.CAMERA_ROTATE
+                if rotate == 90:
+                    frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+                elif rotate == -90 or rotate == 270:
+                    frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+                elif rotate == 180:
+                    frame = cv2.rotate(frame, cv2.ROTATE_180)
+
                 h, w = frame.shape[:2]
-                rotation = self._process_frame(landmarker, frame, w, h)
-                self._push_rotation(rotation)
+                tracking = self._process_frame(landmarker, frame, w, h)
+                self._push_tracking(tracking)
 
                 # Periodic JPEG snapshot for Gemini visual context
                 now = time.time()
@@ -149,13 +158,15 @@ class VisionModule:
             cap.release()
 
     def _open_camera(self, retries: int = 5) -> Optional[cv2.VideoCapture]:
+        source = self.config.CAMERA_URL if self.config.CAMERA_URL else self.config.CAMERA_INDEX
         for attempt in range(retries):
-            cap = cv2.VideoCapture(self.config.CAMERA_INDEX)
+            cap = cv2.VideoCapture(source)
             if cap.isOpened():
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-                cap.set(cv2.CAP_PROP_FPS, self.config.TRACKING_FPS)
-                logger.info({"msg": "Camera opened", "attempt": attempt + 1})
+                if not self.config.CAMERA_URL:
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+                    cap.set(cv2.CAP_PROP_FPS, self.config.TRACKING_FPS)
+                logger.info({"msg": "Camera opened", "source": str(source), "attempt": attempt + 1})
                 return cap
             cap.release()
             logger.warning({"msg": f"Camera open failed, retry {attempt+1}/{retries}"})
@@ -170,21 +181,30 @@ class VisionModule:
 
     def _process_frame(
         self, landmarker, frame: np.ndarray, w: int, h: int
-    ) -> HeadRotation:
+    ) -> TrackingResult:
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
         result = landmarker.detect(mp_image)
 
         if not result.face_landmarks:
-            return self._last_rotation  # Keep last known rotation
+            return TrackingResult(
+                rotation=self._last_rotation,
+                face_detected=False,
+                face_count=0,
+            )
 
         # Use largest face (closest to camera) — EC-004
+        face_count = len(result.face_landmarks)
         landmarks_2d = self._get_largest_face_landmarks(
             result.face_landmarks, w, h
         )
         rotation = self._solve_head_pose(landmarks_2d, w, h)
         self._last_rotation = rotation
-        return rotation
+        return TrackingResult(
+            rotation=rotation,
+            face_detected=True,
+            face_count=face_count,
+        )
 
     def _get_largest_face_landmarks(
         self, all_faces, w: int, h: int
@@ -248,22 +268,22 @@ class VisionModule:
         )
         return buf.tobytes()
 
-    def _push_rotation(self, rotation: HeadRotation) -> None:
+    def _push_tracking(self, tracking: TrackingResult) -> None:
         if self._loop is None:
             return
         asyncio.run_coroutine_threadsafe(
-            self._put_rotation(rotation), self._loop
+            self._put_tracking(tracking), self._loop
         )
 
-    async def _put_rotation(self, rotation: HeadRotation) -> None:
+    async def _put_tracking(self, tracking: TrackingResult) -> None:
         try:
-            self._rotation_queue.put_nowait(rotation)
+            self._tracking_queue.put_nowait(tracking)
         except asyncio.QueueFull:
             try:
-                self._rotation_queue.get_nowait()  # Drop oldest
+                self._tracking_queue.get_nowait()  # Drop oldest
             except asyncio.QueueEmpty:
                 pass
-            self._rotation_queue.put_nowait(rotation)
+            self._tracking_queue.put_nowait(tracking)
 
     def _push_snapshot(self, jpeg: bytes) -> None:
         if self._loop is None:
