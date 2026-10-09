@@ -1,194 +1,39 @@
-# Magic Mirror AI Avatar — Setup Guide
+# Avatar AI (Magic Mirror) — Setup
 
-## Yeu cau he thong
+A kiosk avatar: camera presence + head tracking, and a separated speech pipeline
+(Silero VAD → Groq Whisper STT → Groq LLM → ZeroTTS) driving a VRM avatar in the browser.
 
-| Thanh phan | Yeu cau |
+- Install, run and check commands: **`CLAUDE.md` §5** (the single source — not repeated here).
+- Architecture: `docs/ARCHITECTURE.md`. Source layout: `CLAUDE.md` §4.
+
+## What you need
+
+| Item | Notes |
 |---|---|
-| OS | Linux (tested Ubuntu 24.04, kernel 6.17) |
-| Python | >= 3.12 (tested 3.13 via conda) |
-| Node.js | >= 18 |
-| GPU | NVIDIA GPU voi CUDA (tested RTX 3070, CUDA 11.8) |
-| Camera | Webcam USB, hoac phone app ho tro MJPEG qua HTTP |
+| Python 3.10+ and `uv` | Backend virtualenv in `.venv` |
+| Node.js 18+ | Frontend (Vite + Three.js) |
+| Groq API key | `groq_api_key` in `.env` (lowercase name); used for STT and LLM |
+| Network access to Hugging Face | Only for the first backend start, which downloads the ZeroTTS weights (about 910 MB) into the Hugging Face cache |
+| Webcam | Optional — without one the app runs with no head tracking |
+| VRM model | `frontend/public/models/avatar.vrm` (or `VITE_VRM_PATH`); without it the page runs with audio only |
 
-## 1. Clone & cau truc thu muc
+## Configuration
 
-```
-avatar_AI/
-  backend/             # FastAPI + Python modules
-    models/            # face_landmarker.task (MediaPipe model)
-    modules/           # vision, vad, gemini_client, tts
-  frontend/            # Vite + Three.js + VRM
-    public/models/     # avatar.vrm (VRM 3D model)
-    public/worklet/    # audio-processor.js (AudioWorklet)
-    src/               # main.js, ws-client, avatar-renderer, audio-manager, lip-sync
-  tests/               # pytest tests
-  .env                 # Config (tao tu .env.example)
-```
-
-## 2. Cai dat Python dependencies
-
-Dung conda (khuyen nghi):
-
-```bash
-# Tao environment (hoac dung conda base)
-conda create -n avatar python=3.12 -y
-conda activate avatar
-
-# PyTorch voi CUDA
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118
-
-# Core dependencies
-pip install \
-  fastapi==0.128.0 \
-  uvicorn[standard]==0.40.0 \
-  python-dotenv==1.1.0 \
-  google-genai==1.65.0 \
-  mediapipe==0.10.32 \
-  opencv-python==4.13.0.92 \
-  numpy \
-  httpx \
-  websockets
-
-# Test dependencies (optional)
-pip install pytest pytest-asyncio httpx
-```
-
-## 3. Download models
-
-### MediaPipe Face Landmarker
-
-```bash
-# Download vao backend/models/
-mkdir -p backend/models
-wget -O backend/models/face_landmarker.task \
-  https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task
-```
-
-### VRM Avatar Model
-
-Download file `.vrm` tu [VRoid Hub](https://hub.vroid.com/) va dat vao:
-
-```
-frontend/public/models/avatar.vrm
-```
-
-## 4. Cai dat Frontend
-
-```bash
-cd frontend
-npm install --legacy-peer-deps
-cd ..
-```
-
-## 5. Cau hinh .env
-
-```bash
-cp .env.example .env
-```
-
-Sua file `.env`:
-
-```ini
-# BAT BUOC — Gemini API key tu Google AI Studio
-GEMINI_API_KEY=your_api_key_here
-
-# Camera — chon 1 trong 2:
-CAMERA_INDEX=0                                          # USB webcam (device index)
-CAMERA_URL=http://admin:admin@192.168.1.15:8081/video   # IP camera (MJPEG URL)
-CAMERA_ROTATE=0                                         # 0, 90, -90, 180
-
-# Cac config khac de default la duoc
-```
-
-Lay Gemini API key tai: https://aistudio.google.com/apikey
-
-## 6. Chay
-
-### Terminal 1 — Backend
-
-```bash
-cd /path/to/avatar_AI
-conda activate avatar
-uvicorn backend.main:app --host 0.0.0.0 --port 8000
-```
-
-### Terminal 2 — Frontend
-
-```bash
-cd /path/to/avatar_AI/frontend
-npm run dev
-```
-
-### Truy cap
-
-| URL | Mo ta |
-|---|---|
-| http://localhost:3000 | Frontend (avatar 3D + voice) |
-| http://localhost:8000/health | Backend health check |
-| ws://localhost:8000/ws | WebSocket endpoint (frontend tu dong ket noi) |
-
-## 7. Kiem tra nhanh
-
-### Backend health
-
-```bash
-curl http://localhost:8000/health
-# {"status":"ok","avatar_state":"tracking","camera_connected":true,...}
-```
-
-### Camera test
-
-```bash
-python tests/quicktest_camera.py
-# Hoac chi dinh camera:
-python tests/quicktest_camera.py http://ip:port/video -90
-python tests/quicktest_camera.py 0
-```
-
-### Chay tests
-
-```bash
-python -m pytest tests/ -v
-```
-
-## 8. Camera setup
-
-### USB Webcam
-Dat `CAMERA_INDEX=0` trong `.env`. Khong can `CAMERA_URL`.
-
-### Phone lam camera (IP Camera)
-1. Cai app **IP Camera Lite** (iOS) hoac **IP Webcam** (Android)
-2. Mo app, bat camera stream
-3. Dat `CAMERA_URL=http://[user:pass@]ip:port/video` trong `.env`
-4. Neu phone dat ngang: `CAMERA_ROTATE=90` hoac `CAMERA_ROTATE=-90`
-5. Test: `python tests/quicktest_camera.py`
-
-## 9. Luong hoat dong
-
-```
-[Camera] → Vision (MediaPipe face tracking)
-                ↓
-[Mic/Browser] → AudioWorklet → WebSocket → VAD (Silero)
-                                              ↓
-                                         Gemini Live API ←→ Voice conversation
-                                              ↓
-                                    Audio response → WebSocket → Browser playback
-                                              ↓
-                           Avatar 3D (VRM) ← head tracking + lip sync
-```
-
-1. Nguoi dung dung truoc camera → avatar bat dau tracking khuon mat
-2. Nguoi dung noi → VAD phat hien giong noi → gui audio den Gemini
-3. Gemini tra loi bang giong noi → avatar noi + lip sync
-4. Nguoi dung co the ngat loi (barge-in) bat cu luc nao
+- Backend: copy `.env.example` to `.env` and fill in `groq_api_key`. Every other key has
+  a working default and is described by the comment above it in `.env.example`.
+- Camera: `CAMERA_INDEX` for a USB webcam, or `CAMERA_URL` for an IP camera stream;
+  `CAMERA_ROTATE` (90, -90, 180) for a camera mounted sideways.
+- Frontend: `frontend/.env.example` lists the `VITE_*` values (`VITE_WS_URL` must point
+  at the backend's `HOST`/`PORT`).
 
 ## Troubleshooting
 
-| Van de | Giai phap |
+| Symptom | Cause / fix |
 |---|---|
-| `GEMINI_API_KEY is required` | Thieu API key trong `.env` |
-| Camera khong mo | Kiem tra `CAMERA_URL` hoac `CAMERA_INDEX`, chay `quicktest_camera.py` |
-| MediaPipe loi | Dam bao `backend/models/face_landmarker.task` ton tai |
-| Frontend loi khi npm install | Dung flag `--legacy-peer-deps` |
-| Khong co avatar | Can file `frontend/public/models/avatar.vrm` |
-| CUDA khong nhan | Kiem tra `python -c "import torch; print(torch.cuda.is_available())"` |
+| `groq_api_key is required` at startup | The key is missing from `.env` |
+| Startup exits with `ZeroTTS could not load ...` | The weights are not cached and Hugging Face is unreachable, or `ZEROTTS_REPO` is wrong |
+| `ZEROTTS_VOICE ... cannot be used` | The voice name does not exist in the loaded repo |
+| Avatar answers only with the fallback sentence | The Groq LLM call failed — check the backend log and the network |
+| `camera_connected: false` in `/health` | Check `CAMERA_INDEX` / `CAMERA_URL`; the camera is retried every `CAMERA_RETRY_SEC` |
+| No avatar on the page | The VRM file is missing |
+| No sound | The browser needs microphone permission and one user gesture before audio plays |
