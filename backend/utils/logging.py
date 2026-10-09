@@ -4,16 +4,19 @@ import json
 import sys
 from datetime import datetime, timezone
 
+# Every backend logger is a child of this one, so the handler and level live in one place.
+_ROOT_NAME = "avatar"
+
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "level": record.levelname,
-            "module": record.name,
+            "module": record.name.removeprefix(_ROOT_NAME + "."),
         }
 
-        # Nếu msg là dict → flatten vào payload (hỗ trợ logger.info({"msg": ..., "key": val}))
+        # A dict message is flattened into the payload: logger.info({"msg": ..., "key": val}).
         raw = record.msg
         if isinstance(raw, dict):
             payload.update(raw)
@@ -25,14 +28,21 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False)
 
 
-def get_logger(name: str) -> logging.Logger:
-    logger = logging.getLogger(name)
-    if logger.handlers:
-        return logger
+def _root_logger() -> logging.Logger:
+    root = logging.getLogger(_ROOT_NAME)
+    if not root.handlers:
+        root.setLevel(logging.INFO)
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(JsonFormatter())
+        root.addHandler(handler)
+        root.propagate = False
+    return root
 
-    logger.setLevel(logging.DEBUG)
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(JsonFormatter())
-    logger.addHandler(handler)
-    logger.propagate = False
-    return logger
+
+def configure_logging(level: str) -> None:
+    """Apply LOG_LEVEL to every backend logger. Called once at startup."""
+    _root_logger().setLevel(level)
+
+
+def get_logger(name: str) -> logging.Logger:
+    return _root_logger().getChild(name)

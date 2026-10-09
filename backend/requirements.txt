@@ -2,14 +2,14 @@
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 websockets>=12.0
-python-multipart>=0.0.9
 
 # Config
 python-dotenv>=1.0.0
 pydantic>=2.0.0
 
-# AI — Gemini Live API
-google-genai>=1.0.0
+# Cloud clients — Groq STT + LLM through the OpenAI-compatible API
+openai>=1.40.0
+httpx>=0.27.0
 
 # Vision — MediaPipe + OpenCV
 mediapipe>=0.10.9
@@ -17,11 +17,9 @@ opencv-python-headless>=4.9.0
 numpy>=1.26.0
 
 # VAD — Silero
+silero-vad>=5.1
 torch>=2.2.0
 torchaudio>=2.2.0
 
-# TTS fallback — Azure
-azure-cognitiveservices-speech>=1.37.0
-
-# HTTP client (Viettel TTS fallback)
-httpx>=0.27.0
+# TTS — ZeroTTS (local, ONNX runtime)
+zerotts==0.1.5
