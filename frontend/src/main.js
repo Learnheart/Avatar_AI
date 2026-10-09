@@ -1,5 +1,5 @@
 /**
- * Frontend Entry Point — TASK-09
+ * Frontend Entry Point
  *
  * Init sequence:
  *   1. AvatarRenderer → Three.js scene + VRM model
@@ -9,10 +9,10 @@
  *   5. Wire WS message handlers
  */
 
-import { AvatarRenderer } from './avatar-renderer.js'
+import { AvatarRenderer } from './avatar/avatar-renderer.js'
 import { WSClient } from './ws-client.js'
-import { AudioManager } from './audio-manager.js'
-import { LipSync } from './lip-sync.js'
+import { AudioManager } from './audio/audio-manager.js'
+import { LipSync } from './avatar/lip-sync.js'
 
 async function main() {
   const container = document.getElementById('canvas-container')
@@ -30,32 +30,34 @@ async function main() {
 
   // ── 4. Lip-sync ───────────────────────────────────────────────────────
   const lipSync = new LipSync(audio, avatar)
-
-  // Wire audio callbacks to lip-sync
-  audio.onPlaybackStart(() => lipSync.onAudioStart())
-  audio.onPlaybackEnd(() => lipSync.onAudioEnd())
   lipSync.start()
 
   // ── 5. Wire WebSocket message handlers ────────────────────────────────
 
-  // tracking_update → avatar head rotation (FR-001)
+  // tracking_update → avatar head rotation. The backend holds the last rotation
+  // while a face is briefly lost and returns it to neutral itself after its
+  // no-face timeout, so the rotation is applied as sent.
   ws.on('tracking_update', (msg) => {
-    const control = msg.avatar_control
-    if (control?.head_rotation) {
-      avatar.applyTrackingData(control.head_rotation)
-    }
+    avatar.applyTrackingData(msg.avatar_control.head_rotation)
   })
 
-  // speech_output → queue audio for playback (FR-002)
-  ws.on('speech_output', async (msg) => {
-    if (msg.audio_data) {
-      await audio.queueAudio(msg.audio_data, msg.audio_mime_type || 'audio/pcm;rate=24000')
-    }
+  // speech_output → schedule audio for playback
+  ws.on('speech_output', (msg) => {
+    audio.queueAudio(msg.audio_data, msg.audio_mime_type, msg.is_final === true)
   })
 
-  // interrupt → stop playback immediately (EC-005 barge-in)
+  // Queue drained after is_final → tell the backend the avatar stopped speaking
+  audio.onPlaybackEnded(() => ws.sendPlaybackEnded())
+
+  // interrupt → stop playback immediately (barge-in)
   ws.on('interrupt', () => {
     audio.interrupt()
+  })
+
+  // state → status label + "thinking" head tilt
+  ws.on('state', (msg) => {
+    ws.setStatus(msg.state)
+    avatar.setState(msg.state)
   })
 
   // connected → log session info
@@ -63,9 +65,16 @@ async function main() {
     console.log('[Main] Connected to backend, session:', msg.session_id)
   })
 
-  // error → log (EC handling)
+  // error → log only, keep running; `state` messages own the status label
   ws.on('error', (msg) => {
     console.error('[Main] Backend error:', msg.code, msg.message)
+  })
+
+  // WS drop → stop playback, clear the queue, avatar back to neutral
+  ws.onDrop(() => {
+    audio.interrupt()
+    avatar.setState('idle')
+    avatar.applyTrackingData(null)
   })
 
   // ── 6. Start WebSocket connection ─────────────────────────────────────

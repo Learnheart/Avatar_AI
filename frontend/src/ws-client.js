@@ -1,79 +1,43 @@
 /**
- * WebSocket Client — TASK-10
+ * WebSocket Client
  *
- * - Auto-reconnect với exponential backoff (3s → 6s → 12s → max 30s)
- * - on(type, handler) pattern để dispatch messages
- * - Expose send() để gửi audio_chunk lên backend
+ * - Auto-reconnect with exponential backoff (WS_BACKOFF_* in config.js)
+ * - on(type, handler) subscription to dispatch incoming messages
+ * - send() helpers for audio_chunk / playback_ended to the backend
+ * - Status label: connection status + avatar state (idle/listening/thinking/speaking)
  */
 
-const WS_URL = import.meta.env.VITE_WS_URL || `ws://${window.location.hostname}:8000/ws`
-
-const BACKOFF_INITIAL = 3000
-const BACKOFF_MAX = 30000
-const BACKOFF_FACTOR = 2
+import {
+  WS_BACKOFF_FACTOR,
+  WS_BACKOFF_INITIAL_MS,
+  WS_BACKOFF_MAX_MS,
+  WS_URL,
+} from './config.js'
 
 export class WSClient {
   constructor() {
     this._ws = null
     this._handlers = {}         // { type: [fn, ...] }
-    this._backoffMs = BACKOFF_INITIAL
+    this._backoffMs = WS_BACKOFF_INITIAL_MS
     this._reconnectTimer = null
-    this._intentionalClose = false
+    this._wasOpen = false       // true between onopen and onclose
+    this._onDrop = null         // callback when an open connection is lost
     this._statusEl = document.getElementById('status')
   }
 
   // ── Connect ─────────────────────────────────────────────────────────────
 
   connect() {
-    this._intentionalClose = false
-    this._openSocket()
-  }
-
-  disconnect() {
-    this._intentionalClose = true
-    clearTimeout(this._reconnectTimer)
-    if (this._ws) {
-      this._ws.close()
-      this._ws = null
-    }
-  }
-
-  // ── Send ─────────────────────────────────────────────────────────────────
-
-  send(message) {
-    if (this._ws && this._ws.readyState === WebSocket.OPEN) {
-      this._ws.send(JSON.stringify(message))
-    }
-  }
-
-  sendAudioChunk(base64Data) {
-    this.send({ type: 'audio_chunk', audio_data: base64Data })
-  }
-
-  // ── Event subscription ───────────────────────────────────────────────────
-
-  on(type, handler) {
-    if (!this._handlers[type]) this._handlers[type] = []
-    this._handlers[type].push(handler)
-  }
-
-  off(type, handler) {
-    if (!this._handlers[type]) return
-    this._handlers[type] = this._handlers[type].filter(h => h !== handler)
-  }
-
-  // ── Internal ─────────────────────────────────────────────────────────────
-
-  _openSocket() {
     console.log(`[WS] Connecting to ${WS_URL}`)
-    this._setStatus('reconnecting')
+    this.setStatus('reconnecting')
 
     this._ws = new WebSocket(WS_URL)
 
     this._ws.onopen = () => {
       console.log('[WS] Connected')
-      this._backoffMs = BACKOFF_INITIAL
-      this._setStatus('connected')
+      this._backoffMs = WS_BACKOFF_INITIAL_MS
+      this._wasOpen = true
+      this.setStatus('connected')
     }
 
     this._ws.onmessage = (event) => {
@@ -93,41 +57,78 @@ export class WSClient {
 
     this._ws.onclose = () => {
       this._ws = null
-      if (this._intentionalClose) return
+      if (this._wasOpen) {
+        this._wasOpen = false
+        if (this._onDrop) this._onDrop()
+      }
       console.log(`[WS] Disconnected. Reconnecting in ${this._backoffMs}ms`)
-      this._setStatus('disconnected')
+      this.setStatus('disconnected')
       this._scheduleReconnect()
     }
   }
 
-  _scheduleReconnect() {
-    clearTimeout(this._reconnectTimer)
-    this._reconnectTimer = setTimeout(() => {
-      this._openSocket()
-      this._backoffMs = Math.min(this._backoffMs * BACKOFF_FACTOR, BACKOFF_MAX)
-    }, this._backoffMs)
+  // ── Send ─────────────────────────────────────────────────────────────────
+
+  send(message) {
+    if (this._ws && this._ws.readyState === WebSocket.OPEN) {
+      this._ws.send(JSON.stringify(message))
+    }
   }
 
-  _dispatch(msg) {
-    const type = msg.type
-    const handlers = this._handlers[type] || []
-    handlers.forEach(fn => {
-      try { fn(msg) } catch (e) { console.error('[WS] Handler error', e) }
-    })
-    // Also dispatch to wildcard handlers
-    ;(this._handlers['*'] || []).forEach(fn => {
-      try { fn(msg) } catch (e) { console.error('[WS] Wildcard handler error', e) }
-    })
+  sendAudioChunk(base64Data) {
+    this.send({ type: 'audio_chunk', audio_data: base64Data })
   }
 
-  _setStatus(state) {
+  sendPlaybackEnded() {
+    this.send({ type: 'playback_ended' })
+  }
+
+  // ── Event subscription ───────────────────────────────────────────────────
+
+  on(type, handler) {
+    if (!this._handlers[type]) this._handlers[type] = []
+    this._handlers[type].push(handler)
+  }
+
+  /**
+   * Register the callback fired when an established connection drops.
+   */
+  onDrop(fn) { this._onDrop = fn }
+
+  // ── Status label ─────────────────────────────────────────────────────────
+
+  /**
+   * Show a connection status or a server state in the status label.
+   */
+  setStatus(state) {
     if (!this._statusEl) return
     this._statusEl.className = state
     const labels = {
       connected: '● ONLINE',
       disconnected: '● OFFLINE',
       reconnecting: '◌ KẾT NỐI...',
+      idle: '● SẴN SÀNG',
+      listening: '● ĐANG NGHE',
+      thinking: '◌ ĐANG NGHĨ...',
+      speaking: '● ĐANG NÓI',
     }
     this._statusEl.textContent = labels[state] || state
+  }
+
+  // ── Internal ─────────────────────────────────────────────────────────────
+
+  _scheduleReconnect() {
+    clearTimeout(this._reconnectTimer)
+    this._reconnectTimer = setTimeout(() => {
+      this.connect()
+      this._backoffMs = Math.min(this._backoffMs * WS_BACKOFF_FACTOR, WS_BACKOFF_MAX_MS)
+    }, this._backoffMs)
+  }
+
+  _dispatch(msg) {
+    const handlers = this._handlers[msg.type] || []
+    handlers.forEach(fn => {
+      try { fn(msg) } catch (e) { console.error('[WS] Handler error', e) }
+    })
   }
 }
