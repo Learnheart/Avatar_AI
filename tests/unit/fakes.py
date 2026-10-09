@@ -1,0 +1,174 @@
+"""Fakes for the orchestrator's neighbours: VAD, engine, camera, tracker, WebSocket."""
+import asyncio
+import base64
+import json
+from typing import AsyncIterator, Callable, Optional
+
+from backend.config import AppConfig
+from backend.models import (
+    AudioEvent,
+    DoneEvent,
+    EngineEvent,
+    HeadRotation,
+    TrackingResult,
+    TranscriptEvent,
+    VADEvent,
+)
+from backend.orchestrator import Orchestrator
+
+TTS_RATE = 48000
+
+# The first byte of a mic chunk tells FakeVAD what to report for it.
+SILENCE, START, END, START_END = 0, 1, 2, 3
+_SCRIPT = {
+    SILENCE: [],
+    START: [VADEvent.SPEECH_START],
+    END: [VADEvent.SPEECH_END],
+    START_END: [VADEvent.SPEECH_START, VADEvent.SPEECH_END],
+}
+
+
+def chunk(marker: int, fill: int = 0) -> bytes:
+    """A 20 ms mic chunk (640 bytes) tagged with a FakeVAD marker."""
+    return bytes([marker]) + bytes([fill]) * 639
+
+
+def audio_message(pcm: bytes) -> str:
+    return json.dumps(
+        {"type": "audio_chunk", "audio_data": base64.b64encode(pcm).decode("ascii")}
+    )
+
+
+class FakeVAD:
+    def __init__(self) -> None:
+        self.loaded = False
+        self.resets = 0
+
+    def load(self) -> None:
+        self.loaded = True
+
+    def reset(self) -> None:
+        self.resets += 1
+
+    def process_chunk(self, pcm16: bytes) -> list[VADEvent]:
+        return list(_SCRIPT[pcm16[0]])
+
+
+class FakeEngine:
+    """Replays `events` for each turn. `gate` holds the turn before any event (thinking);
+    `error` is raised after the first event of type `error_after`; `close_gate` holds the
+    turn while it is being closed."""
+
+    def __init__(self) -> None:
+        self.events: list[EngineEvent] = [
+            TranscriptEvent("xin chào"),
+            AudioEvent("Xin chào.", b"\x01\x00" * 480, TTS_RATE),
+            AudioEvent("", b"\x02\x00" * 480, TTS_RATE),
+            DoneEvent(),
+        ]
+        self.gate: Optional[asyncio.Event] = None
+        self.error: Optional[Exception] = None
+        self.error_after: type = TranscriptEvent
+        self.close_gate: Optional[asyncio.Event] = None
+        self.utterances: list[bytes] = []
+        self.closed = 0
+        self.loaded = False
+
+    def load(self) -> None:
+        self.loaded = True
+
+    def close(self) -> None:
+        self.loaded = False
+
+    async def respond(self, pcm16: bytes, sample_rate: int) -> AsyncIterator[EngineEvent]:
+        self.utterances.append(pcm16)
+        try:
+            if self.gate is not None:
+                await self.gate.wait()
+            for event in self.events:
+                yield event
+                if self.error and isinstance(event, self.error_after):
+                    raise self.error
+        finally:
+            if self.close_gate is not None:
+                await self.close_gate.wait()
+            self.closed += 1
+
+
+class FakeCamera:
+    def __init__(self) -> None:
+        self.connected = False
+        self.frame: Optional[object] = None
+        self.started = False
+
+    def start(self) -> None:
+        self.started = True
+
+    def stop(self) -> None:
+        self.started = False
+
+    def take_frame(self) -> Optional[object]:
+        frame, self.frame = self.frame, None
+        return frame
+
+
+class FakeTracker:
+    def __init__(self) -> None:
+        self.result = TrackingResult(present=True, head_rotation=HeadRotation(0.1, 0.2, 0.3))
+        self.loaded = False
+
+    def load(self) -> None:
+        self.loaded = True
+
+    def close(self) -> None:
+        self.loaded = False
+
+    def process(self, frame: object) -> TrackingResult:
+        return self.result
+
+
+class FakeWebSocket:
+    """Records every JSON message the server sends."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+        self.accepted = False
+        self.closed = False
+        self.broken = False  # True: the client is gone, every send raises
+
+    async def accept(self) -> None:
+        self.accepted = True
+
+    async def send_json(self, message: dict) -> None:
+        if self.broken:
+            raise RuntimeError("socket is gone")
+        self.sent.append(message)
+
+    async def close(self) -> None:
+        self.closed = True
+
+    def of_type(self, *types: str) -> list[dict]:
+        return [m for m in self.sent if m["type"] in types]
+
+    def turn_messages(self) -> list[dict]:
+        """Everything except the tracking stream and the `connected` handshake message."""
+        return [m for m in self.sent if m["type"] not in ("tracking_update", "connected")]
+
+
+def build_orchestrator(config: AppConfig) -> Orchestrator:
+    return Orchestrator(
+        config,
+        vad=FakeVAD(),
+        engine=FakeEngine(),
+        camera=FakeCamera(),
+        tracker=FakeTracker(),
+    )
+
+
+async def wait_until(condition: Callable[[], bool], timeout: float = 2.0) -> None:
+    """Poll `condition` on the event loop until it holds."""
+    async def poll() -> None:
+        while not condition():
+            await asyncio.sleep(0.005)
+
+    await asyncio.wait_for(poll(), timeout=timeout)
