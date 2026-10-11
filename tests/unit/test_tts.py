@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 
 from backend.config import AppConfig
-from backend.conversation.factory import create_tts
-from backend.conversation.tts.base import TTSError
-from backend.conversation.tts.zerotts import ZeroTTSBackend, float_to_pcm16
+from backend.providers.catalog import create_tts
+from backend.core.contracts import TTSError
+from backend.providers.tts.zerotts import ZeroTTSBackend, float_to_pcm16
 
 RATE = 48000
 FRAME = RATE * 80 // 1000  # the library emits 80 ms frames

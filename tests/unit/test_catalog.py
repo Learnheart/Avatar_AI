@@ -1,9 +1,11 @@
 import pytest
 
 from backend.config import AppConfig
-from backend.conversation import factory
-from backend.conversation.stt.groq_whisper import GroqWhisperSTT
-from backend.conversation.factory import DEVICE_BACKENDS, create_stt, detect_device
+from backend.providers import catalog
+from backend.providers.catalog import DEVICE_BACKENDS, create_stt
+from backend.providers.stt.groq_whisper import GroqWhisperSTT
+from backend.runtime import device as runtime_device
+from backend.runtime.device import detect_device
 
 
 def test_detect_device_returns_a_known_device():
@@ -20,9 +22,9 @@ def test_detect_device_returns_a_known_device():
     ],
 )
 def test_detect_device(monkeypatch, system, machine, nvidia_smi, expected):
-    monkeypatch.setattr(factory.platform, "system", lambda: system)
-    monkeypatch.setattr(factory.platform, "machine", lambda: machine)
-    monkeypatch.setattr(factory.shutil, "which", lambda name: nvidia_smi)
+    monkeypatch.setattr(runtime_device.platform, "system", lambda: system)
+    monkeypatch.setattr(runtime_device.platform, "machine", lambda: machine)
+    monkeypatch.setattr(runtime_device.shutil, "which", lambda name: nvidia_smi)
 
     assert detect_device() == expected
 
@@ -37,16 +39,16 @@ def test_each_device_maps_to_a_backend(device):
 
 
 def test_auto_device_uses_detection(monkeypatch):
-    monkeypatch.setattr(factory, "detect_device", lambda: "cuda")
-    monkeypatch.setitem(factory.DEVICE_BACKENDS, "cuda", "fake_local")
-    monkeypatch.setitem(factory._STT_BACKENDS, "fake_local", lambda config: "local-stt")
+    monkeypatch.setattr(catalog, "detect_device", lambda: "cuda")
+    monkeypatch.setitem(catalog.DEVICE_BACKENDS, "cuda", "fake_local")
+    monkeypatch.setitem(catalog._STT_BACKENDS, "fake_local", lambda config: "local-stt")
 
     assert create_stt(AppConfig(GROQ_API_KEY="test-key")) == "local-stt"
 
 
 def test_stt_backend_override_wins(monkeypatch):
-    monkeypatch.setitem(factory.DEVICE_BACKENDS, "cpu", "fake_local")
-    monkeypatch.setitem(factory._STT_BACKENDS, "fake_local", lambda config: "local-stt")
+    monkeypatch.setitem(catalog.DEVICE_BACKENDS, "cpu", "fake_local")
+    monkeypatch.setitem(catalog._STT_BACKENDS, "fake_local", lambda config: "local-stt")
 
     stt = create_stt(
         AppConfig(GROQ_API_KEY="test-key", DEVICE="cpu", STT_BACKEND="groq_whisper")

@@ -6,10 +6,10 @@ from typing import AsyncIterator
 import pytest
 
 from backend.config import AppConfig
-from backend.conversation.stt.base import STTError
+from backend.core.contracts import STTError
 from backend.models import AudioEvent, AvatarState, DoneEvent, TrackingResult, TranscriptEvent
-from backend.orchestrator import Orchestrator
-from backend.orchestrator.state import can_transition
+from backend.core.orchestrator import Orchestrator
+from backend.core.orchestrator.state import can_transition
 from backend.utils.logging import JsonFormatter
 from tests.unit.fakes import (
     END,

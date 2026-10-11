@@ -19,7 +19,7 @@ import pytest
 import websockets
 
 from backend.config import AppConfig
-from backend.conversation.stt.groq_whisper import GroqWhisperSTT
+from backend.providers.stt.groq_whisper import GroqWhisperSTT
 from backend.models import MIC_SAMPLE_RATE
 from tests.e2e.helpers import E2E_MARKS, looks_vietnamese, resample_to_mic_rate
 

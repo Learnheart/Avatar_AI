@@ -3,8 +3,8 @@ import time
 import pytest
 
 from backend.config import AppConfig
-from backend.perception import camera as camera_module
-from backend.perception.camera import Camera
+from backend.core.perception import camera as camera_module
+from backend.core.perception.camera import Camera
 
 
 class FakeCapture:

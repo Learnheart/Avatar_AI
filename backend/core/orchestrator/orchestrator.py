@@ -21,8 +21,8 @@ from typing import Awaitable, Optional
 from fastapi import WebSocket
 
 from backend.config import AppConfig
-from backend.conversation.engine import ConversationEngine
-from backend.conversation.stt.base import STTError
+from backend.core.conversation.engine import ConversationEngine
+from backend.core.contracts import STTError
 from backend.models import (
     MIC_SAMPLE_RATE,
     PCM_SAMPLE_WIDTH,
@@ -33,8 +33,8 @@ from backend.models import (
     TranscriptEvent,
     VADEvent,
 )
-from backend.orchestrator.state import can_transition
-from backend.orchestrator.ws_manager import (
+from backend.core.orchestrator.state import can_transition
+from backend.core.orchestrator.ws_manager import (
     WSManager,
     error_message,
     interrupt_message,
@@ -42,9 +42,9 @@ from backend.orchestrator.ws_manager import (
     state_message,
     tracking_message,
 )
-from backend.perception.camera import Camera
-from backend.perception.tracking import HeadTracker
-from backend.perception.vad import VADModule
+from backend.core.perception.camera import Camera
+from backend.core.perception.tracking import HeadTracker
+from backend.core.perception.vad import VADModule
 from backend.utils.errors import summarize_error
 from backend.utils.logging import get_logger
 

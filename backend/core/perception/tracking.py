@@ -18,7 +18,7 @@ from backend.utils.logging import get_logger
 
 logger = get_logger("tracking")
 
-_MODEL_PATH = Path(__file__).resolve().parent.parent / "assets" / "face_landmarker.task"
+_MODEL_PATH = Path(__file__).resolve().parents[2] / "assets" / "face_landmarker.task"
 
 # ── MediaPipe landmark indices used for solvePnP ──────────────────────────
 # Nose tip, chin, eye outer corners (image left, image right), mouth corners (same).

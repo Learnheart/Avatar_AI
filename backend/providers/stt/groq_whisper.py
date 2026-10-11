@@ -5,7 +5,7 @@ import wave
 from openai import AsyncOpenAI, OpenAIError
 
 from backend.config import AppConfig
-from backend.conversation.stt.base import STT, STTError
+from backend.core.contracts import STT, STTError
 from backend.models import MIC_SAMPLE_RATE, PCM_SAMPLE_WIDTH, Transcript
 from backend.utils.errors import summarize_error
 from backend.utils.logging import get_logger

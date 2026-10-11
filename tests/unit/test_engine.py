@@ -4,10 +4,8 @@ from typing import AsyncIterator
 import pytest
 
 from backend.config import AppConfig
-from backend.conversation.engine import ConversationEngine, split_sentences
-from backend.conversation.llm.base import LLM, LLMError
-from backend.conversation.stt.base import STT, STTError
-from backend.conversation.tts.base import TTS, TTSError
+from backend.core.conversation.engine import ConversationEngine, split_sentences
+from backend.core.contracts import LLM, STT, TTS, LLMError, STTError, TTSError
 from backend.models import AudioEvent, DoneEvent, Transcript, TranscriptEvent
 
 RATE = 48000

@@ -4,7 +4,7 @@ from typing import AsyncIterator
 from openai import AsyncOpenAI, OpenAIError
 
 from backend.config import AppConfig
-from backend.conversation.llm.base import LLM, LLMError
+from backend.core.contracts import LLM, LLMError
 from backend.utils.errors import summarize_error
 
 

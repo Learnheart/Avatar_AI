@@ -3,9 +3,9 @@ from types import SimpleNamespace
 import pytest
 from openai import OpenAIError
 
-from backend.conversation.llm import groq_llm
-from backend.conversation.llm.base import LLMError
-from backend.conversation.llm.groq_llm import GroqLLM
+from backend.providers.llm import groq_llm
+from backend.core.contracts import LLMError
+from backend.providers.llm.groq_llm import GroqLLM
 
 
 def _chunk(content=None, reasoning=None):

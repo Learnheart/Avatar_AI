@@ -14,7 +14,7 @@ from backend.models import (
     TranscriptEvent,
     VADEvent,
 )
-from backend.orchestrator import Orchestrator
+from backend.core.orchestrator import Orchestrator
 
 TTS_RATE = 48000
 

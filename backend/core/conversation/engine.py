@@ -11,9 +11,7 @@ from contextlib import aclosing
 from typing import AsyncIterator, Callable, Optional, TypeVar
 
 from backend.config import AppConfig
-from backend.conversation.llm.base import LLM, LLMError
-from backend.conversation.stt.base import STT, STTError
-from backend.conversation.tts.base import TTS, TTSError
+from backend.core.contracts import LLM, STT, TTS, LLMError, STTError, TTSError
 from backend.models import AudioEvent, DoneEvent, EngineEvent, Transcript, TranscriptEvent
 from backend.utils.errors import summarize_error
 from backend.utils.logging import get_logger

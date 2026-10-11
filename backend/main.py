@@ -18,12 +18,12 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from backend.config import AppConfig
-from backend.conversation.engine import ConversationEngine
-from backend.conversation.factory import create_llm, create_stt, create_tts
-from backend.orchestrator import Orchestrator
-from backend.perception.camera import Camera
-from backend.perception.tracking import HeadTracker
-from backend.perception.vad import VADModule
+from backend.core.conversation.engine import ConversationEngine
+from backend.providers.catalog import create_llm, create_stt, create_tts
+from backend.core.orchestrator import Orchestrator
+from backend.core.perception.camera import Camera
+from backend.core.perception.tracking import HeadTracker
+from backend.core.perception.vad import VADModule
 from backend.utils.logging import configure_logging, get_logger
 
 logger = get_logger("main")

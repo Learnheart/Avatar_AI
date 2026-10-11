@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from backend.models import VADEvent
-from backend.perception.vad import VADModule
+from backend.core.perception.vad import VADModule
 
 WINDOW_BYTES = 512 * 2
 

@@ -1,28 +1,25 @@
 """
 Builds the backend of every pipeline stage — the one place that says what runs.
 
-Each stage has a contract (`<stage>/base.py`) and one file per backend. To add a backend,
+Each stage has a contract (`backend/core/contracts.py`) and one file per backend. To add a backend,
 write its file and register it in the stage's table below; callers do not change.
 
-STT goes through the Device Capability Router: detect metal / cuda / cpu once at startup
-and map the device to a backend name. `DEVICE` and `STT_BACKEND` override the detection.
+STT goes through the Device Capability Router: detect the device once at startup
+(`backend/runtime/device.py`) and map it to a backend name. `DEVICE` and `STT_BACKEND` override the detection.
 STT is cloud in the current stack, so every device maps to `groq_whisper`; a local backend
 drops in by adding it to both STT tables.
 """
-import platform
-import shutil
 from typing import Callable
 
 from backend.config import AUTO, AppConfig
-from backend.conversation.llm.base import LLM
-from backend.conversation.llm.groq_llm import GroqLLM
-from backend.conversation.stt.base import STT
-from backend.conversation.stt.groq_whisper import GroqWhisperSTT
-from backend.conversation.tts.base import TTS
-from backend.conversation.tts.zerotts import ZeroTTSBackend
+from backend.core.contracts import LLM, STT, TTS
+from backend.providers.llm.groq_llm import GroqLLM
+from backend.providers.stt.groq_whisper import GroqWhisperSTT
+from backend.providers.tts.zerotts import ZeroTTSBackend
+from backend.runtime.device import detect_device
 from backend.utils.logging import get_logger
 
-logger = get_logger("factory")
+logger = get_logger("providers")
 
 # ── STT ───────────────────────────────────────────────────────────────────
 
@@ -35,15 +32,6 @@ DEVICE_BACKENDS: dict[str, str] = {
 _STT_BACKENDS: dict[str, Callable[[AppConfig], STT]] = {
     "groq_whisper": GroqWhisperSTT,
 }
-
-
-def detect_device() -> str:
-    """Return "metal" (Apple Silicon), "cuda" (NVIDIA driver present) or "cpu"."""
-    if platform.system() == "Darwin" and platform.machine() == "arm64":
-        return "metal"
-    if shutil.which("nvidia-smi"):
-        return "cuda"
-    return "cpu"
 
 
 def create_stt(config: AppConfig) -> STT:

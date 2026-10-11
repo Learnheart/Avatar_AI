@@ -5,8 +5,8 @@ import numpy as np
 import pytest
 
 from backend.models import HeadRotation
-from backend.perception import tracking
-from backend.perception.tracking import (
+from backend.core.perception import tracking
+from backend.core.perception.tracking import (
     _LANDMARK_IDS,
     HeadTracker,
     clamp_rotation,

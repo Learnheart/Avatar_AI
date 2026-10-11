@@ -13,7 +13,7 @@ from typing import Any, AsyncIterator, Callable, Optional
 import numpy as np
 
 from backend.config import AppConfig
-from backend.conversation.tts.base import TTS, TTSError
+from backend.core.contracts import TTS, TTSError
 from backend.models import PCM_SAMPLE_WIDTH
 from backend.utils.errors import summarize_error
 from backend.utils.logging import get_logger

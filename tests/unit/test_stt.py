@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 from openai import OpenAIError
 
-from backend.conversation.stt import groq_whisper
-from backend.conversation.stt.base import STTError
-from backend.conversation.stt.groq_whisper import GroqWhisperSTT
+from backend.providers.stt import groq_whisper
+from backend.core.contracts import STTError
+from backend.providers.stt.groq_whisper import GroqWhisperSTT
 
 
 class FakeAsyncOpenAI:
