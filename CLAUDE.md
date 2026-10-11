@@ -49,7 +49,7 @@ removing existing entries.
 Every backend key is declared once, with its env name and default, in one of three files:
 `backend/prompts.py` (texts), `backend/tuning.py` (behaviour parameters) or
 `backend/config.py` (secrets, per-machine and provider values). Defaults are tuned in
-those files; `.env` only has to hold `groq_api_key`, and any other key set there
+those files; `.env` only has to hold the API key (`groq_api_key` by default), and any other key set there
 overrides the default on that machine. Optional entries in `.env.example` stay commented
 out.
 
@@ -123,37 +123,39 @@ cover as much logic as possible with unit tests.
 
 ## §4. Source code structure
 
-All source stays under `backend/`, `frontend/` and `tests/`. Folders follow the three
-capability blocks of `docs/ARCHITECTURE.md`; a module's contract lives in the `base.py`
-of its package, and backends are swapped by config, not by editing callers.
+All source stays under `backend/`, `frontend/` and `tests/`. The backend has four parts:
+`core/` (one turn, following the capability blocks of `docs/ARCHITECTURE.md`),
+`providers/` (model backends, API and self-hosted), `runtime/` (what depends on the
+machine) and `features/` (built beside the core). The contracts of the model stages live
+in `core/contracts.py`, and backends are swapped by config, not by editing callers.
 
 ```
 backend/
-  main.py                      # FastAPI app, /ws endpoint, /health
+  main.py                      # FastAPI app, /ws, /health; wires core + providers
   config.py                    # AppConfig — secrets, per-machine and provider values
   tuning.py                    # behaviour parameters (VAD, timeouts, head clamps, voice)
   prompts.py                   # system prompt and other texts
   models.py                    # shared dataclasses and enums
-  orchestrator/
-    orchestrator.py            # turn state machine + routing (only owner of state)
-    state.py                   # allowed state transitions
-    ws_manager.py              # the single WebSocket connection + outgoing messages
-  perception/                  # ── CAPABILITY 1 ──
-    camera.py                  # OpenCV frame capture, retry on disconnect
-    tracking.py                # MediaPipe presence + head rotation
-    vad.py                     # Silero VAD: speech_start / speech_end
-  conversation/                # ── CAPABILITY 2 (separated pipeline) ──
-    engine.py                  # ConversationEngine: audio in → text + audio out
-    factory.py                 # builds each stage's backend (Device Capability Router)
-    stt/
-      base.py                  # STT contract
-      groq_whisper.py          # Groq Whisper backend
-    llm/
-      base.py                  # LLM contract
-      groq_llm.py              # Groq streaming backend
-    tts/
-      base.py                  # TTS contract
-      zerotts.py               # ZeroTTS backend
+  core/                        # ── one turn; imports no provider, runtime or feature ──
+    contracts.py               # STT, LLM, TTS interfaces and their errors
+    orchestrator/
+      orchestrator.py          # turn state machine + routing (only owner of state)
+      state.py                 # allowed state transitions
+      ws_manager.py            # the single WebSocket connection + outgoing messages
+    perception/                # ── CAPABILITY 1 ──
+      camera.py                # OpenCV frame capture, retry on disconnect
+      tracking.py              # MediaPipe presence + head rotation
+      vad.py                   # Silero VAD: speech_start / speech_end
+    conversation/              # ── CAPABILITY 2 (separated pipeline) ──
+      engine.py                # ConversationEngine: audio in → text + audio out
+  providers/                   # ── model backends behind core/contracts.py ──
+    catalog.py                 # backend name → builder, for every stage (+ device router)
+    llm/openai_compatible.py   # Groq, OpenRouter, vLLM, Ollama, ...
+    stt/openai_compatible.py   # Groq Whisper or a self-hosted Whisper server
+    tts/zerotts.py             # ZeroTTS backend
+  runtime/                     # ── what depends on the machine (macOS / Windows) ──
+    device.py                  # metal / cuda / cpu detection
+  features/                    # ── built beside the core: knowledge (RAG), memory ──
   utils/
     env.py                     # dataclass fields read from the environment
     errors.py
@@ -192,10 +194,16 @@ Layering rules:
 
 - Only `Orchestrator` changes the turn state (`idle → listening → thinking → speaking →
   idle`). Modules return values or events; they never touch state or the WebSocket.
-- `perception/` and `conversation/` do not import `orchestrator/`.
+- `core/` imports nothing from `providers/`, `runtime/` or `features/`; only `main.py`
+  wires them together. Inside `core/`, `perception/` and `conversation/` do not import
+  `orchestrator/`.
+- A new model backend is one file under `providers/<stage>/` plus one entry in
+  `providers/catalog.py`. Another OpenAI-compatible API or a self-hosted server needs no
+  code: set `LLM_BACKEND=openai_compatible` with `LLM_BASE_URL`, `LLM_API_KEY` and
+  `LLM_MODEL` (same with `STT_*`).
 - Blocking inference (VAD, TTS, vision) runs in a thread or executor, never on the event
   loop.
-- The WebSocket message shapes are a contract between `backend/orchestrator/` and
+- The WebSocket message shapes are a contract between `backend/core/orchestrator/` and
   `frontend/src/`; change both sides and the design doc together.
 - Frontend motion math goes in `avatar/motion.js` as pure functions; the renderer only
   applies the numbers.

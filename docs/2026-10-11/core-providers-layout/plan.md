@@ -83,10 +83,10 @@ backend/
 
 - [x] Move into `core/`, `providers/`, `runtime/`, `features/`; contracts in one file
 - [x] Unit tests pass after the move
-- [ ] `OpenAICompatibleLLM` / `OpenAICompatibleSTT` with endpoint passed in
-- [ ] `LLM_BACKEND`, `LLM_BASE_URL`, `LLM_API_KEY`, `STT_BASE_URL`, `STT_API_KEY` in `config.py` and `.env.example`
-- [ ] `openai_compatible` entries in `providers/catalog.py`; key validation per selected backend
-- [ ] Unit tests for the new entries and the validation
-- [ ] Update `CLAUDE.md`, `docs/ARCHITECTURE.md`
-- [ ] Commit and push to `main`
+- [x] `OpenAICompatibleLLM` / `OpenAICompatibleSTT` with endpoint passed in
+- [x] `LLM_BACKEND`, `LLM_BASE_URL`, `LLM_API_KEY`, `STT_BASE_URL`, `STT_API_KEY` in `config.py` and `.env.example`
+- [x] `openai_compatible` entries in `providers/catalog.py`; key validation per selected backend
+- [x] Unit tests for the new entries and the validation
+- [x] Update `CLAUDE.md`, `docs/ARCHITECTURE.md`
+- [x] Commit and push to `main`
 - [ ] Human verification (one real turn, `tests/e2e`)

@@ -127,7 +127,8 @@ changing anything around it.
 - **One codebase, many machines — the router lives *inside* STT.** Local inference is
   the only hardware-dependent part. A **Device Capability Router** detects the host at
   startup (Apple Metal / NVIDIA CUDA / CPU) and loads the matching STT backend behind
-  one stable contract ("audio in → text out"). It is a detail inside the STT module,
+  one stable contract ("audio in → text out"). It is a detail of how the STT backend is
+  chosen (`backend/providers/catalog.py`, device detection in `backend/runtime/`),
   not a new block in the diagram — the capability boundaries above are unchanged no
   matter which backend runs:
 
