@@ -1,8 +1,8 @@
 """Dataclass fields that read their value from the environment.
 
-Each key of `backend/config.py`, `backend/tuning.py` and `backend/prompts.py` is declared
-once: `X: float = env_float("X", 0.5)`. The environment wins over the default; an
-explicit constructor argument wins over both.
+Each key of `backend/config.py` and `backend/tuning.py` is declared once:
+`X: float = env_float("X", 0.5)`. The environment wins over the default; an explicit
+constructor argument wins over both.
 """
 import os
 from dataclasses import field

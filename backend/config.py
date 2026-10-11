@@ -2,8 +2,9 @@
 
 This file holds the secrets and the values that depend on the machine or the provider.
 Behaviour parameters are in `backend/tuning.py` and texts in `backend/prompts.py`;
-AppConfig inherits both, so a module reads any of them as `config.X`. Every key can be
-set in the environment (`.env`); only `groq_api_key` has to be.
+AppConfig inherits both, so a module reads any of them as `config.X`. Every key of this
+file and of `tuning.py` can be set in the environment (`.env`); only `groq_api_key` has
+to be. Texts cannot: `prompts.py` is their only source.
 """
 from dataclasses import dataclass
 

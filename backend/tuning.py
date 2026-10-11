@@ -1,8 +1,8 @@
 """Behaviour parameters: how the avatar listens, answers and moves. Edit here to tune it.
 
 Secrets and per-machine values are in `backend/config.py`; texts are in
-`backend/prompts.py`. Each parameter can be overridden by an environment variable of the
-same name.
+`backend/prompts.py`. Each parameter here can be overridden by an environment variable
+of the same name.
 """
 from dataclasses import dataclass
 

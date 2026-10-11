@@ -41,7 +41,11 @@ not:
 - **Three files, one concern each.** `backend/prompts.py` (texts), `backend/tuning.py`
   (behaviour parameters), `backend/config.py` (secrets, per-machine and provider
   values). Decided with the user on 2026-10-11.
-- **Env override stays for every key** (user decision, 2026-10-11). A key is declared
+- **Prompts are not overridable** (user decision, 2026-10-11, after the first version):
+  `backend/prompts.py` is the only source of the texts; `SYSTEM_PROMPT` and
+  `LLM_FALLBACK_TEXT` are no longer read from the environment nor listed in
+  `.env.example`.
+- **Env override stays for every other key** (user decision, 2026-10-11). A key is declared
   once, on one line, with its env name and its default: `X: float = env_float("X", 0.5)`.
 - **`AppConfig` stays the single object modules receive.** It inherits the `Prompts`
   and `Tuning` dataclasses, so `config.X` works unchanged at every call site and in

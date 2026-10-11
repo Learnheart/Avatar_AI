@@ -117,3 +117,14 @@ def test_endpoint_keys_never_appear_in_repr():
 
     assert "llm-sentinel" not in repr(config)
     assert "stt-sentinel" not in repr(config)
+
+
+def test_prompts_cannot_be_overridden_from_the_environment(monkeypatch):
+    defaults = AppConfig()
+    monkeypatch.setenv("SYSTEM_PROMPT", "prompt from env")
+    monkeypatch.setenv("LLM_FALLBACK_TEXT", "fallback from env")
+
+    config = AppConfig()
+
+    assert config.SYSTEM_PROMPT == defaults.SYSTEM_PROMPT != "prompt from env"
+    assert config.LLM_FALLBACK_TEXT == defaults.LLM_FALLBACK_TEXT != "fallback from env"

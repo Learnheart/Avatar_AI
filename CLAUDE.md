@@ -46,9 +46,10 @@ Load API keys, URLs, model names, credentials and tunable parameters from `.env`
 config file. Secrets go in `.env` only. Append every new key to `.env.example` without
 removing existing entries.
 
-Every backend key is declared once, with its env name and default, in one of three files:
-`backend/prompts.py` (texts), `backend/tuning.py` (behaviour parameters) or
-`backend/config.py` (secrets, per-machine and provider values). Defaults are tuned in
+Prompts and other texts live in `backend/prompts.py` only: they are not read from the
+environment and must not be added to `.env` or `.env.example`. Every other backend key is
+declared once, with its env name and default, in `backend/tuning.py` (behaviour
+parameters) or `backend/config.py` (secrets, per-machine and provider values). Defaults are tuned in
 those files; `.env` only has to hold the API key (`groq_api_key` by default), and any other key set there
 overrides the default on that machine. Optional entries in `.env.example` stay commented
 out.
