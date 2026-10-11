@@ -34,7 +34,14 @@ from backend.models import (
     VADEvent,
 )
 from backend.orchestrator.state import can_transition
-from backend.orchestrator.ws_manager import WSManager
+from backend.orchestrator.ws_manager import (
+    WSManager,
+    error_message,
+    interrupt_message,
+    speech_message,
+    state_message,
+    tracking_message,
+)
 from backend.perception.camera import Camera
 from backend.perception.tracking import HeadTracker
 from backend.perception.vad import VADModule
@@ -44,16 +51,6 @@ from backend.utils.logging import get_logger
 logger = get_logger("orchestrator")
 
 _MIC_BYTES_PER_SEC = MIC_SAMPLE_RATE * PCM_SAMPLE_WIDTH
-
-
-def _speech_output(text: str, pcm: bytes, sample_rate: int, *, is_final: bool) -> dict:
-    return {
-        "type": "speech_output",
-        "text_content": text,
-        "audio_data": base64.b64encode(pcm).decode("ascii"),
-        "audio_mime_type": f"audio/pcm;rate={sample_rate}",
-        "is_final": is_final,
-    }
 
 
 class Orchestrator:
@@ -162,7 +159,7 @@ class Orchestrator:
         await self.ws_manager.detach()
         await self._reset_turn()
         session_id = await self.ws_manager.connect(websocket)
-        await self.ws_manager.send({"type": "state", "state": self._state.value})
+        await self.ws_manager.send(state_message(self._state))
         return session_id
 
     async def handle_disconnect(self, websocket: WebSocket) -> None:
@@ -249,7 +246,7 @@ class Orchestrator:
         if self._state in (AvatarState.THINKING, AvatarState.SPEAKING):
             logger.info({"msg": "Barge-in detected, cancelling turn", "state": self._state.value})
             await self._cancel_turn()
-            await self.ws_manager.send({"type": "interrupt"})
+            await self.ws_manager.send(interrupt_message())
 
         # The utterance starts from the pre-roll, so the first syllable is not clipped.
         self._utterance = bytearray(b"".join(self._preroll))
@@ -353,21 +350,21 @@ class Orchestrator:
             logger.warning({"msg": "No playback_ended from client, leaving speaking"})
 
     async def _send_speech(self, text: str, pcm: bytes, sample_rate: int) -> None:
-        await self.ws_manager.send(_speech_output(text, pcm, sample_rate, is_final=False))
+        await self.ws_manager.send(speech_message(text, pcm, sample_rate, is_final=False))
 
     async def _send_final(self, sample_rate: int) -> None:
         """Tell the client the answer is complete; it replies `playback_ended`."""
-        await self.ws_manager.send(_speech_output("", b"", sample_rate, is_final=True))
+        await self.ws_manager.send(speech_message("", b"", sample_rate, is_final=True))
 
     async def _fail_turn(self, code: str, message: str) -> None:
         if self._state == AvatarState.SPEAKING:
             # Audio already reached the client: stop it, or it keeps playing while idle.
-            await self.ws_manager.send({"type": "interrupt"})
+            await self.ws_manager.send(interrupt_message())
         await self._send_error(code, message)
         await self._transition(AvatarState.IDLE)
 
     async def _send_error(self, code: str, message: str) -> None:
-        await self.ws_manager.send({"type": "error", "code": code, "message": message})
+        await self.ws_manager.send(error_message(code, message))
 
     async def _cancel_turn(self) -> None:
         task, self._turn_task = self._turn_task, None
@@ -400,15 +397,11 @@ class Orchestrator:
             if self.ws_manager.is_connected:
                 try:
                     tracking = await self._read_tracking()
-                    await self.ws_manager.send({
-                        "type": "tracking_update",
-                        "timestamp": time.time(),
-                        "avatar_control": {
-                            "present": tracking.present,
-                            "head_rotation": self._head_rotation(tracking).to_dict(),
-                            "is_speaking": self._state == AvatarState.SPEAKING,
-                        },
-                    })
+                    await self.ws_manager.send(tracking_message(
+                        present=tracking.present,
+                        head_rotation=self._head_rotation(tracking),
+                        is_speaking=self._state == AvatarState.SPEAKING,
+                    ))
                 except Exception as e:
                     logger.warning({"msg": "Tracking loop error", "error": str(e)})
             await asyncio.sleep(max(interval - (loop.time() - tick), 0.0))
@@ -451,4 +444,4 @@ class Orchestrator:
 
         self._state = new_state
         logger.info({"msg": f"State: {old.value} → {new_state.value}"})
-        await self.ws_manager.send({"type": "state", "state": new_state.value})
+        await self.ws_manager.send(state_message(new_state))
