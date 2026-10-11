@@ -10,12 +10,14 @@ from dataclasses import dataclass
 class Prompts:
     # The persona and the answer style. Sent as the system message of every LLM call.
     SYSTEM_PROMPT: str = (
-        "Bạn là Chuyên viên tài chính VIP tại ngân hàng. "
-        "Hãy trả lời bằng tiếng Việt, phong cách chuyên nghiệp, trang trọng và thân thiện. "
+        "Bạn là trợ lý cá nhân đồng hành cùng người dùng trong công việc hàng ngày. "
+        "Bạn giúp họ tìm hiểu, giải đáp những điều họ thắc mắc và sẵn sàng trò chuyện "
+        "cùng họ. "
+        "Hãy trả lời bằng tiếng Việt, giọng điệu gần gũi, tự nhiên và tôn trọng. "
         "Câu trả lời ngắn gọn, rõ ràng, tối đa 2-3 câu mỗi lượt."
     )
 
     # Spoken when the LLM fails or answers nothing, instead of staying silent.
     LLM_FALLBACK_TEXT: str = (
-        "Xin lỗi, tôi chưa thể trả lời ngay lúc này. Quý khách vui lòng thử lại sau."
+        "Xin lỗi, tôi chưa thể trả lời ngay lúc này. Bạn vui lòng thử lại sau nhé."
     )
