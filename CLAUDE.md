@@ -44,7 +44,16 @@ summary: <one line>
 
 Load API keys, URLs, model names, credentials and tunable parameters from `.env` or a
 config file. Secrets go in `.env` only. Append every new key to `.env.example` without
-removing existing entries. The frontend reads its own values from `VITE_*` variables
+removing existing entries.
+
+Every backend key is declared once, with its env name and default, in one of three files:
+`backend/prompts.py` (texts), `backend/tuning.py` (behaviour parameters) or
+`backend/config.py` (secrets, per-machine and provider values). Defaults are tuned in
+those files; `.env` only has to hold `groq_api_key`, and any other key set there
+overrides the default on that machine. Optional entries in `.env.example` stay commented
+out.
+
+The frontend reads its own values from `VITE_*` variables
 (`frontend/.env.example`).
 
 ## §2. Tests
@@ -121,22 +130,24 @@ of its package, and backends are swapped by config, not by editing callers.
 ```
 backend/
   main.py                      # FastAPI app, /ws endpoint, /health
-  config.py                    # AppConfig — every env key is read here
+  config.py                    # AppConfig — secrets, per-machine and provider values
+  tuning.py                    # behaviour parameters (VAD, timeouts, head clamps, voice)
+  prompts.py                   # system prompt and other texts
   models.py                    # shared dataclasses and enums
   orchestrator/
     orchestrator.py            # turn state machine + routing (only owner of state)
     state.py                   # allowed state transitions
-    ws_manager.py              # the single WebSocket connection
+    ws_manager.py              # the single WebSocket connection + outgoing messages
   perception/                  # ── CAPABILITY 1 ──
     camera.py                  # OpenCV frame capture, retry on disconnect
     tracking.py                # MediaPipe presence + head rotation
     vad.py                     # Silero VAD: speech_start / speech_end
   conversation/                # ── CAPABILITY 2 (separated pipeline) ──
     engine.py                  # ConversationEngine: audio in → text + audio out
+    factory.py                 # builds each stage's backend (Device Capability Router)
     stt/
       base.py                  # STT contract
       groq_whisper.py          # Groq Whisper backend
-      router.py                # Device Capability Router (picks the backend)
     llm/
       base.py                  # LLM contract
       groq_llm.py              # Groq streaming backend
@@ -144,6 +155,8 @@ backend/
       base.py                  # TTS contract
       zerotts.py               # ZeroTTS backend
   utils/
+    env.py                     # dataclass fields read from the environment
+    errors.py
     logging.py
   assets/
     face_landmarker.task       # MediaPipe model
