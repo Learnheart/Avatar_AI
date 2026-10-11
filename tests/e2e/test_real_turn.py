@@ -19,8 +19,8 @@ import pytest
 import websockets
 
 from backend.config import AppConfig
-from backend.providers.stt.groq_whisper import GroqWhisperSTT
 from backend.models import MIC_SAMPLE_RATE
+from backend.providers.catalog import create_stt
 from tests.e2e.helpers import E2E_MARKS, looks_vietnamese, resample_to_mic_rate
 
 pytestmark = E2E_MARKS
@@ -173,7 +173,7 @@ async def test_full_turn_over_websocket(session: Session, utterance_pcm: bytes):
 
     first_audio = with_audio[0][0] - speech_end
     end_to_end = final_at - speech_end
-    heard = await GroqWhisperSTT(AppConfig()).transcribe(
+    heard = await create_stt(AppConfig()).transcribe(
         resample_to_mic_rate(pcm, sample_rate), MIC_SAMPLE_RATE
     )
     print(

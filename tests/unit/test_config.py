@@ -80,3 +80,40 @@ def test_groq_api_key_never_appears_in_repr_or_str():
 
     assert "gsk-sentinel-secret" not in repr(config)
     assert "gsk-sentinel-secret" not in str(config)
+
+
+def test_groq_api_key_is_not_required_when_no_stage_uses_groq():
+    AppConfig(
+        LLM_BACKEND="openai_compatible",
+        LLM_BASE_URL="http://llm.local/v1",
+        STT_BACKEND="openai_compatible",
+        STT_BASE_URL="http://stt.local/v1",
+    ).validate()
+
+
+@pytest.mark.parametrize("groq_stage", [{"LLM_BACKEND": "groq"}, {"STT_BACKEND": "auto"}])
+def test_groq_api_key_is_required_when_one_stage_uses_groq(groq_stage):
+    backends = {
+        "LLM_BACKEND": "openai_compatible",
+        "LLM_BASE_URL": "http://llm.local/v1",
+        "STT_BACKEND": "openai_compatible",
+        "STT_BASE_URL": "http://stt.local/v1",
+    }
+
+    with pytest.raises(ValueError, match="groq_api_key"):
+        AppConfig(**{**backends, **groq_stage}).validate()
+
+
+@pytest.mark.parametrize(("stage", "key"), [("LLM", "LLM_BASE_URL"), ("STT", "STT_BASE_URL")])
+def test_openai_compatible_backend_requires_its_base_url(stage, key):
+    with pytest.raises(ValueError, match=key):
+        AppConfig(
+            GROQ_API_KEY="test-key", **{f"{stage}_BACKEND": "openai_compatible"}
+        ).validate()
+
+
+def test_endpoint_keys_never_appear_in_repr():
+    config = AppConfig(LLM_API_KEY="llm-sentinel", STT_API_KEY="stt-sentinel")
+
+    assert "llm-sentinel" not in repr(config)
+    assert "stt-sentinel" not in repr(config)

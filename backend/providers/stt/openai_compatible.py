@@ -1,4 +1,9 @@
-"""Groq Whisper STT backend — cloud transcription through the OpenAI-compatible API."""
+"""
+STT backend for any OpenAI-compatible transcription API (Whisper).
+
+Serves hosted APIs (Groq, ...) and self-hosted Whisper servers: the endpoint is passed in
+by `backend/providers/catalog.py`, the model comes from `STT_MODEL`.
+"""
 import io
 import wave
 
@@ -10,7 +15,7 @@ from backend.models import MIC_SAMPLE_RATE, PCM_SAMPLE_WIDTH, Transcript
 from backend.utils.errors import summarize_error
 from backend.utils.logging import get_logger
 
-logger = get_logger("stt.groq_whisper")
+logger = get_logger("stt.openai_compatible")
 
 
 def pcm16_to_wav(pcm16: bytes, sample_rate: int) -> bytes:
@@ -24,12 +29,12 @@ def pcm16_to_wav(pcm16: bytes, sample_rate: int) -> bytes:
     return buffer.getvalue()
 
 
-class GroqWhisperSTT(STT):
-    def __init__(self, config: AppConfig) -> None:
+class OpenAICompatibleSTT(STT):
+    def __init__(self, config: AppConfig, *, base_url: str, api_key: str) -> None:
         self.config = config
         self._client = AsyncOpenAI(
-            api_key=config.GROQ_API_KEY,
-            base_url=config.GROQ_BASE_URL,
+            api_key=api_key,
+            base_url=base_url,
             timeout=config.STT_TIMEOUT_SEC,
             max_retries=config.GROQ_MAX_RETRIES,
         )
@@ -53,7 +58,7 @@ class GroqWhisperSTT(STT):
             )
         except OpenAIError as e:
             summary = summarize_error(e, self.config.ERROR_SUMMARY_MAX_CHARS)
-            raise STTError(f"Groq Whisper request failed: {summary}") from e
+            raise STTError(f"STT request failed: {summary}") from e
 
         text = (response.text or "").strip()
         logger.debug({"msg": "Transcribed", "chars": len(text)})

@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 from openai import OpenAIError
 
-from backend.providers.stt import groq_whisper
+from backend.providers.stt import openai_compatible
 from backend.core.contracts import STTError
-from backend.providers.stt.groq_whisper import GroqWhisperSTT
+from backend.providers.stt.openai_compatible import OpenAICompatibleSTT
 
 
 class FakeAsyncOpenAI:
@@ -32,9 +32,11 @@ class FakeAsyncOpenAI:
 
 
 @pytest.fixture
-def stt(config, monkeypatch) -> GroqWhisperSTT:
-    monkeypatch.setattr(groq_whisper, "AsyncOpenAI", FakeAsyncOpenAI)
-    return GroqWhisperSTT(config)
+def stt(config, monkeypatch) -> OpenAICompatibleSTT:
+    monkeypatch.setattr(openai_compatible, "AsyncOpenAI", FakeAsyncOpenAI)
+    return OpenAICompatibleSTT(
+        config, base_url=config.GROQ_BASE_URL, api_key=config.GROQ_API_KEY
+    )
 
 
 def _speech(samples: int = 1600) -> bytes:

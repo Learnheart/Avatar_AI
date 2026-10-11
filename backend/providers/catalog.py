@@ -8,18 +8,25 @@ STT goes through the Device Capability Router: detect the device once at startup
 (`backend/runtime/device.py`) and map it to a backend name. `DEVICE` and `STT_BACKEND` override the detection.
 STT is cloud in the current stack, so every device maps to `groq_whisper`; a local backend
 drops in by adding it to both STT tables.
+
+`openai_compatible` (LLM and STT) points the same client at another hosted API or at a
+self-hosted server, from `.env` alone: `LLM_BACKEND`, `LLM_BASE_URL`, `LLM_API_KEY`,
+`LLM_MODEL` (and the `STT_*` equivalents).
 """
 from typing import Callable
 
-from backend.config import AUTO, AppConfig
+from backend.config import AUTO, OPENAI_COMPATIBLE, AppConfig
 from backend.core.contracts import LLM, STT, TTS
-from backend.providers.llm.groq_llm import GroqLLM
-from backend.providers.stt.groq_whisper import GroqWhisperSTT
+from backend.providers.llm.openai_compatible import OpenAICompatibleLLM
+from backend.providers.stt.openai_compatible import OpenAICompatibleSTT
 from backend.providers.tts.zerotts import ZeroTTSBackend
 from backend.runtime.device import detect_device
 from backend.utils.logging import get_logger
 
 logger = get_logger("providers")
+
+# The OpenAI client refuses an empty key; a self-hosted server that needs none ignores it.
+_NO_KEY = "not-needed"
 
 # ── STT ───────────────────────────────────────────────────────────────────
 
@@ -30,7 +37,12 @@ DEVICE_BACKENDS: dict[str, str] = {
 }
 
 _STT_BACKENDS: dict[str, Callable[[AppConfig], STT]] = {
-    "groq_whisper": GroqWhisperSTT,
+    "groq_whisper": lambda config: OpenAICompatibleSTT(
+        config, base_url=config.GROQ_BASE_URL, api_key=config.GROQ_API_KEY
+    ),
+    OPENAI_COMPATIBLE: lambda config: OpenAICompatibleSTT(
+        config, base_url=config.STT_BASE_URL, api_key=config.STT_API_KEY or _NO_KEY
+    ),
 }
 
 
@@ -47,8 +59,28 @@ def create_stt(config: AppConfig) -> STT:
 
 # ── LLM ───────────────────────────────────────────────────────────────────
 
+_LLM_BACKENDS: dict[str, Callable[[AppConfig], LLM]] = {
+    "groq": lambda config: OpenAICompatibleLLM(
+        config,
+        base_url=config.GROQ_BASE_URL,
+        api_key=config.GROQ_API_KEY,
+        # Groq-only: keep the reasoning short and out of the answer stream.
+        extra_body={
+            "reasoning_effort": config.LLM_REASONING_EFFORT,
+            "include_reasoning": False,
+        },
+    ),
+    OPENAI_COMPATIBLE: lambda config: OpenAICompatibleLLM(
+        config, base_url=config.LLM_BASE_URL, api_key=config.LLM_API_KEY or _NO_KEY
+    ),
+}
+
+
 def create_llm(config: AppConfig) -> LLM:
-    return GroqLLM(config)
+    """Build the LLM backend named by `LLM_BACKEND`."""
+    if config.LLM_BACKEND not in _LLM_BACKENDS:
+        raise ValueError(f"Unknown LLM_BACKEND: {config.LLM_BACKEND}")
+    return _LLM_BACKENDS[config.LLM_BACKEND](config)
 
 
 # ── TTS ───────────────────────────────────────────────────────────────────

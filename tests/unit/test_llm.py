@@ -3,9 +3,10 @@ from types import SimpleNamespace
 import pytest
 from openai import OpenAIError
 
-from backend.providers.llm import groq_llm
+from backend.providers.catalog import create_llm
+from backend.providers.llm import openai_compatible
 from backend.core.contracts import LLMError
-from backend.providers.llm.groq_llm import GroqLLM
+from backend.providers.llm.openai_compatible import OpenAICompatibleLLM
 
 
 def _chunk(content=None, reasoning=None):
@@ -54,12 +55,12 @@ class FakeAsyncOpenAI:
 
 
 @pytest.fixture
-def llm(config, monkeypatch) -> GroqLLM:
-    monkeypatch.setattr(groq_llm, "AsyncOpenAI", FakeAsyncOpenAI)
-    return GroqLLM(config)
+def llm(config, monkeypatch) -> OpenAICompatibleLLM:
+    monkeypatch.setattr(openai_compatible, "AsyncOpenAI", FakeAsyncOpenAI)
+    return create_llm(config)
 
 
-async def _collect(llm: GroqLLM, text: str = "Lãi suất tiết kiệm?") -> list[str]:
+async def _collect(llm: OpenAICompatibleLLM, text: str = "Lãi suất tiết kiệm?") -> list[str]:
     return [delta async for delta in llm.stream_answer(text)]
 
 

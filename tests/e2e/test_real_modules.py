@@ -6,10 +6,8 @@ import numpy as np
 import pytest
 
 from backend.config import AppConfig
-from backend.providers.llm.groq_llm import GroqLLM
-from backend.providers.stt.groq_whisper import GroqWhisperSTT
-from backend.providers.catalog import create_tts
 from backend.models import MIC_SAMPLE_RATE
+from backend.providers.catalog import create_llm, create_stt, create_tts
 from tests.e2e.helpers import E2E_MARKS, looks_vietnamese
 
 pytestmark = E2E_MARKS
@@ -25,7 +23,7 @@ def config() -> AppConfig:
 
 
 async def test_stt_transcribes_vietnamese(config, utterance_pcm):
-    stt = GroqWhisperSTT(config)
+    stt = create_stt(config)
     await stt.transcribe(utterance_pcm, MIC_SAMPLE_RATE)  # warm-up: cold start is excluded
 
     started = time.perf_counter()
@@ -39,7 +37,7 @@ async def test_stt_transcribes_vietnamese(config, utterance_pcm):
 
 
 async def test_llm_streams_a_vietnamese_answer(config):
-    llm = GroqLLM(config)
+    llm = create_llm(config)
     started = time.perf_counter()
     first_token_at = None
     deltas: list[str] = []
