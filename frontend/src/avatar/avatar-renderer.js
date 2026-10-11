@@ -129,9 +129,17 @@ export class AvatarRenderer {
           }
 
           VRMUtils.removeUnnecessaryJoints(gltf.scene)
+
+          // VRM 0.x models face +Z (towards the camera's back); VRM 1.0 faces -Z.
+          // three-vrm does not auto-rotate, so turn a 0.x model 180° to face the camera.
+          if (vrm.meta?.metaVersion === '0') {
+            VRMUtils.rotateVRM0(vrm)
+          }
+
           this._scene.add(vrm.scene)
           this._vrm = vrm
           this._probeCapabilities(vrm)
+          this._setRestPose(vrm)
           this._updateHeadTargets()
 
           this._setLoading(100, 'Sẵn sàng!')
@@ -186,6 +194,30 @@ export class AvatarRenderer {
     }
   }
 
+  /**
+   * Lower the arms from the default T-pose to a relaxed pose along the body.
+   * VRM humanoid bones are normalized (A/T-pose aligned), so rotating the upper
+   * arms around Z brings them down; a small elbow bend keeps it natural.
+   * Portrait framing hides most of this, but it removes the spread-arm silhouette.
+   */
+  _setRestPose(vrm) {
+    const humanoid = vrm.humanoid
+    if (!humanoid) return
+
+    const DOWN = 1.25        // ~72° shoulder drop
+    const ELBOW = 0.15       // slight forearm bend
+    const pose = [
+      ['leftUpperArm', 'z', DOWN],
+      ['rightUpperArm', 'z', -DOWN],
+      ['leftLowerArm', 'z', ELBOW],
+      ['rightLowerArm', 'z', -ELBOW],
+    ]
+    for (const [bone, axis, angle] of pose) {
+      const node = humanoid.getNormalizedBoneNode(bone)
+      if (node) node.rotation[axis] += angle
+    }
+  }
+
   // ── Public API ────────────────────────────────────────────────────────
 
   /**
@@ -194,7 +226,12 @@ export class AvatarRenderer {
    * A null rotation returns the head to neutral.
    */
   applyTrackingData(headRotation) {
-    this._trackedRotation = clampHeadRotation(headRotation, HEAD_CLAMP)
+    // The tracker's pitch sign is inverted relative to the VRM head bone's X axis
+    // (looking up tilted the head down and vice versa), so flip pitch here.
+    const adjusted = headRotation
+      ? { ...headRotation, pitch: -headRotation.pitch }
+      : headRotation
+    this._trackedRotation = clampHeadRotation(adjusted, HEAD_CLAMP)
     this._updateHeadTargets()
   }
 

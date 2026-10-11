@@ -24,11 +24,12 @@ export const ANALYSER_FFT_SIZE = 256        // Time-domain window read by lip-sy
 
 // ── Head motion ───────────────────────────────────────────────────────────
 
-// Head rotation clamps (radians) — must match backend config
+// Head rotation clamps (radians) — gentle motion: ~35% of the backend limits.
+// The backend still sends the full range; the frontend softens it for display.
 export const HEAD_CLAMP = {
-  pitch: 0.52,   // ±30°
-  yaw: 0.78,     // ±45°
-  roll: 0.35,    // ±20°
+  pitch: 0.18,   // ~±10°  (was ±30°)
+  yaw: 0.27,     // ~±16°  (was ±45°)
+  roll: 0.12,    // ~±7°   (was ±20°)
 }
 export const HEAD_LERP = 0.15           // Smoothing factor per frame
 export const HEAD_SHARE = 0.7           // Head takes 70%, neck the remaining 30%
@@ -58,13 +59,13 @@ export const BREATHING_AMP = 0.003           // Scale amplitude
 export const MAX_PIXEL_RATIO = 2
 export const BACKGROUND_COLOR = 0x0a0a0f
 
-// Camera — portrait framing for kiosk (upper half of body)
+// Camera — portrait framing for kiosk (head + shoulders only)
 export const CAMERA = {
-  fov: 35,
+  fov: 24,
   near: 0.1,
   far: 20,
-  position: [0, 1.35, 2.2],
-  lookAt: [0, 1.2, 0],
+  position: [0, 1.42, 1.15],
+  lookAt: [0, 1.4, 0],
 }
 
 export const LIGHTS = {

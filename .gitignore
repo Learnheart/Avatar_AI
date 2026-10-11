@@ -44,6 +44,9 @@ frontend/public/models/*.vrm
 *.pth
 *.onnx
 
+# ZeroTTS weights (large, materialized from Hugging Face — see .env.example)
+backend/assets/zerotts/
+
 # Docker
 *.log
 
