@@ -8,7 +8,7 @@ import pytest
 from backend.config import AppConfig
 from backend.conversation.llm.groq_llm import GroqLLM
 from backend.conversation.stt.groq_whisper import GroqWhisperSTT
-from backend.conversation.tts import create_tts
+from backend.conversation.factory import create_tts
 from backend.models import MIC_SAMPLE_RATE
 from tests.e2e.helpers import E2E_MARKS, looks_vietnamese
 

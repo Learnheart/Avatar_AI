@@ -19,9 +19,7 @@ from fastapi.responses import JSONResponse
 
 from backend.config import AppConfig
 from backend.conversation.engine import ConversationEngine
-from backend.conversation.llm.groq_llm import GroqLLM
-from backend.conversation.stt.router import create_stt
-from backend.conversation.tts import create_tts
+from backend.conversation.factory import create_llm, create_stt, create_tts
 from backend.orchestrator import Orchestrator
 from backend.perception.camera import Camera
 from backend.perception.tracking import HeadTracker
@@ -34,7 +32,7 @@ logger = get_logger("main")
 def build_orchestrator(config: AppConfig) -> Orchestrator:
     """Wire the real modules together."""
     engine = ConversationEngine(
-        config, stt=create_stt(config), llm=GroqLLM(config), tts=create_tts(config)
+        config, stt=create_stt(config), llm=create_llm(config), tts=create_tts(config)
     )
     return Orchestrator(
         config,

@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from backend.config import AppConfig
-from backend.conversation.tts import create_tts
+from backend.conversation.factory import create_tts
 from backend.conversation.tts.base import TTSError
 from backend.conversation.tts.zerotts import ZeroTTSBackend, float_to_pcm16
 
