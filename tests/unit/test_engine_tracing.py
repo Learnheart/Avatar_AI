@@ -4,7 +4,7 @@ import pytest
 from backend.config import AppConfig
 from backend.core.contracts import KnowledgeError, LLMError
 from backend.core.conversation.engine import ConversationEngine
-from backend.models import Passage
+from backend.models import ChatTurn, Passage
 from backend.utils.telemetry import tracer
 from tests.unit.test_engine import FakeKnowledge, FakeLLM, FakeSTT, FakeTTS, _collect
 
@@ -18,10 +18,10 @@ def _by_name(spans) -> dict[str, list]:
     return grouped
 
 
-async def _turn(engine: ConversationEngine):
+async def _turn(engine: ConversationEngine, history=()):
     """Run one turn inside a `turn` span, as the orchestrator does."""
     with tracer.start_as_current_span("turn") as turn:
-        await _collect(engine)
+        await _collect(engine, history)
     return turn
 
 
@@ -78,6 +78,31 @@ async def test_each_step_records_what_went_through_it(config, spans):
     # FakeTTS: two chunks of 4 samples per sentence, at 48 kHz.
     assert all(span.attributes["tts.audio_ms"] == round(8 / 48000 * 1000) for span in steps["tts"])
     assert all(span.attributes["tts.first_chunk_ms"] >= 0 for span in steps["tts"])
+
+
+async def test_the_spans_carry_the_history_the_query_searched_and_the_stt_confidence(config, spans):
+    history = (ChatTurn("Phí chuyển khoản?", ("Miễn phí.",)), ChatTurn("Còn thẻ?", ("Có phí.",)))
+    stt = FakeSTT(QUESTION)
+    stt.confidence, stt.no_speech_prob = 0.83, 0.02
+    knowledge = FakeKnowledge([Passage("Kỳ hạn sáu tháng: 5%.", "lai-suat.pdf", 0.8)])
+
+    await _turn(_engine(config, stt=stt, knowledge=knowledge), history)
+
+    steps = _by_name(spans)
+    assert steps["stt"][0].attributes["stt.confidence"] == 0.83
+    assert steps["stt"][0].attributes["stt.no_speech_prob"] == 0.02
+    assert steps["knowledge"][0].attributes["knowledge.query"] == f"Còn thẻ?\n{QUESTION}"
+    assert steps["llm"][0].attributes["llm.history_turns"] == 2
+    assert steps["llm"][0].attributes["llm.profile"] == ""
+
+
+async def test_an_stt_without_confidence_leaves_the_attributes_out(config, spans):
+    await _turn(_engine(config))
+
+    (stt,) = _by_name(spans)["stt"]
+    assert "stt.confidence" not in stt.attributes
+    assert "stt.no_speech_prob" not in stt.attributes
+    assert _by_name(spans)["llm"][0].attributes["llm.history_turns"] == 0
 
 
 async def test_no_knowledge_wired_leaves_no_knowledge_span(config, spans):

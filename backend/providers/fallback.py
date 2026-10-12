@@ -11,13 +11,13 @@ Which backend is the backup is configuration: `STT_BACKEND_BACKUP`, `LLM_BACKEND
 import asyncio
 import time
 from contextlib import aclosing
-from typing import AsyncIterator
+from typing import AsyncIterator, Sequence
 
 from opentelemetry import trace
 
 from backend.config import AppConfig
 from backend.core.contracts import LLM, STT, Embedder, EmbeddingError, LLMError, STTError
-from backend.models import Transcript
+from backend.models import ChatTurn, Transcript
 from backend.utils.logging import get_logger
 
 logger = get_logger("providers.fallback")
@@ -79,9 +79,11 @@ class FallbackLLM(LLM):
         self._backup = backup
         self._state = _Primary(config, "llm")
 
-    async def stream_answer(self, user_text: str) -> AsyncIterator[str]:
+    async def stream_answer(
+        self, user_text: str, history: Sequence[ChatTurn] = (), profile: str = ""
+    ) -> AsyncIterator[str]:
         if self._state.available():
-            async with aclosing(self._primary.stream_answer(user_text)) as answer:
+            async with aclosing(self._primary.stream_answer(user_text, history, profile)) as answer:
                 try:
                     # Only the wait for the first delta is bounded: that is where a dead
                     # provider shows.
@@ -100,7 +102,7 @@ class FallbackLLM(LLM):
                         yield delta
                     return
 
-        async with aclosing(self._backup.stream_answer(user_text)) as answer:
+        async with aclosing(self._backup.stream_answer(user_text, history, profile)) as answer:
             async for delta in answer:
                 yield delta
 

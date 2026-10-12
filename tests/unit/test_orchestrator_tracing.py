@@ -76,6 +76,26 @@ async def test_a_turn_is_one_trace_starting_when_the_person_started_to_speak(
     assert playback.attributes["playback.ended_by"] == "timeout"  # no client to report it
 
 
+async def test_the_turn_span_names_its_conversation_and_no_user_for_a_guest(
+    orch, session_id, spans
+):
+    await _say(orch, START, END)
+    turn = await _finished_turn(spans)
+
+    assert turn.attributes["conversation.id"] == orch._conversation.id
+    assert "user.id" not in turn.attributes
+
+
+async def test_the_turn_span_names_the_user_of_the_conversation(orch, spans):
+    await orch.handle_connect(FakeWebSocket(), user_id="user-7")
+
+    await _say(orch, START, END)
+    turn = await _finished_turn(spans)
+
+    assert turn.attributes["user.id"] == "user-7"
+    assert turn.attributes["conversation.id"] == orch._conversation.id
+
+
 async def test_a_failed_turn_is_marked_failed(orch, session_id, spans):
     orch._engine.error = RuntimeError("boom")
     await _say(orch, START, END)

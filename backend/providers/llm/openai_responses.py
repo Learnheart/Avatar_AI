@@ -5,12 +5,14 @@ Serves the endpoints that expose `/responses` instead of `/chat/completions`, su
 Databricks AI Gateway: the endpoint and the model are passed in by
 `backend/providers/catalog.py`.
 """
-from typing import AsyncIterator, Awaitable, Callable, Union
+from typing import AsyncIterator, Awaitable, Callable, Sequence, Union
 
 from openai import AsyncOpenAI, OpenAIError
 
 from backend.config import AppConfig
 from backend.core.contracts import LLM, LLMError
+from backend.core.conversation.history import ASSISTANT, chat_messages
+from backend.models import ChatTurn
 from backend.utils.errors import summarize_error
 
 _TEXT_DELTA = "response.output_text.delta"
@@ -19,7 +21,9 @@ _FAILED = "response.failed"
 
 
 def _message(role: str, text: str) -> dict:
-    return {"role": role, "content": [{"type": "input_text", "text": text}]}
+    """What the model said earlier is an output of it; everything else is an input."""
+    content_type = "output_text" if role == ASSISTANT else "input_text"
+    return {"role": role, "content": [{"type": content_type, "text": text}]}
 
 
 class OpenAIResponsesLLM(LLM):
@@ -42,17 +46,19 @@ class OpenAIResponsesLLM(LLM):
             max_retries=config.GROQ_MAX_RETRIES,
         )
 
-    async def stream_answer(self, user_text: str) -> AsyncIterator[str]:
+    async def stream_answer(
+        self, user_text: str, history: Sequence[ChatTurn] = (), profile: str = ""
+    ) -> AsyncIterator[str]:
+        messages = chat_messages(
+            history, user_text, system_prompt=self.config.SYSTEM_PROMPT, profile=profile
+        )
         try:
             stream = await self._client.responses.create(
                 model=self._model,
                 stream=True,
                 # The system prompt travels as a message, not as `instructions`: a gateway
                 # that ignores unknown top-level fields cannot drop it silently.
-                input=[
-                    _message("system", self.config.SYSTEM_PROMPT),
-                    _message("user", user_text),
-                ],
+                input=[_message(role, text) for role, text in messages],
                 max_output_tokens=self.config.LLM_MAX_TOKENS,
                 # The model thinks before the first word of the answer: keep it short.
                 reasoning={"effort": self._reasoning_effort},

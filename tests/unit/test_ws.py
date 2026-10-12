@@ -27,14 +27,17 @@ def _receive_turn_message(ws) -> dict:
 def _receive_handshake(ws) -> None:
     assert ws.receive_json()["type"] == "connected"
     assert _receive_turn_message(ws) == {"type": "state", "state": "idle"}
+    assert _receive_turn_message(ws) == {"type": "conversation", "conversation_id": None}
 
 
 def test_connected_then_the_current_state_are_sent_on_open(client, config):
     with client.websocket_connect("/ws") as ws:
         message = ws.receive_json()
         state = _receive_turn_message(ws)
+        conversation = _receive_turn_message(ws)
 
     assert state == {"type": "state", "state": "idle"}
+    assert conversation == {"type": "conversation", "conversation_id": None}
     assert message["type"] == "connected"
     assert message["session_id"]
     assert message["config"] == {

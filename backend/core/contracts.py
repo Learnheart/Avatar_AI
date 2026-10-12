@@ -5,9 +5,9 @@ The core depends on these interfaces only. Backends live in `backend/providers/`
 chosen by configuration (`backend/providers/catalog.py`), never by editing a caller.
 """
 from abc import ABC, abstractmethod
-from typing import AsyncIterator
+from typing import AsyncIterator, Sequence
 
-from backend.models import Passage, Transcript
+from backend.models import ChatTurn, Passage, Transcript
 
 
 # ── STT: utterance audio in → Transcript out, one shape for every backend ──
@@ -26,7 +26,7 @@ class STT(ABC):
         """
 
 
-# ── LLM: user text in → streamed Vietnamese answer text out ───────────────
+# ── LLM: user text + earlier turns in → streamed Vietnamese answer text out ──
 
 class LLMError(Exception):
     """The LLM provider failed (network, auth, timeout, bad response)."""
@@ -34,10 +34,14 @@ class LLMError(Exception):
 
 class LLM(ABC):
     @abstractmethod
-    def stream_answer(self, user_text: str) -> AsyncIterator[str]:
+    def stream_answer(
+        self, user_text: str, history: Sequence[ChatTurn] = (), profile: str = ""
+    ) -> AsyncIterator[str]:
         """
         Stream the answer to one user utterance as text deltas (no reasoning text).
-        Fixed system prompt, no history, no tools. Provider failures raise LLMError.
+        `history` holds the earlier turns of the conversation, oldest first; `profile`
+        is what is known about the person, given as a second system message after the
+        fixed system prompt. No tools. Provider failures raise LLMError.
         """
 
 

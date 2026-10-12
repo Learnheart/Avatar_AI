@@ -43,6 +43,28 @@ class Transcript:
     """Output of every STT backend — one fixed shape regardless of device."""
     text: str
     language: str
+    # How sure the backend is of the text, 0–1. None: the backend cannot tell.
+    confidence: Optional[float] = None
+    # The lowest probability, over the segments, that the audio holds no speech.
+    # None: the backend cannot tell.
+    no_speech_prob: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class ChatTurn:
+    """One turn of a conversation as it happened: what the person said and what the
+    avatar was heard saying. `sentences` may be empty (the turn was cut or failed before
+    anything was spoken)."""
+    user_text: str
+    sentences: tuple[str, ...] = ()
+    # The answer was cut before its end (barge-in, reset, disconnect, shutdown).
+    interrupted: bool = False
+    # STT confidence of `user_text`, 0–1; None when the backend gave none.
+    confidence: Optional[float] = None
+
+    @property
+    def answer(self) -> str:
+        return " ".join(self.sentences)
 
 
 @dataclass
@@ -80,17 +102,20 @@ class KnowledgeDocument:
 
 @dataclass
 class TranscriptEvent:
-    """Emitted once per turn, right after STT."""
+    """Emitted once per turn, right after STT. `confidence` is the STT's, 0–1 or None."""
     text: str
+    confidence: Optional[float] = None
 
 
 @dataclass
 class AudioEvent:
     """One chunk of Int16 LE mono PCM. `text` is the sentence this audio belongs to,
-    set on the first chunk of a sentence and "" afterwards."""
+    set on the first chunk of a sentence and "" afterwards. `fallback` marks the
+    sentence spoken in place of an answer the LLM did not give (LLM_FALLBACK_TEXT)."""
     text: str
     pcm: bytes
     sample_rate: int
+    fallback: bool = False
 
 
 @dataclass

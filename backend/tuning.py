@@ -27,12 +27,23 @@ class Tuning:
     # think before transcribing, and the cap on the transcript length.
     STT_REASONING_EFFORT: str = env_str("STT_REASONING_EFFORT", "minimal")
     STT_MAX_TOKENS: int = env_int("STT_MAX_TOKENS", 512)
+    # An utterance whose every segment has a no-speech probability above this is not
+    # speech: its transcript is dropped. 1.0 = nothing is refused.
+    STT_NO_SPEECH_MAX_PROB: float = env_float("STT_NO_SPEECH_MAX_PROB", 1.0)
 
     # ── Answering (LLM) ─────────────────────────────────────────────────
     LLM_REASONING_EFFORT: str = env_str("LLM_REASONING_EFFORT", "low")
     LLM_MAX_TOKENS: int = env_int("LLM_MAX_TOKENS", 512)
     # Max wait for each streamed delta, first token included.
     LLM_TIMEOUT_SEC: float = env_float("LLM_TIMEOUT_SEC", 8.0)
+
+    # ── Conversation (short-term memory) ────────────────────────────────
+    # A conversation closes after this long without a face (while the camera is
+    # connected), or this long after its last turn ended.
+    CONVERSATION_ABSENCE_SEC: float = env_float("CONVERSATION_ABSENCE_SEC", 30.0)
+    CONVERSATION_IDLE_SEC: float = env_float("CONVERSATION_IDLE_SEC", 120.0)
+    # Turns of the conversation given to the LLM; older ones are dropped.
+    MEMORY_HISTORY_MAX_TURNS: int = env_int("MEMORY_HISTORY_MAX_TURNS", 10)
 
     # ── Knowledge (uploaded documents) ──────────────────────────────────
     # Passages given to the LLM with the question.
@@ -41,6 +52,9 @@ class Tuning:
     KNOWLEDGE_MIN_SCORE: float = env_float("KNOWLEDGE_MIN_SCORE", 0.0)
     # Max wait for the lookup in a turn; past it the question is answered without it.
     KNOWLEDGE_TIMEOUT_SEC: float = env_float("KNOWLEDGE_TIMEOUT_SEC", 2.0)
+    # Previous utterances of the person searched together with the current one, so a
+    # follow-up finds the passages of its subject (0 = the current utterance alone).
+    KNOWLEDGE_QUERY_HISTORY_TURNS: int = env_int("KNOWLEDGE_QUERY_HISTORY_TURNS", 1)
     # Size of a chunk of a document, and how much of it is repeated in the next one.
     KNOWLEDGE_CHUNK_CHARS: int = env_int("KNOWLEDGE_CHUNK_CHARS", 800)
     KNOWLEDGE_CHUNK_OVERLAP_CHARS: int = env_int("KNOWLEDGE_CHUNK_OVERLAP_CHARS", 120)

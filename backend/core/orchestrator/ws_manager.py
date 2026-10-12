@@ -45,6 +45,17 @@ def speech_message(text: str, pcm: bytes, sample_rate: int, *, is_final: bool) -
     }
 
 
+def transcript_message(text: str) -> dict:
+    """What the avatar heard for the turn. The avatar's side needs no message of its own:
+    `speech_output.text_content` carries each sentence."""
+    return {"type": "transcript", "text": text}
+
+
+def conversation_message(conversation_id: Optional[str]) -> dict:
+    """The conversation that is open, or None: it was closed, or none is open."""
+    return {"type": "conversation", "conversation_id": conversation_id}
+
+
 def interrupt_message() -> dict:
     """Stop the audio that is playing and drop what is queued."""
     return {"type": "interrupt"}

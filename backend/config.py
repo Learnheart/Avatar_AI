@@ -6,6 +6,7 @@ AppConfig inherits both, so a module reads any of them as `config.X`. Every key 
 file and of `tuning.py` can be set in the environment (`.env`); only `groq_api_key` has
 to be. Texts cannot: `prompts.py` is their only source.
 """
+import math
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
@@ -165,6 +166,20 @@ class AppConfig(Tuning, Prompts):
                 )
         if self.KNOWLEDGE_CHUNK_OVERLAP_CHARS >= self.KNOWLEDGE_CHUNK_CHARS:
             raise ValueError("KNOWLEDGE_CHUNK_OVERLAP_CHARS must be below KNOWLEDGE_CHUNK_CHARS.")
+        if self.KNOWLEDGE_QUERY_HISTORY_TURNS < 0:
+            raise ValueError("KNOWLEDGE_QUERY_HISTORY_TURNS must not be negative.")
+        # NaN or infinite: the rule would never fire and the conversation never close.
+        for key in ("CONVERSATION_ABSENCE_SEC", "CONVERSATION_IDLE_SEC"):
+            value = getattr(self, key)
+            if not (math.isfinite(value) and value > 0):
+                raise ValueError(
+                    "CONVERSATION_ABSENCE_SEC and CONVERSATION_IDLE_SEC must be positive "
+                    "and finite."
+                )
+        if self.MEMORY_HISTORY_MAX_TURNS < 1:
+            raise ValueError("MEMORY_HISTORY_MAX_TURNS must be at least 1.")
+        if not 0.0 <= self.STT_NO_SPEECH_MAX_PROB <= 1.0:
+            raise ValueError("STT_NO_SPEECH_MAX_PROB must be between 0 and 1.")
         if self.DEVICE != AUTO and self.DEVICE not in DEVICES:
             raise ValueError(f"Invalid DEVICE: {self.DEVICE}")
         if self.LOG_LEVEL not in LOG_LEVELS:

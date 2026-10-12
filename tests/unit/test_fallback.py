@@ -4,7 +4,7 @@ import pytest
 
 from backend.config import AppConfig
 from backend.core.contracts import LLM, STT, Embedder, EmbeddingError, LLMError, STTError
-from backend.models import Transcript
+from backend.models import ChatTurn, Transcript
 from backend.providers import catalog, fallback
 from backend.providers.catalog import create_llm, create_stt
 from backend.providers.fallback import FallbackEmbedder, FallbackLLM, FallbackSTT
@@ -27,10 +27,12 @@ class ScriptedLLM(LLM):
     def __init__(self, deltas=(), error=None, delay=0.0):
         self.deltas, self.error, self.delay = list(deltas), error, delay
         self.calls = 0
+        self.requests: list[tuple] = []
         self.closed = False
 
-    async def stream_answer(self, user_text):
+    async def stream_answer(self, user_text, history=(), profile=""):
         self.calls += 1
+        self.requests.append((user_text, history, profile))
         try:
             await asyncio.sleep(self.delay)
             for delta in self.deltas:
@@ -134,6 +136,16 @@ async def test_llm_backup_takes_over_before_the_first_delta(config, primary):
     assert primary.closed
 
 
+async def test_llm_history_and_profile_reach_the_backup_unchanged(config):
+    history = (ChatTurn("Lãi suất?", ("Năm phần trăm.",)),)
+    primary, backup = ScriptedLLM(error=LLMError("down")), ScriptedLLM(["backup"])
+    llm = FallbackLLM(config, primary, backup)
+
+    assert [d async for d in llm.stream_answer("còn gì nữa?", history, "Tên: Linh")] == ["backup"]
+
+    assert primary.requests == backup.requests == [("còn gì nữa?", history, "Tên: Linh")]
+
+
 async def test_llm_failure_after_the_first_delta_is_not_replayed_by_the_backup(config):
     primary = ScriptedLLM(["Xin "], error=LLMError("reset"))
     backup = ScriptedLLM(["backup"])
@@ -150,7 +162,7 @@ async def test_llm_failure_after_the_first_delta_is_not_replayed_by_the_backup(c
 
 async def test_llm_only_the_first_delta_is_bounded(config):
     class SlowSecondDelta(LLM):
-        async def stream_answer(self, user_text):
+        async def stream_answer(self, user_text, history=(), profile=""):
             yield "Xin "
             await asyncio.sleep(config.FALLBACK_PRIMARY_TIMEOUT_SEC * 3)
             yield "chào."

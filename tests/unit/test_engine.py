@@ -8,7 +8,7 @@ from backend.core.conversation.engine import ConversationEngine, split_sentences
 from backend.core.contracts import (
     LLM, STT, TTS, Knowledge, KnowledgeError, LLMError, STTError, TTSError,
 )
-from backend.models import AudioEvent, DoneEvent, Passage, Transcript, TranscriptEvent
+from backend.models import AudioEvent, ChatTurn, DoneEvent, Passage, Transcript, TranscriptEvent
 
 RATE = 48000
 
@@ -17,12 +17,19 @@ class FakeSTT(STT):
     def __init__(self, text: str = "Lãi suất tiết kiệm là bao nhiêu?") -> None:
         self.text = text
         self.delay = 0.0
+        self.confidence: float | None = None
+        self.no_speech_prob: float | None = None
         self.calls: list[tuple[bytes, int]] = []
 
     async def transcribe(self, pcm16: bytes, sample_rate: int) -> Transcript:
         self.calls.append((pcm16, sample_rate))
         await asyncio.sleep(self.delay)
-        return Transcript(text=self.text, language="vi")
+        return Transcript(
+            text=self.text,
+            language="vi",
+            confidence=self.confidence,
+            no_speech_prob=self.no_speech_prob,
+        )
 
 
 class FakeLLM(LLM):
@@ -34,10 +41,14 @@ class FakeLLM(LLM):
         self.hold_after: int | None = None
         self.release = asyncio.Event()
         self.calls: list[str] = []
+        self.histories: list[tuple] = []
+        self.profiles: list[str] = []
         self.closed = False
 
-    async def stream_answer(self, user_text: str) -> AsyncIterator[str]:
+    async def stream_answer(self, user_text, history=(), profile="") -> AsyncIterator[str]:
         self.calls.append(user_text)
+        self.histories.append(tuple(history))
+        self.profiles.append(profile)
         try:
             for index, delta in enumerate(self.deltas):
                 if index == self.hold_after:
@@ -90,8 +101,8 @@ def _engine(config: AppConfig, stt: FakeSTT, llm: FakeLLM, tts: FakeTTS) -> Conv
     return ConversationEngine(config, stt=stt, llm=llm, tts=tts)
 
 
-async def _collect(engine: ConversationEngine) -> list:
-    return [event async for event in engine.respond(b"\x01\x00" * 160, 16000)]
+async def _collect(engine: ConversationEngine, history=()) -> list:
+    return [event async for event in engine.respond(b"\x01\x00" * 160, 16000, history)]
 
 
 def _texts(events: list) -> list[str]:
@@ -271,6 +282,63 @@ async def test_cancellation_stops_the_llm_stream_and_the_tts_worker(config):
     assert tts.spoken == ["Xin chào."]
 
 
+# ── History, confidence, fallback mark ────────────────────────────────────
+
+HISTORY = (
+    ChatTurn("Lãi suất kỳ hạn sáu tháng?", ("Năm phần trăm.",)),
+    ChatTurn("Còn phí chuyển khoản?", ("Miễn phí.",)),
+)
+
+
+async def test_the_llm_receives_the_history_and_an_empty_profile(config):
+    llm = FakeLLM(["Sáu phần trăm."])
+    engine = _engine(config, FakeSTT("còn mười hai tháng?"), llm, FakeTTS())
+
+    await _collect(engine, HISTORY)
+
+    assert llm.calls == ["còn mười hai tháng?"]
+    assert llm.histories == [HISTORY]
+    assert llm.profiles == [""]
+
+
+async def test_without_history_the_llm_is_asked_as_before(config):
+    llm = FakeLLM(["Xin chào."])
+
+    await _collect(_engine(config, FakeSTT(), llm, FakeTTS()))
+
+    assert llm.histories == [()]
+
+
+async def test_the_transcript_event_carries_the_confidence(config):
+    stt = FakeSTT()
+    stt.confidence = 0.83
+
+    events = await _collect(_engine(config, stt, FakeLLM(["Xin chào."]), FakeTTS()))
+
+    assert events[0] == TranscriptEvent("Lãi suất tiết kiệm là bao nhiêu?", 0.83)
+
+
+async def test_the_fallback_sentence_is_marked_and_a_real_answer_is_not(config):
+    failing = FakeLLM([])
+    failing.error = LLMError("provider down")
+
+    apology = await _collect(_engine(config, FakeSTT(), failing, FakeTTS()))
+    answer = await _collect(_engine(config, FakeSTT(), FakeLLM(["Xin chào."]), FakeTTS()))
+
+    assert [e.fallback for e in apology if isinstance(e, AudioEvent)] == [True, True]
+    assert [e.fallback for e in answer if isinstance(e, AudioEvent)] == [False, False]
+
+
+async def test_a_fallback_sentence_whose_tts_failed_is_still_marked(config):
+    failing, tts = FakeLLM([]), FakeTTS()
+    failing.error = LLMError("provider down")
+    tts.fail_on = {config.LLM_FALLBACK_TEXT}
+
+    events = await _collect(_engine(config, FakeSTT(), failing, tts))
+
+    assert events[1] == AudioEvent(config.LLM_FALLBACK_TEXT, b"", RATE, True)
+
+
 def test_load_loads_the_tts_model(config):
     tts = FakeTTS()
 
@@ -411,3 +479,37 @@ async def test_an_empty_transcript_makes_no_lookup(config):
     await _collect(engine)
 
     assert knowledge.queries == []
+
+
+async def test_the_search_uses_the_previous_utterance_and_the_llm_is_asked_the_current_one(config):
+    knowledge = FakeKnowledge([Passage("Kỳ hạn mười hai tháng: 6%.", "lai-suat.pdf", 0.8)])
+    engine, llm = _engine_with(config, knowledge)
+
+    await _collect(engine, HISTORY)
+
+    assert knowledge.queries == [f"Còn phí chuyển khoản?\n{QUESTION}"]
+    # Only the current utterance is wrapped; the history reaches the LLM as it was.
+    assert llm.calls == [config.KNOWLEDGE_PROMPT.format(
+        passages="[1] (tài liệu: lai-suat.pdf)\nKỳ hạn mười hai tháng: 6%.", question=QUESTION,
+    )]
+    assert llm.histories == [HISTORY]
+
+
+async def test_the_search_query_follows_knowledge_query_history_turns(config):
+    config.KNOWLEDGE_QUERY_HISTORY_TURNS = 2
+    engine, _ = _engine_with(config, FakeKnowledge([]))
+
+    await _collect(engine, HISTORY)
+
+    assert engine._knowledge.queries == [
+        f"Lãi suất kỳ hạn sáu tháng?\nCòn phí chuyển khoản?\n{QUESTION}"
+    ]
+
+
+async def test_with_zero_previous_turns_the_current_utterance_is_searched_alone(config):
+    config.KNOWLEDGE_QUERY_HISTORY_TURNS = 0
+    engine, _ = _engine_with(config, FakeKnowledge([]))
+
+    await _collect(engine, HISTORY)
+
+    assert engine._knowledge.queries == [QUESTION]

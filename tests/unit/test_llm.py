@@ -6,6 +6,7 @@ from openai import OpenAIError
 from backend.providers.catalog import create_llm
 from backend.providers.llm import openai_compatible
 from backend.core.contracts import LLMError
+from backend.models import ChatTurn
 from backend.providers.llm.openai_compatible import OpenAICompatibleLLM
 
 
@@ -91,6 +92,29 @@ async def test_request_is_built_from_config(llm, config):
     assert call["extra_body"] == {"reasoning_effort": "low", "include_reasoning": False}
     assert call["messages"] == [
         {"role": "system", "content": config.SYSTEM_PROMPT},
+        {"role": "user", "content": "Xin chào"},
+    ]
+
+
+async def test_history_becomes_alternating_messages_before_the_utterance(llm, config):
+    history = (ChatTurn("Lãi suất?", ("Năm phần trăm.", "Kỳ hạn sáu tháng.")), ChatTurn("còn"))
+
+    [d async for d in llm.stream_answer("mười hai tháng thì sao?", history)]
+
+    assert llm._client.calls[0]["messages"] == [
+        {"role": "system", "content": config.SYSTEM_PROMPT},
+        {"role": "user", "content": "Lãi suất?"},
+        {"role": "assistant", "content": "Năm phần trăm. Kỳ hạn sáu tháng."},
+        {"role": "user", "content": "còn\nmười hai tháng thì sao?"},
+    ]
+
+
+async def test_profile_is_a_second_system_message_after_the_system_prompt(llm, config):
+    [d async for d in llm.stream_answer("Xin chào", (), "Tên: Linh")]
+
+    assert llm._client.calls[0]["messages"] == [
+        {"role": "system", "content": config.SYSTEM_PROMPT},
+        {"role": "system", "content": "Tên: Linh"},
         {"role": "user", "content": "Xin chào"},
     ]
 

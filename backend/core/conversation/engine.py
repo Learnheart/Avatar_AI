@@ -4,21 +4,26 @@ ConversationEngine — the swappable boundary "audio in → text + audio out".
 One turn: STT → knowledge lookup (optional) → LLM (streamed) → TTS (per sentence). The LLM keeps streaming in its own
 task while finished sentences are synthesized, so the first audio does not wait for the
 whole answer. Every stage runs under its own timeout.
+
+The engine keeps nothing between turns: the earlier turns of the conversation are handed
+to it with each utterance.
 """
 import asyncio
 import re
 import time
 from contextlib import aclosing
-from typing import AsyncIterator, Callable, Optional, TypeVar
+from typing import AsyncIterator, Callable, Optional, Sequence, TypeVar
 
 from opentelemetry import trace
 from opentelemetry.trace import Span
 
 from backend.config import AppConfig
 from backend.core.contracts import LLM, STT, TTS, Knowledge, LLMError, STTError, TTSError
+from backend.core.conversation.history import search_query
 from backend.models import (
     PCM_SAMPLE_WIDTH,
     AudioEvent,
+    ChatTurn,
     DoneEvent,
     EngineEvent,
     Passage,
@@ -72,6 +77,10 @@ async def _bounded(
             yield item
 
 
+# A sentence to speak, and whether it is the fallback text and not an answer.
+_QueuedSentence = tuple[str, bool]
+
+
 class ConversationEngine:
     def __init__(
         self,
@@ -96,22 +105,25 @@ class ConversationEngine:
         """Release the local models. Call once at shutdown."""
         self._tts.close()
 
-    async def respond(self, pcm16: bytes, sample_rate: int) -> AsyncIterator[EngineEvent]:
-        """Run one turn. Cancellation-safe: closing it stops the LLM stream and the TTS worker."""
+    async def respond(
+        self, pcm16: bytes, sample_rate: int, history: Sequence[ChatTurn] = ()
+    ) -> AsyncIterator[EngineEvent]:
+        """Run one turn. `history` holds the earlier turns of the conversation, oldest
+        first. Cancellation-safe: closing it stops the LLM stream and the TTS worker."""
         transcript = await self._transcribe(pcm16, sample_rate)
-        yield TranscriptEvent(transcript.text)
+        yield TranscriptEvent(transcript.text, transcript.confidence)
         if not transcript.text.strip():
             yield DoneEvent()
             return
 
-        question = await self._with_knowledge(transcript.text)
-        sentences: asyncio.Queue[Optional[str]] = asyncio.Queue()
+        question = await self._with_knowledge(transcript.text, history)
+        sentences: asyncio.Queue[Optional[_QueuedSentence]] = asyncio.Queue()
         producer = asyncio.create_task(
-            self._produce_sentences(question, sentences), name="llm-sentences"
+            self._produce_sentences(question, history, sentences), name="llm-sentences"
         )
         try:
             while (sentence := await sentences.get()) is not None:
-                async with aclosing(self._speak(sentence)) as events:
+                async with aclosing(self._speak(*sentence)) as events:
                     async for event in events:
                         yield event
             yield DoneEvent()
@@ -132,18 +144,25 @@ class ConversationEngine:
             except asyncio.TimeoutError as e:
                 raise STTError(f"STT timed out after {self.config.STT_TIMEOUT_SEC}s") from e
             span.set_attributes({"stt.text": transcript.text, "stt.language": transcript.language})
+            if transcript.confidence is not None:
+                span.set_attribute("stt.confidence", round(transcript.confidence, 4))
+            if transcript.no_speech_prob is not None:
+                span.set_attribute("stt.no_speech_prob", round(transcript.no_speech_prob, 4))
             return transcript
 
-    async def _with_knowledge(self, question: str) -> str:
+    async def _with_knowledge(self, question: str, history: Sequence[ChatTurn]) -> str:
         """The question, preceded by the passages of the uploaded documents that match
-        it. No passage, a slow or a failing lookup → the question alone: the knowledge
-        base never costs the turn."""
+        it. The search also uses the person's previous utterances, so a follow-up finds
+        the passages of its subject; only the question itself is wrapped. No passage, a
+        slow or a failing lookup → the question alone: the knowledge base never costs
+        the turn."""
         if self._knowledge is None:
             return question
+        query = search_query(history, question, self.config.KNOWLEDGE_QUERY_HISTORY_TURNS)
         with tracer.start_as_current_span(
-            "knowledge", attributes={"knowledge.query": question}
+            "knowledge", attributes={"knowledge.query": query}
         ) as span:
-            passages = await self._lookup(question, span)
+            passages = await self._lookup(query, span)
             span.set_attribute("knowledge.passages", len(passages))
             for index, passage in enumerate(passages, start=1):
                 span.add_event("passage", {
@@ -160,13 +179,13 @@ class ConversationEngine:
         )
         return self.config.KNOWLEDGE_PROMPT.format(passages=listed, question=question)
 
-    async def _lookup(self, question: str, span: Span) -> list[Passage]:
-        """The passages for the question; [] when the lookup is slow or fails, with the
+    async def _lookup(self, query: str, span: Span) -> list[Passage]:
+        """The passages for the query; [] when the lookup is slow or fails, with the
         reason on the span."""
         started = time.perf_counter()
         try:
             passages = await asyncio.wait_for(
-                self._knowledge.search(question), timeout=self.config.KNOWLEDGE_TIMEOUT_SEC
+                self._knowledge.search(query), timeout=self.config.KNOWLEDGE_TIMEOUT_SEC
             )
         except asyncio.TimeoutError as e:
             fail(span, e)
@@ -193,16 +212,19 @@ class ConversationEngine:
         return passages
 
     async def _produce_sentences(
-        self, user_text: str, sentences: "asyncio.Queue[Optional[str]]"
+        self,
+        user_text: str,
+        history: Sequence[ChatTurn],
+        sentences: "asyncio.Queue[Optional[_QueuedSentence]]",
     ) -> None:
         """Queue each sentence of the LLM answer as soon as it is complete.
         Always ends the queue with None, so the consumer never waits on a dead producer."""
         queued = 0
         try:
             try:
-                async with aclosing(self._answer_sentences(user_text)) as answer:
+                async with aclosing(self._answer_sentences(user_text, history)) as answer:
                     async for sentence in answer:
-                        sentences.put_nowait(sentence)
+                        sentences.put_nowait((sentence, False))
                         queued += 1
             except LLMError as e:
                 logger.warning({"msg": "LLM failed", "error": str(e), "sentences_before": queued})
@@ -216,15 +238,18 @@ class ConversationEngine:
             if queued == 0:
                 # LLM failure or empty answer → speak the fallback instead of staying silent.
                 trace.get_current_span().add_event("llm_fallback_text_spoken")
-                sentences.put_nowait(self.config.LLM_FALLBACK_TEXT)
+                sentences.put_nowait((self.config.LLM_FALLBACK_TEXT, True))
         finally:
             sentences.put_nowait(None)
 
-    async def _answer_sentences(self, user_text: str) -> AsyncIterator[str]:
+    async def _answer_sentences(
+        self, user_text: str, history: Sequence[ChatTurn]
+    ) -> AsyncIterator[str]:
         """Stream the LLM answer as speakable sentences."""
+        profile = ""  # nothing is known about the person yet
         # LLM_TIMEOUT_SEC bounds the wait for each delta, first token included.
         deltas = _bounded(
-            self._llm.stream_answer(user_text),
+            self._llm.stream_answer(user_text, history, profile),
             lambda: self.config.LLM_TIMEOUT_SEC,
             LLMError(f"LLM timed out after {self.config.LLM_TIMEOUT_SEC}s"),
         )
@@ -233,7 +258,12 @@ class ConversationEngine:
         started = time.perf_counter()
         with detached_span(
             "llm",
-            **{"llm.system_prompt": self.config.SYSTEM_PROMPT, "llm.prompt": user_text},
+            **{
+                "llm.system_prompt": self.config.SYSTEM_PROMPT,
+                "llm.profile": profile,
+                "llm.history_turns": len(history),
+                "llm.prompt": user_text,
+            },
         ) as span:
             try:
                 async with aclosing(deltas):
@@ -255,8 +285,9 @@ class ConversationEngine:
                 # Whatever was generated, also when the stream fails or is cancelled.
                 span.set_attribute("llm.answer", "".join(answer))
 
-    async def _speak(self, sentence: str) -> AsyncIterator[AudioEvent]:
-        """Synthesize one sentence. On TTS failure the sentence is emitted as text only."""
+    async def _speak(self, sentence: str, fallback: bool = False) -> AsyncIterator[AudioEvent]:
+        """Synthesize one sentence. On TTS failure the sentence is emitted as text only.
+        `fallback` marks its events as the fallback text."""
         sample_rate = self._tts.sample_rate
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.config.TTS_TIMEOUT_SEC
@@ -277,13 +308,13 @@ class ConversationEngine:
                             span.set_attribute("tts.first_chunk_ms", round(first_chunk_ms))
                             stage_duration.record(first_chunk_ms, {"stage": "tts_first_chunk"})
                         audio_bytes += len(pcm)
-                        yield AudioEvent(sentence if first else "", pcm, sample_rate)
+                        yield AudioEvent(sentence if first else "", pcm, sample_rate, fallback)
                         first = False
             except TTSError as e:
                 fail(span, e)
                 logger.warning({"msg": "TTS failed, sending text only", "error": str(e)})
                 if first:
-                    yield AudioEvent(sentence, b"", sample_rate)
+                    yield AudioEvent(sentence, b"", sample_rate, fallback)
             finally:
                 span.set_attribute(
                     "tts.audio_ms", round(audio_bytes / PCM_SAMPLE_WIDTH / sample_rate * 1000)

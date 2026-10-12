@@ -5,6 +5,7 @@ from openai import OpenAIError
 
 from backend.config import AppConfig
 from backend.core.contracts import LLMError
+from backend.models import ChatTurn
 from backend.providers.catalog import create_llm
 from backend.providers.llm import openai_responses
 from backend.providers.llm.openai_responses import OpenAIResponsesLLM
@@ -116,6 +117,34 @@ async def test_request_is_built_from_config(llm, config):
             {"role": "user", "content": [{"type": "input_text", "text": "Xin chào"}]},
         ],
     }
+
+
+def _part(role, text, content_type="input_text"):
+    return {"role": role, "content": [{"type": content_type, "text": text}]}
+
+
+async def test_history_becomes_alternating_messages_before_the_utterance(llm, config):
+    history = (ChatTurn("Lãi suất?", ("Năm phần trăm.", "Kỳ hạn sáu tháng.")), ChatTurn("còn"))
+
+    [d async for d in llm.stream_answer("mười hai tháng thì sao?", history)]
+
+    # What the model said earlier is an `output_text` part; the rest stays `input_text`.
+    assert llm._client.calls[0]["input"] == [
+        _part("system", config.SYSTEM_PROMPT),
+        _part("user", "Lãi suất?"),
+        _part("assistant", "Năm phần trăm. Kỳ hạn sáu tháng.", "output_text"),
+        _part("user", "còn\nmười hai tháng thì sao?"),
+    ]
+
+
+async def test_profile_is_a_second_system_message_after_the_system_prompt(llm, config):
+    [d async for d in llm.stream_answer("Xin chào", (), "Tên: Linh")]
+
+    assert llm._client.calls[0]["input"] == [
+        _part("system", config.SYSTEM_PROMPT),
+        _part("system", "Tên: Linh"),
+        _part("user", "Xin chào"),
+    ]
 
 
 async def test_provider_error_on_request_raises_llm_error(llm):

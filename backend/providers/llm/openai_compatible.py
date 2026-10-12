@@ -5,12 +5,14 @@ Serves hosted APIs (Groq, OpenRouter, ...) and self-hosted servers (vLLM, Ollama
 the endpoint is passed in by `backend/providers/catalog.py`, the model comes from
 `LLM_MODEL`.
 """
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Optional, Sequence
 
 from openai import AsyncOpenAI, OpenAIError
 
 from backend.config import AppConfig
 from backend.core.contracts import LLM, LLMError
+from backend.core.conversation.history import chat_messages
+from backend.models import ChatTurn
 from backend.utils.errors import summarize_error
 
 
@@ -33,15 +35,17 @@ class OpenAICompatibleLLM(LLM):
             max_retries=config.GROQ_MAX_RETRIES,
         )
 
-    async def stream_answer(self, user_text: str) -> AsyncIterator[str]:
+    async def stream_answer(
+        self, user_text: str, history: Sequence[ChatTurn] = (), profile: str = ""
+    ) -> AsyncIterator[str]:
+        messages = chat_messages(
+            history, user_text, system_prompt=self.config.SYSTEM_PROMPT, profile=profile
+        )
         try:
             stream = await self._client.chat.completions.create(
                 model=self.config.LLM_MODEL,
                 stream=True,
-                messages=[
-                    {"role": "system", "content": self.config.SYSTEM_PROMPT},
-                    {"role": "user", "content": user_text},
-                ],
+                messages=[{"role": role, "content": text} for role, text in messages],
                 max_completion_tokens=self.config.LLM_MAX_TOKENS,
                 extra_body=self._extra_body,
             )

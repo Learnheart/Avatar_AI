@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import json
+import time
 from typing import AsyncIterator, Callable, Optional
 
 from backend.config import AppConfig
@@ -55,9 +56,10 @@ class FakeVAD:
 
 
 class FakeEngine:
-    """Replays `events` for each turn. `gate` holds the turn before any event (thinking);
-    `error` is raised after the first event of type `error_after`; `close_gate` holds the
-    turn while it is being closed."""
+    """Replays `events` for each turn. `gate` holds the turn before any event (thinking),
+    or right after the first event of type `gate_after` when that is set; `error` is
+    raised after the first event of type `error_after`; `close_gate` holds the turn while
+    it is being closed. `histories` holds the history each turn was given."""
 
     def __init__(self) -> None:
         self.events: list[EngineEvent] = [
@@ -67,10 +69,12 @@ class FakeEngine:
             DoneEvent(),
         ]
         self.gate: Optional[asyncio.Event] = None
+        self.gate_after: Optional[type] = None
         self.error: Optional[Exception] = None
         self.error_after: type = TranscriptEvent
         self.close_gate: Optional[asyncio.Event] = None
         self.utterances: list[bytes] = []
+        self.histories: list[tuple] = []
         self.closed = 0
         self.loaded = False
 
@@ -80,13 +84,18 @@ class FakeEngine:
     def close(self) -> None:
         self.loaded = False
 
-    async def respond(self, pcm16: bytes, sample_rate: int) -> AsyncIterator[EngineEvent]:
+    async def respond(
+        self, pcm16: bytes, sample_rate: int, history: tuple = ()
+    ) -> AsyncIterator[EngineEvent]:
         self.utterances.append(pcm16)
+        self.histories.append(tuple(history))
         try:
-            if self.gate is not None:
+            if self.gate is not None and self.gate_after is None:
                 await self.gate.wait()
             for event in self.events:
                 yield event
+                if self.gate is not None and isinstance(event, self.gate_after or ()):
+                    await self.gate.wait()
                 if self.error and isinstance(event, self.error_after):
                     raise self.error
         finally:
@@ -155,13 +164,30 @@ class FakeWebSocket:
         return [m for m in self.sent if m["type"] not in ("tracking_update", "connected")]
 
 
-def build_orchestrator(config: AppConfig) -> Orchestrator:
+class FakeClock:
+    """The orchestrator's clock, moved by the test. The event loop keeps its own."""
+
+    def __init__(self, now: float = 1000.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def build_orchestrator(
+    config: AppConfig, clock: Callable[[], float] = time.monotonic
+) -> Orchestrator:
+    """The orchestrator measures its conversation on `clock`."""
     return Orchestrator(
         config,
         vad=FakeVAD(),
         engine=FakeEngine(),
         camera=FakeCamera(),
         tracker=FakeTracker(),
+        clock=clock,
     )
 
 
