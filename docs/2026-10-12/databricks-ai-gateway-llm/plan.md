@@ -32,6 +32,8 @@ summary: Add an LLM backend that calls the Databricks AI Gateway through the Ope
 - **Keys.** `DATABRICKS_BASE_URL` (up to `/ai-gateway/mlflow/v1`; the SDK appends
   `/responses`) and `DATABRICKS_TOKEN` (secret, kept out of `repr`). Both are required
   when `LLM_BACKEND=databricks`. The model is the existing `LLM_MODEL`.
+  (Superseded the same day by `../databricks-stt-and-profile-auth/plan.md`: the model is
+  `DATABRICKS_LLM_MODEL`, and a CLI profile can replace the token.)
 - **System prompt as a `system` message inside `input`**, not the `instructions` field:
   it goes through the same message path as the user text, so a gateway that ignores
   unknown top-level fields cannot drop it silently.

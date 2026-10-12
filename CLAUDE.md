@@ -154,6 +154,8 @@ backend/
     llm/openai_compatible.py   # Groq, OpenRouter, vLLM, Ollama, ...
     llm/openai_responses.py    # OpenAI Responses API: Databricks AI Gateway
     stt/openai_compatible.py   # Groq Whisper or a self-hosted Whisper server
+    stt/chat_audio.py          # a chat model that is sent the audio: Gemini on Databricks
+    databricks.py              # Databricks credential: static token or CLI profile
     tts/zerotts.py             # ZeroTTS backend
   runtime/                     # ── what depends on the machine (macOS / Windows) ──
     device.py                  # metal / cuda / cpu detection
@@ -203,7 +205,8 @@ Layering rules:
   `providers/catalog.py`. Another OpenAI-compatible API or a self-hosted server needs no
   code: set `LLM_BACKEND=openai_compatible` with `LLM_BASE_URL`, `LLM_API_KEY` and
   `LLM_MODEL` (same with `STT_*`). The Databricks AI Gateway is `LLM_BACKEND=databricks`
-  with `DATABRICKS_BASE_URL`, `DATABRICKS_TOKEN` and `LLM_MODEL`.
+  and/or `STT_BACKEND=databricks`, with `DATABRICKS_BASE_URL` and `DATABRICKS_TOKEN` or
+  `DATABRICKS_PROFILE`.
 - Blocking inference (VAD, TTS, vision) runs in a thread or executor, never on the event
   loop.
 - The WebSocket message shapes are a contract between `backend/core/orchestrator/` and
