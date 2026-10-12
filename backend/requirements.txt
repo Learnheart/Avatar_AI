@@ -30,6 +30,9 @@ pypdf>=4.0.0
 python-docx>=1.1.0
 python-multipart>=0.0.9
 
+# Application database (users, memory) — SQLAlchemy Core on DATABASE_URL
+sqlalchemy>=2.0.0
+
 # Observability — OpenTelemetry traces and metrics, OTLP export
 opentelemetry-sdk>=1.27.0
 opentelemetry-exporter-otlp-proto-http>=1.27.0
