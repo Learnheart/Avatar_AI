@@ -61,8 +61,14 @@ data of a user lives and how a user is named; what is stored there and why is in
     by slice 2 is disposable. Opened as it is, it gains the table `imports` and keeps
     its old `memory_items` without the constraint; deleting the file gives the new
     shape.
+  - Slice 4 creates `conversations` and `turns`, as in the data model below. A
+    conversation's row is written with its first recorded turn; `turns` reaches its
+    user through its conversation, the one per-user table without a `user_id` column
+    of its own. `turns.id` is the one integer key (it only orders the rows).
 - Every per-user table carries `user_id` (a foreign key to `users`) and every store
-  method takes it: no query reads across users.
+  method takes it: no query reads across users. Two housekeeping methods of the memory
+  store run at startup for every user and name none: deleting the turns past their TTL
+  and listing the conversations left to consolidate. They give back ids and a count.
 - **The knowledge base keeps its own sqlite-vec file**: it is a vector index, replaced
   on its own schedule, and it is shared by all users today. Making documents per user
   is a separate change.
@@ -200,4 +206,5 @@ backend/
 - [x] Slice 2 — `features/accounts/` (users, `current_user_id()`), `AUTH_DEV_USER_ID`,
       user id through `handle_connect`
 - [x] Slice 3 — `utils/object_store.py` (`OBJECT_STORE_DIR`)
-- [ ] Unit tests per `test-plan.md`: Database, Identity, Object store, Config
+- [x] Slice 4 — tables `conversations` and `turns`
+- [x] Unit tests per `test-plan.md`: Database, Identity, Object store, Config

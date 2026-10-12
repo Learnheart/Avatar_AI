@@ -104,8 +104,8 @@ cover as much logic as possible with unit tests.
 | **Conversation — LLM** | Groq LLM - openai/gpt-oss-20b | Text → câu trả lời tiếng Việt, streaming |
 | **Conversation — TTS** | **ZeroTTS** (open-source, tiếng Việt) | Text → audio tiếng Việt; chạy local real-time trên CPU, có streaming |
 | **Knowledge base** | sqlite-vec (SQLite extension) + embedding qua `EMBEDDING_BACKEND` (`local_hash` \| `openai_compatible` \| `databricks` \| `ollama`), backup qua `EMBEDDING_BACKEND_BACKUP`; pypdf, python-docx | Upload tài liệu (txt, md, csv, pdf, docx) → chunk → vector; tra cứu đoạn liên quan cho mỗi câu hỏi trước khi gọi LLM |
-| **Application database** | SQLAlchemy Core trên `DATABASE_URL` (file SQLite local; PostgreSQL khi deploy) | Lưu user và memory (những điều avatar nhớ về từng user); bảng được tạo lúc startup, chưa có migration tool |
-| **Memory** | logic nội bộ trên application database; `AUTH_DEV_USER_ID` thay cho login; import đọc bằng một lần gọi LLM ngoài turn (`LLM.complete`) | Hồ sơ của user đã đăng nhập (các memory item `active`) đưa vào LLM mỗi turn; import file / đoạn văn tự giới thiệu → memory item; guest không có memory |
+| **Application database** | SQLAlchemy Core trên `DATABASE_URL` (file SQLite local; PostgreSQL khi deploy) | Lưu user, memory (những điều avatar nhớ về từng user) và các turn của cuộc trò chuyện chưa được đọc; bảng được tạo lúc startup, chưa có migration tool |
+| **Memory** | logic nội bộ trên application database; `AUTH_DEV_USER_ID` thay cho login; import và cuộc trò chuyện đã đóng được đọc bằng một lần gọi LLM ngoài turn (`LLM.complete`) | Hồ sơ của user đã đăng nhập (các memory item `active`) đưa vào LLM mỗi turn; import file / đoạn văn tự giới thiệu → memory item; cuộc trò chuyện đã đóng → memory item `pending` (đề xuất) chờ user duyệt hoặc từ chối, sở thích / tính cách được nhắc lại ở cuộc trò chuyện sau thì tự `active`; turn đã lưu bị xoá sau khi đọc; guest không có memory |
 | **Object store** | thư mục local `OBJECT_STORE_DIR` (thay được bằng S3-compatible) | Giữ nguyên bản gốc của file user import; chủ sở hữu chỉ ghi trong application database |
 | Observability | OpenTelemetry SDK (traces + metrics) + OTLP/HTTP exporter; JSON log trên stdout | Mỗi turn một trace, mỗi bước một span (listen, stt, knowledge, embedding, memory, llm, tts, playback) kèm input/output; số đo vòng lặp perception; `CAPTURE_ENABLED` lưu frame camera + audio + trace ra đĩa |
 | Device Capability Router | logic nội bộ (phát hiện Metal/CUDA/CPU lúc startup) | Chọn backend inference phù hợp máy; cho phép override qua config |
@@ -119,7 +119,7 @@ cover as much logic as possible with unit tests.
 | Audio | Web Audio API (AudioWorklet + AnalyserNode) | Thu mic (PCM 16kHz), phát audio, đo loudness cho lip-sync |
 | Lip-sync | logic thuần (RMS → blendshape mồm) | Amplitude-driven, bám audio đang phát |
 | Knowledge panel | DOM thuần + fetch (`VITE_API_URL`) | Upload / liệt kê / xoá tài liệu tri thức; tick chọn tài liệu avatar được dùng để trả lời |
-| Profile page ("Hồ sơ") | DOM thuần + fetch (`VITE_API_URL`) | Xem / thêm / sửa / xoá những điều avatar nhớ về user |
+| Profile page ("Hồ sơ") | DOM thuần + fetch (`VITE_API_URL`) | Xem / thêm / sửa / xoá những điều avatar nhớ về user; duyệt / từ chối những điều avatar thu thập được từ cuộc trò chuyện |
 
 ### External (cloud)
 
@@ -160,7 +160,7 @@ backend/
   core/                        # ── one turn; imports no provider, runtime or feature ──
     contracts.py               # STT, LLM, TTS, Embedder, Knowledge, Memory interfaces and their errors
     orchestrator/
-      orchestrator.py          # turn state machine + routing (only owner of state); owns the conversation
+      orchestrator.py          # turn state machine + routing (only owner of state); owns the conversation, tells the memory
       state.py                 # allowed state transitions
       ws_manager.py            # the single WebSocket connection + outgoing messages
     perception/                # ── CAPABILITY 1 ──
@@ -195,8 +195,10 @@ backend/
     memory/
       memory.py                # MemoryService: memory items, the profile given to the LLM and its cache
       imports.py               # MemoryImports: a file or a pasted text → original kept + memory items (one LLM call)
-      extraction.py            # LLM answer (JSON) → validated memory items (pure)
-      store.py                 # tables memory_items, imports (all the SQL of the memory)
+      consolidation.py         # MemoryConsolidation: turns kept, a closed conversation → proposed items (one LLM call)
+      reading.py               # shared by the two: delimiters, quote check, waiting for a store call
+      extraction.py            # LLM answer (JSON) → validated memory items or operations on them (pure)
+      store.py                 # tables memory_items, imports, conversations, turns (all the SQL of the memory)
       api.py                   # HTTP routes /memory/items, /memory/imports
   data/                        # knowledge.db, app.db, objects/, capture/ (gitignored, per machine)
   utils/
@@ -280,18 +282,33 @@ Layering rules:
   empty, slow or failing; a guest's turn reads nothing. Who the user is comes from
   `current_user_id()` (`features/accounts/identity.py`) and nowhere else: `main.py`
   resolves it and hands it to the orchestrator, the core never does.
+- What a logged-in user says is gathered outside the turn. The orchestrator tells the
+  memory about each recorded turn and about the close of the conversation
+  (`Memory.record_turn`, `Memory.close_conversation`), for a logged-in user only and
+  never awaited: they are background tasks it keeps track of, in order per
+  conversation, whose failure is logged. The closed conversation is then read once by
+  the LLM (`features/memory/consolidation.py`), and again at the next start when that
+  failed. What is heard is only proposed: an item from a conversation is `pending` and
+  reaches no prompt until the user approves it, or, for a preference or a personality
+  trait, until a later conversation states it again; an item the user rejected is kept
+  as `rejected` and never proposed again. A reading never undoes what the user did to
+  an item meanwhile (its changes are written relative to the row, in one transaction),
+  and the conversations of one user are read one at a time. The stored turns are
+  deleted once read, and after `MEMORY_TRANSCRIPT_TTL_DAYS` whatever happened.
 - Users and memory live in the application database (`DATABASE_URL`).
   `backend/utils/database.py` is the only module that knows engines; a feature declares
   its tables and keeps all its SQL in its `store.py`, written against SQLAlchemy Core
   with nothing specific to one engine. Every per-user table carries `user_id` and every
-  store method takes it: no query reads across users.
+  store method takes it: no query reads across users (the startup housekeeping of the
+  recorded turns is the one exception, and gives back ids only).
 - The original of what a user imports is kept unchanged in the object store
   (`backend/utils/object_store.py`, `OBJECT_STORE_DIR`), one store for all users. Its
   keys carry no user: who owns an object is recorded in the application database only,
   and an object is never served by its key — every read goes through the row and its
   `user_id`. The text of an import is derived from the bytes and stored nowhere. It is
   given to the LLM between delimiters, as material to read and never as instructions.
-- Work the LLM does outside a turn (reading an import) goes through `LLM.complete`,
+- Work the LLM does outside a turn (reading an import or a closed conversation) goes
+  through `LLM.complete`,
   with its own limits (`LLM_COMPLETE_TIMEOUT_SEC`, `LLM_COMPLETE_MAX_TOKENS`); its
   failure never puts the primary of the turns into the fallback cooldown.
 - The HTTP routes `/memory` are a contract between `backend/features/memory/api.py` and

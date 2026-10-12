@@ -249,9 +249,9 @@ The tasks of each part are in its sub-plan. Here: what belongs to the whole.
 
 - [ ] Every To-do of `plan-turn.md`, `plan-database.md`, `plan-memory.md` and
       `plan-frontend.md` ticked
-- [ ] `.env.example`, `CLAUDE.md` + `AGENTS.md` (module `memory`, structure, layering),
+- [x] `.env.example`, `CLAUDE.md` + `AGENTS.md` (module `memory`, structure, layering),
       `ARCHITECTURE.md` backlog, `quality-gates.md`
-- [ ] `CHANGELOG.md` entry under `[Unreleased]` with each slice's commit
+- [x] `CHANGELOG.md` entry under `[Unreleased]` with each slice's commit
 - [ ] Real run: a follow-up question answered from the history; the same follow-up
       after "Cuộc trò chuyện mới" no longer answered from it; both sides of the turn
       shown in the transcript window; a follow-up about an uploaded document, then a

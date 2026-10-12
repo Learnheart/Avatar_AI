@@ -125,6 +125,142 @@ keeps about a logged-in user across conversations. Its tables and the object sto
   consolidated at the next start; turns older than `MEMORY_TRANSCRIPT_TTL_DAYS` are
   deleted either way.
 
+Decided while building slice 4:
+
+- **The contract.** `record_turn(user id, conversation id, turn)` and
+  `close_conversation(user id, conversation id)` join `Memory`. The orchestrator makes
+  them for a logged-in user only (a guest's conversation makes no call at all), each as
+  a background task it keeps track of: no turn and no close awaits one, a failure is
+  logged and never reaches the turn. Per conversation the calls run one after the
+  other, in the order they were made, so a close is never read before the record of
+  its last turn was written. At shutdown a conversation still being read is dropped
+  (it is read at the next start) and the turns still being written are waited for, no
+  longer than `MEMORY_TIMEOUT_SEC`: a memory that answers no more does not hang the
+  shutdown, and what is abandoned is logged. An abandoned turn is lost: it is not
+  written again, and its store call may outlive the shutdown. The bound is the same key
+  as the profile read of a turn, so lowering it also shortens what the last write gets.
+- **Where the code lives.** `features/memory/consolidation.py` holds
+  `MemoryConsolidation` (turn persistence, the reading of one conversation, the
+  housekeeping of a start); `MemoryService` stays the one object the core is given and
+  hands it the turns and the closes (`gather_with`, wired in `main.py` on the LLM of
+  the turns). What the import and the consolidation share moved to
+  `features/memory/reading.py`: the delimiters and the removal of their tags, the check
+  of a quote, the wait for a running store call.
+- **Tables** `conversations` and `turns`, rows for logged-in users only. The row of a
+  conversation is written with its first recorded turn; `turns.position` follows the
+  order of recording, from 1. A turn in which nothing was understood is not recorded,
+  so a conversation of noise has no row and its close is nothing to do.
+- **Reading one conversation**: mark it closed → read its turns and the user's items
+  (active, pending, rejected) → leave out the turns whose STT confidence is below
+  `MEMORY_MIN_STT_CONFIDENCE`, the utterance and the answer it got (no confidence = kept)
+  → when nothing of the person is left, delete the turns and mark it consolidated
+  without any LLM call → otherwise one `complete` call → parse → apply. The item
+  changes, the deletion of the turns and `consolidated_at` are one transaction.
+  The LLM failing, or answering something else than the JSON array → nothing stored,
+  the turns kept, the conversation stays unconsolidated, the span failed.
+- **What the LLM is given.** `MEMORY_EXTRACT_PROMPT` is the system text (with
+  `MEMORY_ITEM_MAX_CHARS`). The user message (`MEMORY_EXTRACT_REQUEST`) is what is
+  already remembered between `<ghi_nho>` tags, one line per item
+  (`[number] (status, category) text`, or `MEMORY_EXTRACT_NO_ITEMS`), then the
+  conversation between `<hoi_thoai>` tags, one `Người dùng:` line per utterance and one
+  `Trợ lý:` line per answer that was spoken. Both blocks are material, never
+  instructions, and neither can be closed from inside (same removal of the tags as for
+  an import).
+- **An item is named by a number in the request**, 1, 2, 3… in the order of the list,
+  not by its id in the database: a short number is copied back right, a 32-character id
+  is not always. The consolidation maps the numbers back; the parser accepts the number
+  as a JSON number or string.
+- **Operations** (`extraction.py`, pure, a second validator beside the one of the
+  import): `{"op": "add", category, text, evidence}`, `{"op": "confirm", id}`,
+  `{"op": "replace", id, category, text, evidence}`. Dropped, the others kept: an
+  unknown `op`, an unknown category, a missing text or one that is no valid item text,
+  an id the request did not list.
+- **Applying them** (`plan_changes`, pure):
+  - `add` → a `pending` item, `source=conversation`, `seen_count=1`. Texts are compared
+    on one line, letters composed, whatever the case: an `add` saying what an active or
+    pending item says counts as that item stated again; one saying what a `rejected`
+    item says is dropped; one the answer repeats is stored once.
+  - `confirm` → `seen_count + 1`, once per conversation whatever the answer repeats. A
+    pending `preference` or `personality` item becomes `active` at
+    `MEMORY_PROMOTE_SEEN_COUNT`; `identity` and `addressing` never do. Only an item that
+    existed before the conversation can be confirmed, so a promotion always comes from
+    a later conversation than the proposal. Of an active item it only counts; of a
+    rejected one it is ignored.
+  - **Two kinds of proposal are never promoted by repetition**, however often they are
+    stated again; they are counted and wait for the person. A proposal to replace
+    another item (`replaces_id`): a contradiction is settled by approval only, and
+    promoting it would leave both facts active. A proposal without evidence: nothing
+    shows the person ever said it (the LLM may have taken it from the avatar's own
+    answer).
+  - `replace` → a `pending` item whose `replaces_id` is an **active** item of the user,
+    which is not touched; of an item that is not active it is an `add`. If the active
+    item is gone by the time the changes are stored, the proposal is stored without
+    `replaces_id`.
+  - `evidence` is kept only when the person said it: it is looked for in the utterances
+    that were read, not in the answers of the avatar (the profile page shows it as the
+    person's words).
+- **Approval**: `PATCH /memory/items/{id}` with `{"status": "active"}`, alone or with
+  `text` / `category`. A pending item becomes active; when it has `replaces_id`, the
+  replaced item is deleted for good in the same transaction, and any other proposal on
+  that item becomes a plain proposal. On an active item `status` changes nothing. Any
+  other value of `status` is a `422`.
+- **Delete / reject**: `DELETE /memory/items/{id}`. An item whose source is
+  `conversation`, pending or active, becomes `rejected`; items of the other sources are
+  deleted for good. A proposal that pointed at the removed item loses its
+  `replaces_id` (also when the item goes with its import).
+- **A rejected item is out of reach of the profile page**: not listed, and `PATCH` or
+  `DELETE` on it is a `404`, like an item of another user.
+- **At startup**, in a background task of the lifespan (stopped at shutdown, never
+  delaying the start): the turns older than `MEMORY_TRANSCRIPT_TTL_DAYS` are deleted
+  and a conversation left without any turn is marked consolidated; then every
+  conversation that existed at the start and is not consolidated, closed or left open
+  by a killed process, is read, one after the other. One that fails is logged and the
+  next one is read.
+- **These two housekeeping queries name no user** (`expire_turns`,
+  `unconsolidated_conversations`): they are the only store methods without a user id,
+  and they give back ids and a count, never a user's data.
+- **The changes are written relative to the row, not to what was read.** The reading
+  takes as long as the LLM, and the person may approve, reject or delete an item
+  meanwhile. The store therefore counts an item (`seen_count = seen_count + 1`), and
+  promotes it, only where the row still has the status it was read with, inside the
+  transaction; anything else is left as the person put it. The consolidation hands the
+  store, per item stated again, its id, the status read and whether to promote
+  (`StatedAgain`). The conversation is marked consolidated first, by an update that
+  only matches while `consolidated_at` is null: of two transactions on one conversation
+  one writes and the other writes nothing.
+- **One reading at a time per user**: a lock per user id is held from the items read to
+  the changes stored. Two conversations of one user (a live close and the backlog of a
+  start) would otherwise each propose what the other proposes. The second reading sees
+  what the first stored. Other users are not held up. One lock per user seen is kept
+  for the life of the process, like the profile cache: to be bounded when the login
+  brings many users. The `memory.consolidate` span includes the wait for the lock.
+- **Bounds**: a conversation longer than `MEMORY_CONSOLIDATE_MAX_CHARS` (new, default
+  20000) keeps its most recent turns. The request lists every active and pending item
+  and, of the rejected ones, the `MEMORY_EXTRACT_MAX_REJECTED` (new, default 50, 0 =
+  none) most recently rejected: tombstones only grow in number. An `add` saying what
+  any rejected item says, listed or not, is still dropped.
+- **The start never stops on one conversation**: whatever fails while one is read, not
+  only the store or the LLM, is logged and the next one is read.
+- **Approval is its own call** in the store and the service (`approve_item`), beside
+  `update_item`; the route picks one from the presence of `status`.
+- **Of a stored turn the reading uses** the utterance, the answer and the STT
+  confidence. `position`, `interrupted` and `created_at` are written (the order, the
+  TTL) and not read back.
+- **Defaults**: `MEMORY_PROMOTE_SEEN_COUNT=2`, `MEMORY_MIN_STT_CONFIDENCE=0.6` (in the
+  real runs a sentence about oneself scores 0.93–0.97 and a one-word answer 0.45–0.70),
+  `MEMORY_TRANSCRIPT_TTL_DAYS=7`.
+- **One LLM** for the turns, the imports and the consolidation; a failed consolidation
+  goes through `complete` and so never starts the cooldown of the turns.
+- Not limited in this version: the number of items one conversation may propose
+  (bounded by `LLM_COMPLETE_MAX_TOKENS`), and two proposals that say the same thing in
+  different words.
+- Real run (local qwen3:8b, Groq Whisper): a conversation of three spoken turns gave
+  three pending items with their quotes in about 10 s; the preference said again in a
+  second conversation became active; a conversation cut by a killed process was read at
+  the next start; a rejected name heard again was not proposed again. The STT heard
+  "Linh" as "Liên" with a confidence of 0.94, which is why a name is never promoted by
+  repetition.
+
 ### `LLM.complete`
 
 - Extraction needs a call without the persona and without streaming: the `LLM` contract
@@ -257,7 +393,8 @@ Scoped to `current_user_id()`; a guest gets `401` on every route.
 - `GET /memory/items` → `{"items": [...]}` (active and pending)
 - `POST /memory/items` `{category, text}` → `201` + the item
 - `PATCH /memory/items/{id}` `{text?, category?, status?: "active"}` → the item, or `404`
-- `DELETE /memory/items/{id}` → `204`, or `404`
+  (`status` approves a pending item, slice 4)
+- `DELETE /memory/items/{id}` → `204`, or `404` (also rejects a pending item)
 - An item is `{"id", "category", "text", "status", "source", "import_id",
   "replaces_id", "evidence", "created_at", "updated_at"}`, `null` where not set, the
   timestamps in ISO 8601 UTC. An item of another user is a `404`. An unknown category
@@ -302,12 +439,18 @@ stateDiagram-v2
 
 In `backend/tuning.py`, each overridable from `.env`: `MEMORY_PROMPT_MAX_ITEMS`
 (default 20, at least 1), `MEMORY_TIMEOUT_SEC` (default 1.0, positive and finite),
-`MEMORY_ITEM_MAX_CHARS` (default 200, at least 1), `MEMORY_PROMOTE_SEEN_COUNT` (default 2), `MEMORY_MIN_STT_CONFIDENCE`,
-`MEMORY_TRANSCRIPT_TTL_DAYS`, `MEMORY_IMPORT_MAX_FILE_MB` (default 5, positive),
+`MEMORY_ITEM_MAX_CHARS` (default 200, at least 1), `MEMORY_PROMOTE_SEEN_COUNT` (default
+2, at least 1), `MEMORY_MIN_STT_CONFIDENCE` (default 0.6, within 0–1),
+`MEMORY_TRANSCRIPT_TTL_DAYS` (default 7, positive and finite),
+`MEMORY_CONSOLIDATE_MAX_CHARS` (default 20000, at least 1), `MEMORY_EXTRACT_MAX_REJECTED`
+(default 50, not negative), `MEMORY_IMPORT_MAX_FILE_MB` (default 5, positive),
 `MEMORY_IMPORT_MAX_CHARS` (default 20000, at least 1), `LLM_COMPLETE_TIMEOUT_SEC`
 (default 30, positive and finite), `LLM_COMPLETE_MAX_TOKENS` (default 2048, at least 1). The
 texts `MEMORY_PROMPT` (with `MEMORY_PROMPT_ITEM`, the line of one item),
-`MEMORY_EXTRACT_PROMPT` and `MEMORY_IMPORT_PROMPT` (with `MEMORY_IMPORT_DOCUMENT`, the
+`MEMORY_EXTRACT_PROMPT` (with `MEMORY_EXTRACT_REQUEST`, `MEMORY_EXTRACT_ITEMS`,
+`MEMORY_EXTRACT_ITEM`, `MEMORY_EXTRACT_NO_ITEMS`, `MEMORY_EXTRACT_TRANSCRIPT`,
+`MEMORY_EXTRACT_USER_LINE` and `MEMORY_EXTRACT_AVATAR_LINE`, the shapes its request is
+written with) and `MEMORY_IMPORT_PROMPT` (with `MEMORY_IMPORT_DOCUMENT`, the
 delimiters its text is given in, and `MEMORY_IMPORT_TEXT_NAME`, the name of a pasted text) are in `backend/prompts.py` only.
 
 ### Observability
@@ -321,6 +464,16 @@ delimiters its text is given in, and `MEMORY_IMPORT_TEXT_NAME`, the name of a pa
   `import.items` (the stored items as JSON), `import.id`, `memory.items` and
   `memory.outcome`: `stored`, `too_large`, `unsupported`, `unreadable`, `empty`,
   `nothing`, `extraction_failed` or `error`. A failed import is a failed span.
+- `memory.consolidate` (slice 4) is a root span, whatever the caller was doing. It
+  carries `conversation.id`, `user.id`, `memory.turns`, `memory.turns_skipped` (left
+  out for their STT confidence or for the length), `memory.items_known`,
+  `memory.known` (the items as the LLM was given them), `memory.transcript`,
+  `llm.answer` (also when it was refused), `memory.operations` (the valid ones, as
+  JSON), `memory.applied` (the items proposed and the items stated again that were really
+  counted, as JSON),
+  `memory.items` and `memory.outcome`: `stored`, `nothing`, `no_speech`, `missing` (no
+  such conversation, or consolidated already), `extraction_failed` or `error`. A
+  reading the LLM failed is a failed span.
 
 ## Implementation approach
 
@@ -333,8 +486,10 @@ backend/
   providers/llm/*.py, fallback.py    complete
   features/memory/
     store.py                         items, imports, conversations, turns
-    memory.py                        MemoryService: profile cache, items, record, consolidate
+    memory.py                        MemoryService: profile cache, items; hands turns and closes on
+    consolidation.py                 MemoryConsolidation: turns kept, a closed conversation → proposed items
     imports.py                       MemoryImports: file / pasted text → object + row + items
+    reading.py                       shared by the two: delimiters, quote check, waiting for a store call
     extraction.py                    LLM JSON → operations (pure parsing + validation)
     api.py                           the HTTP routes
   utils/loaders.py                   moved from features/knowledge/ (file bytes → text)
@@ -359,10 +514,19 @@ backend/
 - [ ] Slice 3 — `MEMORY_IMPORT_PROMPT` and `LLM_COMPLETE_TIMEOUT_SEC` measured on the
       model of the deployment (`tests/e2e`): checked by hand on a local qwen3:8b only,
       where a first request with the model not loaded yet ran past the 30 s
-- [ ] Slice 4 — turn persistence, consolidation at close and at startup, transcript
+- [x] Slice 4 — turn persistence, consolidation at close and at startup, transcript
       deletion and TTL, `MEMORY_EXTRACT_PROMPT`
-- [ ] Slice 4 — pending / confirm / replace / rejected rules (repetition promotes
+- [x] Slice 4 — pending / confirm / replace / rejected rules (repetition promotes
       `preference` and `personality` only), approval through `PATCH /memory/items/{id}`
-- [ ] Unit tests per `test-plan.md`: LLM backends and Fallback (`complete`), Engine
+- [ ] Slice 4 — `MEMORY_EXTRACT_PROMPT` measured on the model of the deployment
+      (`tests/e2e`, the Consolidation case): checked by hand on a local qwen3:8b only
+- [ ] Slice 4 — seen in the real run, to decide: the text of a pending item edited
+      while a reading confirms its old text is promoted with the new text (the write is
+      conditional on the status only); a quote that differs from the utterance by case
+      alone is dropped, and an item without a quote is never promoted; the transcript
+      strips its own delimiters and not those of the list of known items
+- [ ] Slice 4 — the log line of a reading that failed says "Conversation consolidated"
+      with `outcome: extraction_failed`
+- [x] Unit tests per `test-plan.md`: LLM backends and Fallback (`complete`), Engine
       (profile), Loaders, Imports, Store, Memory service, Extraction, Consolidation, API,
       Config

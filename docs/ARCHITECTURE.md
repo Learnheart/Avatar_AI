@@ -8,10 +8,9 @@
 > its context, high-level diagram and consequences. This document is the full detail of
 > the current one, [ADR 0002](adr/0002-mvp-2-architecture.md).
 > **Reading the diagrams:** solid boxes exist today (MVP 1, and of MVP 2 the short-term
-> conversation memory, the application database, the users, the memory of typed and
-> imported facts with its profile page, and the object store). What is still planned
-> for MVP 2 (facts gathered from conversations and their approval) is marked in the
-> text.
+> conversation memory, the application database, the users, the memory of typed,
+> imported and gathered facts with its profile page, and the object store). What is
+> still planned (sign-in, customising the character) is marked in the text.
 
 ---
 
@@ -46,7 +45,7 @@ documents the user has uploaded.
 | Milestone | Status | What it delivers |
 |---|---|---|
 | **MVP 1** | Built, demo-ready | One complete spoken turn end to end (presence → listen → understand → answer → speak), interruption by speaking over the avatar, answers from uploaded documents, a backup provider per cloud step, turn tracing |
-| **MVP 2** | In progress: the short-term part, the application database, the users, the memory of typed and imported facts with its profile page and the object store are built; facts gathered from conversations and their approval are planned | Memory: the avatar follows the conversation in progress and remembers a signed-in person across visits; a profile page where the person corrects what is remembered; an application database for users. Customising the character the avatar plays is intended for this milestone and is **not designed yet** |
+| **MVP 2** | Built, except sign-in: the short-term part, the application database, the users, the memory of typed and imported facts with its profile page, the object store, and the facts gathered from conversations with their approval | Memory: the avatar follows the conversation in progress and remembers a signed-in person across visits; a profile page where the person corrects what is remembered; an application database for users. Customising the character the avatar plays is intended for this milestone and is **not designed yet** |
 | Later | Not planned | Sign-in itself, several people talking at the same time, recognising a person by face or voice, tool/function calling, accurate mouth shapes, body gestures and emotion |
 
 **Constraints.**
@@ -89,9 +88,9 @@ documents the user has uploaded.
 | Web Audio API | Expression — frontend | Captures the microphone, plays the answer without gaps, measures loudness for lip-sync |
 | Document panel | Frontend — knowledge | Upload, list, delete documents and tick the ones the avatar may use |
 | Conversation memory, short-term *(MVP 2, built)* | The earlier turns of the conversation in progress | Kept in working memory only; bounded to the most recent turns; gone when the conversation ends. Each turn is kept as it happened: what was heard, and the sentences that had actually started to play |
-| Application database *(MVP 2, built)* | System and user information: the users, and what the avatar remembers about each of them | Short remembered facts, each *active* (used in answers) or, planned, *pending* (proposed, awaiting approval). Written through one database toolkit (SQLAlchemy Core), so the engine is a configuration choice: a local SQLite file first, PostgreSQL when deployed for many users. Tables are created at startup; there is no migration tool yet |
+| Application database *(MVP 2, built)* | System and user information: the users, and what the avatar remembers about each of them | Short remembered facts, each *active* (used in answers), *pending* (proposed after a conversation, awaiting approval) or *rejected* (kept only so that it is never proposed again); and the turns of a signed-in person's conversation, kept until that conversation has been read. Written through one database toolkit (SQLAlchemy Core), so the engine is a configuration choice: a local SQLite file first, PostgreSQL when deployed for many users. Tables are created at startup; there is no migration tool yet |
 | Object store *(MVP 2, built)* | The original files a person imports to describe themselves | One store for all users, holding the files unchanged; who owns a file is recorded in the application database, and a file is only ever read through that record; a local folder first, replaceable by a cloud bucket |
-| Profile page *(MVP 2, built in part)* | Frontend — the person's configuration | Shows what the avatar remembers about the person as editable settings: add, edit, delete, import a description and manage the imports (built); approve or reject a proposal (planned) |
+| Profile page *(MVP 2, built)* | Frontend — the person's configuration | Shows what the avatar remembers about the person as editable settings: add, edit, delete, import a description and manage the imports; approve or reject what the avatar gathered from conversations, each proposal shown with the words it comes from |
 
 ---
 
@@ -100,8 +99,8 @@ documents the user has uploaded.
 Three capability blocks on a stable spine. **Perception** feeds the **Orchestrator**,
 which drives the **Conversation** engine, whose output flows to **Expression** in the
 browser. Two features sit *beside* the turn and are consulted by it: the **knowledge
-base** (built) and **memory** (built for typed and imported facts; facts gathered from
-conversations are planned). Every model the system calls sits behind a
+base** and **memory** (typed and imported facts, and facts gathered from
+conversations as proposals). Every model the system calls sits behind a
 fixed boundary and is chosen by configuration.
 
 *(Mermaid is used instead of ASCII: with knowledge, memory, swappable providers and
@@ -284,16 +283,19 @@ flowchart LR
     ctts --> zero
 ```
 
-### 3.4 Memory beside the turn *(MVP 2, built in part)*
+### 3.4 Memory beside the turn *(MVP 2, built; sign-in planned)*
 
 Built so far: the Orchestrator's conversation and the earlier turns given to the
 Conversation engine (§3.2); the application database and the users; the Memory holding
 the facts a person types on the profile page, and the person's active facts given to
 the Conversation engine with each turn; import — a file or a pasted text is kept
 unchanged in the object store, and one request to the language model, made outside any
-turn, reads it into facts that are used at once. Until sign-in exists, one configured
-user stands in for it and everyone else is a guest. Planned: sign-in, the turns handed
-over when a conversation ends, the proposed facts and their approval.
+turn, reads it into facts that are used at once; gathering — the Orchestrator hands the
+Memory each turn of a signed-in person as it ends and tells it when the conversation
+closes, without waiting for it, and one request to the language model, again outside
+any turn, reads the closed conversation into proposed facts that the person approves or
+rejects on the profile page. Until sign-in exists, one configured user stands in for it
+and everyone else is a guest. Planned: sign-in.
 
 ```mermaid
 flowchart TB
@@ -306,7 +308,7 @@ flowchart TB
     subgraph BE["Backend"]
         orch["Orchestrator: opens and closes the conversation (presence + silence)"]
         engine["Conversation engine: with the earlier turns (short-term)"]
-        memory["Memory: facts per user, active or pending"]
+        memory["Memory: facts per user, active, pending or rejected"]
     end
 
     subgraph DATA["Data"]
@@ -316,8 +318,8 @@ flowchart TB
 
     orch -->|"every turn"| engine
     memory -->|"the person's active facts"| engine
-    orch -->|"the turns, when the conversation ends"| memory
-    memory -->|"proposes new facts afterwards"| memory
+    orch -->|"each turn as it ends, then the close: in the background"| memory
+    memory -->|"reads the closed conversation, proposes facts"| memory
     profile <-->|"what the avatar remembers"| memory
     profile -->|"an imported description"| memory
     memory --> appdb
@@ -363,8 +365,7 @@ flowchart TB
 - **Identity comes from sign-in, and guests leave no trace** *(built, with one
   configured user standing in for sign-in)*. Long-term memory is keyed by the signed-in
   user, and one user never reads another's. A guest gets the short-term memory only.
-- **Three ways into long-term memory, with different trust** *(typing and import are
-  built, conversation is planned)*. What a person
+- **Three ways into long-term memory, with different trust** *(built)*. What a person
   types, and what is extracted from a description they import, is used at once. What
   the avatar *heard* in a conversation is only a proposal until the person approves it,
   or says it again on a later visit — because speech recognition mishears, and a wrong
@@ -477,7 +478,7 @@ flowchart TB
   to upload again.
 - No match, a slow lookup or a failure → the question goes to the LLM alone.
 
-### 4.4 Memory: how a spoken fact becomes (or does not become) a memory *(planned)*
+### 4.4 Memory: how a spoken fact becomes (or does not become) a memory *(built)*
 
 ```mermaid
 flowchart TD
@@ -489,18 +490,26 @@ flowchart TD
     ends -->|"a signed-in user"| extract["One background LLM pass reads the conversation (unsure transcripts left out) and proposes facts"]
     extract --> pending["PENDING: remembered as a proposal, not used in answers"]
     pending -->|"approved on the profile page"| active["ACTIVE: used in answers"]
-    pending -->|"said again on a later visit"| active
+    pending -->|"a preference or a trait said again on a later visit"| active
     pending -->|"rejected on the profile page"| never["Never proposed again"]
     typed["Typed on the profile page"] --> active
     imported["Extracted from an imported description"] --> active
 ```
 
 - **Hearing is not remembering.** A fact reaches the answers only after a human
-  approval or a repetition; a single misheard sentence cannot.
+  approval or a repetition; a single misheard sentence cannot. A name or a way of
+  addressing needs the approval however often it is heard: speech recognition mishears
+  a name the same way every time.
+- **A rejected proposal stays rejected.** It is kept, unused and unseen, so that the
+  same fact is not proposed again after the next conversation. The same holds for a
+  gathered fact the person deletes later.
 - **A conversation never overwrites what is already remembered.** A contradiction
   becomes a proposal to replace, decided by the person.
 - **Recordings of the conversation are not kept.** Once the proposals are made, the
-  stored turns are deleted; only the short quote behind each fact remains.
+  stored turns are deleted; only the short quote behind each fact remains. A
+  conversation that could not be read (the language model failed, the system was
+  stopped) keeps its turns and is read at the next start, and turns older than a set
+  number of days are deleted either way.
 - **Memory never costs the turn.** Reading the profile is instant; saving turns and
   extracting facts happen after the audio has been sent.
 
@@ -626,6 +635,7 @@ and the block moves to its own service — without redrawing the architecture ab
 | 2026-10-12 | v2 | Short-term conversation memory built (first slice of MVP 2): the conversation owned by the Orchestrator, the earlier turns given to the engine, the `conversation_reset`, `conversation` and `transcript` messages | [0002](adr/0002-mvp-2-architecture.md) | `docs/2026-10-12/conversation-memory/` |
 | 2026-10-12 | v2 | Application database, users and long-term memory of typed facts built (second slice of MVP 2): one database for users and memory items, a configured user standing in for sign-in, the person's active facts given to the LLM with each turn, the profile page and its HTTP routes. Import, the object store, facts gathered from conversations and their approval stay planned | [0002](adr/0002-mvp-2-architecture.md) | `docs/2026-10-12/conversation-memory/` |
 | 2026-10-12 | v2 | Import and the object store built (third slice of MVP 2): a person describes themselves with a file or a pasted text, the original is kept unchanged in one object store for all users with its owner recorded in the application database, and one request to the language model outside the turn reads it into facts used at once. Facts gathered from conversations and their approval stay planned | [0002](adr/0002-mvp-2-architecture.md) | `docs/2026-10-12/conversation-memory/` |
+| 2026-10-13 | v2 | Gathering from conversations built (fourth slice of MVP 2): the Orchestrator hands the Memory the turns of a signed-in person and the close of the conversation, in the background; one request to the language model outside the turn reads the closed conversation into proposed facts, which the person approves or rejects on the profile page; a preference or a trait said again on a later visit becomes active by itself, a name never does; a rejected fact is never proposed again; the stored turns are deleted once read. Sign-in stays planned | [0002](adr/0002-mvp-2-architecture.md) | `docs/2026-10-12/conversation-memory/` |
 
 **Still deferred:** sign-in, several people at the same time, recognising a person by
 face or voice, tool/function calling, accurate mouth shapes, body gestures and emotion,

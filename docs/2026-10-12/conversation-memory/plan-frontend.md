@@ -130,6 +130,36 @@ sees. It consumes two contracts and defines neither: the WebSocket messages
     its import was deleted still says it was imported, without a name.
   - The items and the imports are read together; if either read fails the page shows
     the failure rather than half of the profile.
+- Decided while building slice 4 (the proposals block, first block of the page, above
+  the lists; a guest does not see it):
+  - The block exists only while there is a `pending` item. Its title carries their
+    number; the proposals are listed the oldest first (the order they were heard in),
+    whatever their category, each with its category, its text and the quote it comes
+    from when there is one. A pending item is never in the four lists.
+  - A proposal that replaces an item shows the current text of that item, struck
+    through, as "Thay cho: …". When that item is no longer among the active ones
+    (deleted meanwhile), the proposal is shown as a plain one.
+  - Three actions: "Ghi nhớ" approves (`PATCH` with `status: active`), "Bỏ qua" rejects
+    (`DELETE`), "Sửa" corrects the text first. Neither asks a confirmation.
+  - Correcting is the in-place edit of the lists, with its rules (the length limit,
+    Enter, Escape cancels the edit and does not close the page, the input-method
+    guard, one edit at a time on the whole page, the draft kept when the backend
+    refuses and across a redraw). Its save button is "Lưu và ghi nhớ": the correction
+    and the approval are one `PATCH` carrying `text` and `status`, so a corrected
+    proposal is never stored unapproved. A text left as it was is approved as it is
+    (`status` only); an empty one is not sent. Only the text is corrected there: the
+    category is changed, if ever, on the item once it is in its list.
+  - After an approve or a reject the items are read again and the message on top of
+    the page says what happened (approved, approved in place of the old item, rejected
+    and not proposed again). The keyboard goes to the proposal that took the place of
+    the handled one (the next, or the last one left), on its "Ghi nhớ", and to "Đóng"
+    when none is left. A refused action (`422`, `502`) leaves it on the proposal, in
+    the field when it was being corrected. `404` (approved or rejected elsewhere
+    meanwhile) shows "Mục này không còn tồn tại" and the proposal leaves with the read
+    that follows; `401` shows the login note.
+  - Cancelling a correction puts the keyboard back on "Sửa" of that proposal.
+  - The page does not poll and the "Hồ sơ" button carries no count: proposals are seen
+    when the page is opened.
 
 ### Config
 
@@ -158,7 +188,7 @@ frontend/tests/                      transcript.test.js, memory.test.js
 - [x] Slice 2 — frontend profile page: fields, lists, add, edit, delete, guest note
 - [x] Slice 3 — imports on the profile page: drop a file or paste a text, list, open the
       original, delete
-- [ ] Slice 4 — proposals on the profile page: approve or reject, with the quote
-- [ ] Unit tests per `test-plan.md` (Frontend — transcript, Frontend — memory),
+- [x] Slice 4 — proposals on the profile page: approve or reject, with the quote
+- [x] Unit tests per `test-plan.md` (Frontend — transcript, Frontend — memory),
       `npm run build`
 - [ ] The profile page opened in a real browser
