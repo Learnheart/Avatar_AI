@@ -60,13 +60,23 @@ _tracer_provider: Optional[TracerProvider] = None
 _meter_provider: Optional[MeterProvider] = None
 
 
+def is_own_span(span: ReadableSpan) -> bool:
+    """True for a span of this backend. FastAPI opens spans of its own for every HTTP
+    request and WebSocket (`GET /health`, `fastapi.endpoint`, ...): they are exported
+    with the rest, but are not steps of the pipeline."""
+    scope = span.instrumentation_scope
+    return scope is not None and scope.name == _NAME
+
+
 class SpanReporter(SpanProcessor):
-    """Logs every finished span and records its duration as a metric."""
+    """Logs every finished span of the backend and records its duration as a metric."""
 
     def __init__(self, value_max_chars: int) -> None:
         self._max = value_max_chars
 
     def on_end(self, span: ReadableSpan) -> None:
+        if not is_own_span(span):
+            return
         duration_ms = (span.end_time - span.start_time) / _NS_PER_MS
         stage_duration.record(duration_ms, {"stage": span.name})
 

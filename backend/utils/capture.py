@@ -36,7 +36,7 @@ from opentelemetry.trace import StatusCode
 from backend.config import AppConfig
 from backend.models import PCM_SAMPLE_WIDTH
 from backend.utils.logging import get_logger
-from backend.utils.telemetry import capture_dropped
+from backend.utils.telemetry import capture_dropped, is_own_span
 
 logger = get_logger("capture")
 
@@ -188,19 +188,22 @@ class CaptureStore:
 
 class CaptureSpans(SpanProcessor):
     """Collects the spans of each trace and hands them to the store when the root span
-    ends (the turn, or a document upload)."""
+    ends (the turn, or a document upload). A trace with no span of the backend — a
+    plain HTTP request such as the health check — is not stored."""
 
     def __init__(self, store: CaptureStore) -> None:
         self._store = store
-        # Per trace: (start time, is a child, record) of each finished span.
-        self._open: dict[int, list[tuple[int, bool, dict]]] = {}
+        # Per trace: (start time, is a child, is the backend's, record) of each finished span.
+        self._open: dict[int, list[tuple[int, bool, bool, dict]]] = {}
         self._lock = threading.Lock()
 
     def on_end(self, span: ReadableSpan) -> None:
         trace_id = span.context.trace_id
         with self._lock:
             spans = self._open.setdefault(trace_id, [])
-            spans.append((span.start_time, span.parent is not None, _span_record(span)))
+            spans.append(
+                (span.start_time, span.parent is not None, is_own_span(span), _span_record(span))
+            )
             if span.parent is not None:
                 # A trace whose root never ends is forgotten once enough others came.
                 while len(self._open) > _OPEN_TRACES:
@@ -208,8 +211,9 @@ class CaptureSpans(SpanProcessor):
                 return
             del self._open[trace_id]
         # In the order the steps started; the root first when a child starts with it.
-        ordered = [record for _, _, record in sorted(spans, key=lambda s: s[:2])]
-        self._store.spans(trace.format_trace_id(trace_id), ordered)
+        if any(own for _, _, own, _ in spans):
+            ordered = [record for *_, record in sorted(spans, key=lambda s: s[:2])]
+            self._store.spans(trace.format_trace_id(trace_id), ordered)
 
 
 def _span_record(span: ReadableSpan) -> dict:

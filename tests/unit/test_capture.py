@@ -139,6 +139,25 @@ def test_the_spans_of_a_trace_are_written_when_its_root_ends(config, store):
     assert child["duration_ms"] >= 0 and child["error"] is None
 
 
+def test_a_trace_without_a_span_of_the_backend_is_not_stored(config, store):
+    collector = CaptureSpans(store)
+    telemetry.add_span_processor(collector)
+    try:
+        with telemetry.trace.get_tracer("fastapi").start_as_current_span("GET /health"):
+            pass
+        with telemetry.trace.get_tracer("fastapi").start_as_current_span("POST /knowledge/documents"):
+            with tracer.start_as_current_span("knowledge.ingest"):
+                pass
+        store.stop()
+    finally:
+        collector.on_end = lambda span: None
+
+    (path,) = _files(config, "*/*/traces/*/trace.json")
+    assert [s["name"] for s in json.loads(path.read_text())["spans"]] == [
+        "POST /knowledge/documents", "knowledge.ingest",
+    ]
+
+
 def test_the_oldest_hours_are_deleted_over_the_size_cap_and_the_current_one_kept(config):
     root = Path(config.CAPTURE_DIR)
     old = datetime.now() - timedelta(days=2)

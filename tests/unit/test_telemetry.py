@@ -4,6 +4,8 @@ import logging
 from backend.config import AppConfig
 from backend.utils import telemetry
 from backend.utils.logging import JsonFormatter
+from opentelemetry import trace
+
 from backend.utils.telemetry import SpanReporter, detached_span, otlp_exporters, tracer
 
 
@@ -118,3 +120,12 @@ def test_an_endpoint_gets_a_trace_and_a_metric_exporter_with_the_headers(monkeyp
 
 def test_the_otlp_headers_never_appear_in_repr():
     assert "secret" not in repr(AppConfig(OTLP_HEADERS="x-api-key=secret"))
+
+
+def test_spans_of_the_web_framework_are_not_logged_as_steps(spans):
+    with _Lines() as lines:
+        with trace.get_tracer("fastapi").start_as_current_span("GET /health"):
+            pass
+
+    assert [span.name for span in spans.get_finished_spans()] == ["GET /health"]  # still exported
+    assert lines == []
