@@ -3,7 +3,7 @@
  *
  * - Auto-reconnect with exponential backoff (WS_BACKOFF_* in config.js)
  * - on(type, handler) subscription to dispatch incoming messages
- * - send() helpers for audio_chunk / playback_ended to the backend
+ * - send() helpers for audio_chunk / playback_ended / conversation_reset to the backend
  * - Status label: connection status + avatar state (idle/listening/thinking/speaking)
  */
 
@@ -81,6 +81,11 @@ export class WSClient {
 
   sendPlaybackEnded() {
     this.send({ type: 'playback_ended' })
+  }
+
+  /** Ask the backend to close the conversation; it answers with a `conversation` message. */
+  sendConversationReset() {
+    this.send({ type: 'conversation_reset' })
   }
 
   // ── Event subscription ───────────────────────────────────────────────────

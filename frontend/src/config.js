@@ -33,6 +33,11 @@ export const ANALYSER_FFT_SIZE = 256        // Time-domain window read by lip-sy
 export const KNOWLEDGE_EXTENSIONS = ['.txt', '.md', '.csv', '.pdf', '.docx']
 export const KNOWLEDGE_MAX_FILE_MB = 10
 
+// ── Transcript window ─────────────────────────────────────────────────────
+
+export const TRANSCRIPT_MAX_LINES = 40          // Lines kept on screen; the oldest are dropped
+export const TRANSCRIPT_SCROLL_SLACK_PX = 24    // This close to the end, a new line scrolls the list
+
 // ── Head motion ───────────────────────────────────────────────────────────
 
 // Head rotation clamps (radians) — gentle motion: ~35% of the backend limits.

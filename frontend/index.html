@@ -181,6 +181,104 @@
       white-space: nowrap;
     }
 
+    /* Transcript window: the conversation in progress, under the status label.
+       Below the knowledge panel in the stack, so an opened panel is never blocked. */
+    #transcript-panel {
+      position: fixed;
+      top: 56px;
+      right: 16px;
+      width: 320px;
+      max-width: calc(100vw - 32px);
+      max-height: calc(100vh - 72px);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 16px;
+      border-radius: 12px;
+      font-family: sans-serif;
+      font-size: 13px;
+      color: rgba(255,255,255,0.85);
+      background: rgba(18, 18, 28, 0.94);
+      border: 1px solid rgba(255,255,255,0.15);
+      z-index: 90;
+    }
+
+    #transcript-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    #transcript-reset {
+      color: rgba(255,255,255,0.7);
+      background: none;
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 6px;
+      padding: 3px 9px;
+      font-size: 12px;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+
+    #transcript-reset:hover { color: #fff; border-color: #6c63ff; }
+
+    #transcript-list {
+      list-style: none;
+      min-height: 0;
+      overflow-y: auto;
+      padding-right: 4px;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,255,255,0.25) transparent;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .transcript-empty { font-size: 12px; opacity: 0.6; }
+
+    .transcript-line {
+      flex: none;
+      max-width: 88%;
+      padding: 7px 10px;
+      border-radius: 8px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .transcript-line.person {
+      align-self: flex-end;
+      background: rgba(108, 99, 255, 0.22);
+      border: 1px solid rgba(108, 99, 255, 0.45);
+    }
+
+    .transcript-line.avatar {
+      align-self: flex-start;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.15);
+    }
+
+    .transcript-line.cut { border-style: dashed; }
+    .transcript-line.cut .transcript-text { opacity: 0.6; }
+
+    .transcript-speaker { font-size: 11px; font-weight: 600; opacity: 0.6; margin-bottom: 2px; }
+    .transcript-line.person .transcript-speaker { text-align: right; }
+
+    .transcript-cut-mark { margin-left: 6px; font-weight: 400; color: #ffb400; }
+
+    /* Narrow window: a strip at the bottom, so the avatar's face stays clear. */
+    @media (max-width: 900px) {
+      #transcript-panel {
+        top: auto;
+        bottom: 16px;
+        width: auto;
+        left: 16px;
+        max-height: 32vh;
+      }
+    }
+
     /* Loading overlay */
     #loading {
       position: fixed;
@@ -254,6 +352,15 @@
     <div id="knowledge-message"></div>
     <div id="knowledge-summary"></div>
     <ul id="knowledge-list"></ul>
+  </div>
+
+  <!-- Transcript: the conversation in progress, both sides -->
+  <div id="transcript-panel">
+    <div id="transcript-header">
+      <span>Hội thoại</span>
+      <button id="transcript-reset" type="button">Cuộc trò chuyện mới</button>
+    </div>
+    <ul id="transcript-list" role="log" aria-live="polite"></ul>
   </div>
 
   <script type="module" src="/src/main.js"></script>

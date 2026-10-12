@@ -9,6 +9,7 @@
  *   5. Wire WS message handlers
  *
  * The knowledge panel is set up first: it only needs the backend HTTP API.
+ * The transcript window is filled from the WebSocket messages of the turn.
  */
 
 import { AvatarRenderer } from './avatar/avatar-renderer.js'
@@ -17,6 +18,7 @@ import { AudioManager } from './audio/audio-manager.js'
 import { LipSync } from './avatar/lip-sync.js'
 import { KnowledgeClient } from './knowledge/knowledge-client.js'
 import { KnowledgePanel } from './knowledge/knowledge-panel.js'
+import { TranscriptPanel } from './transcript/transcript-panel.js'
 
 async function main() {
   new KnowledgePanel(new KnowledgeClient()).init()
@@ -29,6 +31,11 @@ async function main() {
 
   // ── 2. WebSocket Client ───────────────────────────────────────────────
   const ws = new WSClient()
+
+  // The button only asks: the window is emptied by the `conversation` message that
+  // follows, so the screen cannot disagree with the backend.
+  const transcript = new TranscriptPanel()
+  transcript.init(() => ws.sendConversationReset())
 
   // ── 3. Audio Manager ─────────────────────────────────────────────────
   const audio = new AudioManager(ws)
@@ -47,17 +54,30 @@ async function main() {
     avatar.applyTrackingData(msg.avatar_control.head_rotation)
   })
 
-  // speech_output → schedule audio for playback
+  // speech_output → schedule audio for playback; its sentence joins the avatar's line
   ws.on('speech_output', (msg) => {
     audio.queueAudio(msg.audio_data, msg.audio_mime_type, msg.is_final === true)
+    transcript.appendAvatarSentence(msg.text_content)
+  })
+
+  // transcript → what the person said, once speech-to-text finished
+  ws.on('transcript', (msg) => {
+    transcript.addPersonLine(msg.text)
+  })
+
+  // conversation → the conversation in progress (null: none); another one than the
+  // one on screen empties the transcript window
+  ws.on('conversation', (msg) => {
+    transcript.showConversation(msg.conversation_id)
   })
 
   // Queue drained after is_final → tell the backend the avatar stopped speaking
   audio.onPlaybackEnded(() => ws.sendPlaybackEnded())
 
-  // interrupt → stop playback immediately (barge-in)
+  // interrupt → stop playback immediately (barge-in), mark the avatar's line as cut
   ws.on('interrupt', () => {
     audio.interrupt()
+    transcript.cutAvatarLine()
   })
 
   // state → status label + "thinking" head tilt
