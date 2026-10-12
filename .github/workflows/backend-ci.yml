@@ -1,0 +1,38 @@
+# Backend quality gate: lint + complexity (ruff) and the unit tests, which include the
+# layering and file-size checks (tests/unit/test_code_shape.py). Same commands as
+# CLAUDE.md §5; no secret, no model provider, no camera.
+name: Backend CI
+
+on: push
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  # A newer push replaces the run of its branch; a run on main is never cancelled.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      # setup-uv publishes no moving major tag after v7: the release is named in full.
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/requirements*.txt
+
+      - name: Install dependencies
+        run: |
+          uv venv --python 3.12 .venv
+          uv pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+
+      - name: Lint and complexity
+        run: .venv/bin/ruff check
+
+      - name: Unit tests
+        run: .venv/bin/python -m pytest tests/unit -q
