@@ -53,7 +53,8 @@ duplicate-code detection.
 
 - **GitHub Actions, one workflow, one job.** The remote is on GitHub. The job installs
   the dependencies as §5 does (`uv`, Python 3.12), then runs `ruff check` and
-  `pytest tests/unit -q`. One job keeps the install (the slow part) to one run. The
+  `pytest tests/unit -q`. One job keeps the install (the slow part) to one run. The runner is a named
+  image (`ubuntu-24.04`), not `ubuntu-latest`, so it changes only when the workflow does. The
   workflow carries three settings: read-only permissions on the repository, one run per
   branch at a time (a newer push cancels the run before it, except on `main`, where a
   run is never cancelled), and a 30-minute timeout.
@@ -147,7 +148,7 @@ the thresholds when it is merged with `main`, in its own plan.
 - [x] Add `.github/workflows/backend-ci.yml`
 - [x] Update §4, §5, §6 in `CLAUDE.md` and `AGENTS.md` (identical text)
 - [x] `pytest tests/unit -q` passes locally
-- [ ] Push the branch; the first CI run passes
-- [ ] A scratch branch with a failing unit test fails the check, then is deleted
+- [x] Push the branch; the first CI run passes
+- [x] A scratch branch with a failing unit test fails the check, then is deleted
 - [ ] Merge into `main`; the run on `main` passes
 - [ ] Human: enable branch protection on `main` requiring the backend check
