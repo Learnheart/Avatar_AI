@@ -56,6 +56,11 @@ data of a user lives and how a user is named; what is stored there and why is in
     at once (there is no migration tool). `replaces_id` is a self foreign key;
     `import_id` is a plain nullable column until the table `imports` arrives (slice 3).
     `imports`, `conversations` and `turns` come with their slices.
+  - Slice 3 creates `imports`, and `memory_items.import_id` becomes a foreign key to
+    it. There is still no migration tool and no migration code: a database file created
+    by slice 2 is disposable. Opened as it is, it gains the table `imports` and keeps
+    its old `memory_items` without the constraint; deleting the file gives the new
+    shape.
 - Every per-user table carries `user_id` (a foreign key to `users`) and every store
   method takes it: no query reads across users.
 - **The knowledge base keeps its own sqlite-vec file**: it is a vector index, replaced
@@ -91,6 +96,19 @@ data of a user lives and how a user is named; what is stored there and why is in
   (`backend/data/objects/`, gitignored); an S3-compatible store replaces that one class.
   The store knows nothing about users: the key is `imports/<import_id>`, and who owns
   an object is recorded in the database only.
+- Slice 3, the directory backend: one class, `put(key, data)`, `get(key)`,
+  `delete(key)`.
+  - A key that holds nothing is `ObjectNotFound` on `get`, and harmless on `delete`.
+  - A key is a relative path of plain names. `..`, an absolute path, a backslash, an
+    empty part or a link leading out of the directory is refused (`InvalidObjectKey`):
+    a key can never leave the directory.
+  - A write is atomic: the bytes go to a temporary file beside their place, which is
+    then renamed. An object is whole or absent.
+  - Any other failure of the directory is `ObjectStoreError`; no caller names `OSError`.
+  - Every method blocks; callers use a thread. The directory is created by the first
+    `put`, not at startup.
+  - An object is never served by its key: the memory reads it through the row of the
+    import and its `user_id`.
 
 ### Data model (application database)
 
@@ -160,7 +178,8 @@ the database: `IMPORTS.object_key` points into the object store.
 
 In `backend/config.py` (per-machine values), listed in `.env.example`: `DATABASE_URL`
 (default `sqlite:///backend/data/app.db`; kept out of `repr(config)`, it may hold a
-password), `AUTH_DEV_USER_ID` (default empty = guest), `OBJECT_STORE_DIR`.
+password), `AUTH_DEV_USER_ID` (default empty = guest), `OBJECT_STORE_DIR` (default
+`backend/data/objects`, must not be empty).
 
 ## Implementation approach
 
@@ -180,5 +199,5 @@ backend/
       SQLAlchemy in `requirements.txt`
 - [x] Slice 2 — `features/accounts/` (users, `current_user_id()`), `AUTH_DEV_USER_ID`,
       user id through `handle_connect`
-- [ ] Slice 3 — `utils/object_store.py` (`OBJECT_STORE_DIR`)
+- [x] Slice 3 — `utils/object_store.py` (`OBJECT_STORE_DIR`)
 - [ ] Unit tests per `test-plan.md`: Database, Identity, Object store, Config

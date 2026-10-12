@@ -170,23 +170,28 @@ turn audio and spans on disk.
 | Performance | No measurable cost on a turn: with capture on, local stages (TTS first chunk, tracking time per frame) stay within their run-to-run variation; nothing is written or exported on the event loop |
 | Resilience | No OTLP endpoint, an unreachable one, a full capture queue or a disk error → the turn is unaffected; dropped capture items are counted; the capture directory stays under `CAPTURE_MAX_GB` once an hour has passed |
 
-### 1.10 Memory (what is kept about a known person → the profile given to the LLM)
+### 1.10 Memory (what is kept about a known person → the profile given to the LLM; imports)
 
 **Contract:** a user id in → the profile text given to the LLM out, written from that
 user's *active* items (who the person is and how to address them first, then the most
 recently updated, at most `MEMORY_PROMPT_MAX_ITEMS`), or nothing when there is none; an
 item typed on the profile page in → stored for that user and used from the next turn.
-A guest has no profile and stores nothing.
+A file or a pasted text in → its original kept unchanged, and what it says about the
+user stored as active items naming it, or nothing at all. A guest has no profile and
+stores nothing.
 
 | Type | Gate criteria |
 |---|---|
 | Functional | An item added, edited or deleted over `/memory/items` is listed as it was left and changes the profile of the next turn; only `active` items reach the LLM, each as one line whatever was typed (line breaks, control and invisible characters never reach the prompt); one user never lists, reads, changes or deletes another's items (an item of someone else is a `404`); a guest gets `401` on every route and no row is written for them; items and users survive a restart; the tables are created in an empty database at startup and a second start changes nothing |
+| Functional — import | A file (`.txt`, `.md`, `.csv`, `.pdf`, `.docx`) or a pasted text sent to `/memory/imports` → `201` with the import and its items (`active`, `source` `import`, naming the import, each with its quote), listed with its `item_count`, and in the profile of the next turn; the original read back over `/memory/imports/{id}/content` is byte-identical to what was sent (same SHA-256), served as a download (`attachment`, `nosniff`); the extracted text is in no table; deleting with `items=delete` removes the object, the row and the items, with `items=keep` (the default) the items stay without an import; one user never lists, reads or deletes another's import (`404`) and the object key names no user; the LLM is given the import instruction, never the persona, and the document between delimiters it cannot close; a quote is kept as evidence only when the document really holds it |
 | Performance | The profile read in a turn is answered from RAM after the first read of a user, and never takes longer than `MEMORY_TIMEOUT_SEC`; a guest's turn makes no memory read at all |
 | Resilience | An unknown category, an empty text or one with nothing visible, a text longer than `MEMORY_ITEM_MAX_CHARS` or a field that cannot be changed → refused (`422`) with the reason, nothing stored; a failing store → `502` without the database's text, the detail in the log; an empty, slow or failing profile read in a turn → the turn completes without the profile; a database that cannot be opened → startup stops with the reason |
+| Resilience — import | A file over `MEMORY_IMPORT_MAX_FILE_MB` or a text over `MEMORY_IMPORT_MAX_CHARS` → `413`; an unsupported type → `415`; an unreadable file, no text, both or neither of `file` and `text`, or an answer with nothing to remember → `422`; an LLM failure or an answer that is not the JSON array asked for (prose or a code fence around it) or one cut at `LLM_COMPLETE_MAX_TOKENS` → `502` without the provider's text; in every one of these, and when the request is cancelled at any step (while the object, the row or the items are written, or while the LLM reads), no object, no row and no item remain and the cached profile is dropped; a client that only disconnects does not cancel it: the import is completed and stored whole; an unsupported type is refused before anything is written; an entry of the answer with an unknown category or a text that is no valid item is dropped and the others kept; with a backup LLM the import falls back on failure and timeout, and never puts the primary of the turns in cooldown; an object key cannot leave the store directory |
 
-> Gated here: the items a person types and the profile written from them. Import,
-> facts gathered from conversations and their approval are not built yet and have no
-> gate. Whether the answer actually follows the profile (the way of addressing) is
+> Gated here: the items a person types, the imports and the profile written from them.
+> Facts gathered from conversations and their approval are not built yet and have no
+> gate. Whether the model extracts the right facts from an import is checked on the
+> real model (`tests/e2e`), not by an automated gate. Whether the answer actually follows the profile (the way of addressing) is
 > checked by a real turn (`tests/e2e`), not by an automated gate.
 
 ---

@@ -70,3 +70,5 @@ application database is a real SQLite file in `tmp_path` (`DATABASE_URL`), time 
 - **Manual, in the browser — profile**: add, edit and delete an item; import a file and a pasted
   description, open the original, delete the import with and without its items;
   approve and reject a proposal; as a guest, the profile page asks for login.
+  Drop a file on the drop zone while an import is being read, and a file beside the
+  zone: the page stays and nothing is sent.

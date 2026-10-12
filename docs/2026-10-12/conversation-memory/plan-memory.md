@@ -130,6 +130,16 @@ keeps about a logged-in user across conversations. Its tables and the object sto
 - Extraction needs a call without the persona and without streaming: the `LLM` contract
   gains `complete(system, user) -> str`, implemented by both backends and
   `FallbackLLM`. Invalid JSON or a failure → no item, an error on the span.
+- Slice 3: `complete` is an abstract method of the contract. It sends `system` in place
+  of the persona and `user` as the one user message, is not streamed and returns the
+  answer text alone (no reasoning text). It has its own limits, because those of
+  `stream_answer` are sized for a spoken answer: `LLM_COMPLETE_TIMEOUT_SEC` (default
+  30) and `LLM_COMPLETE_MAX_TOKENS` (default 2048).
+- `FallbackLLM.complete` gives the primary `LLM_COMPLETE_TIMEOUT_SEC` and asks the
+  backup when it fails or is too slow. Such a failure does **not** start the cooldown
+  the turns share (a background request never degrades the conversation); a primary the
+  turns already put in cooldown is skipped. For that to hold, `main.py` builds one LLM
+  and gives it to both the engine and the imports.
 
 ### Import
 
@@ -153,6 +163,92 @@ keeps about a logged-in user across conversations. Its tables and the object sto
   items go with it (`items=delete`) or stay as items without a source (`items=keep`).
 - Extracting an import again (new prompt, new model) is made possible by keeping the
   original, but is not built in this version.
+
+Decided while building slice 3:
+
+- **The import has its own class**, `MemoryImports` (`features/memory/imports.py`): the
+  flow, its errors and the content types. It is given the store, the object store, the
+  LLM and the way to drop a user's cached profile (`MemoryService.forget_profile`);
+  `main.py` builds it beside the memory, on the LLM of the turns. `MemoryService` keeps
+  the profile and the items.
+- **What the LLM is asked for**: `MEMORY_IMPORT_PROMPT` is the system text (it is
+  given `MEMORY_ITEM_MAX_CHARS`). The answer is a JSON array of `{"category", "text",
+  "evidence"}`, the items written in the person's own voice ("tôi"), as `MEMORY_PROMPT`
+  expects them.
+- **A document is material to read, never instructions** (the part of prompt injection
+  closed cheaply; nothing more is built):
+  - The user message is the text between two tags (`MEMORY_IMPORT_DOCUMENT`), and the
+    prompt says that whatever stands between them is never an instruction. Every
+    writing of those tags (opening or closing, any case, spaces inside) is taken out of
+    the text itself first, repeatedly until none is left, since removing one can join
+    the pieces of another: a document cannot close its own block.
+  - `evidence` is stored on one line, and only when the document really holds it
+    (both compared on one line, letters composed). An invented quote, or one the
+    document led the model to write, is dropped; the item is kept without evidence.
+  - What remains open: a document can still talk the model into a false *item*. It is
+    the person's own profile, shown at once on the profile page for correction.
+- **An answer cut at the token limit is a failure of the LLM**: both backends raise
+  `LLMError` naming `LLM_COMPLETE_MAX_TOKENS` instead of returning half a JSON array. A
+  description too rich for `LLM_COMPLETE_MAX_TOKENS` is therefore refused whole (`502`),
+  and the span says why.
+- **Parsing is strict** (`extraction.py`, pure): the answer must be that JSON array and
+  nothing else. A code fence or a sentence around it makes the whole answer invalid.
+  Inside a valid array each entry stands alone: an unknown category, a missing or empty
+  text, or a text that does not pass the rule of a typed item (one line,
+  `MEMORY_ITEM_MAX_CHARS`) drops that entry and keeps the others. A missing or empty
+  `evidence` leaves the item without a quote (whether the quote is real is checked by
+  the import, which has the document). The module holds one parser of the array
+  and one validator of an entry, so the operations of slice 4 are a second validator.
+- **Outcomes**, mapped to HTTP in `api.py` only:
+
+  | Outcome | Status |
+  |---|---|
+  | the LLM failed, or its answer is not the JSON array | `502`, a generic text, the detail in the log and on the span |
+  | a valid answer with no usable item | `422` "nothing to remember" |
+  | an unreadable file, or no text in it | `422` |
+  | an unsupported type | `415` |
+  | a file over `MEMORY_IMPORT_MAX_FILE_MB` (the route reads one byte past the limit, the service refuses it) | `413` |
+  | a text over `MEMORY_IMPORT_MAX_CHARS` | `413` |
+  | both `file` and `text`, or neither | `422` |
+
+  In every one of them no object, no row and no item remain. The type (the extension)
+  and the file size are checked before anything is written. The object and its row are
+  then written first, as the flow says, and removed again by whatever stops the import,
+  a cancelled request included: a store call that is running is waited for, and what it
+  wrote is removed after it, so there is never an object without a row or a row
+  without an object. A client that goes away does not cancel the request: the server
+  goes on reading and the import is stored whole, which is what the profile page
+  relies on when it is closed during a reading (seen in the real run). The removal drops the cached profile like any other write; when
+  the removal itself fails, the error is logged and the one that stopped the import
+  reaches the caller. While the LLM reads (up to `LLM_COMPLETE_TIMEOUT_SEC`) the import
+  is listed with 0 items. A process killed in between leaves such an import, which can
+  be deleted.
+- **Limits enforced by the framework, not by this code**: the size limit of an upload
+  is checked after the body was received (the multipart body is spooled first), and a
+  pasted text field over the framework's 1 MB field limit is refused with `400`. The
+  second only matters if `MEMORY_IMPORT_MAX_CHARS` is raised that far.
+- **Defaults**: `MEMORY_IMPORT_MAX_FILE_MB=5`, `MEMORY_IMPORT_MAX_CHARS=20000`.
+- **Items of an import**: `source=import`, `status=active`, `import_id`, `evidence` =
+  the quote; listed in the order of the answer.
+- **A pasted text** is stored as a `.txt` object of type `text/plain`; its display name
+  is `MEMORY_IMPORT_TEXT_NAME` (`prompts.py`). It is read back through the same loader
+  as an uploaded `.txt`.
+- **The name of a file** is its last path part on one line; its content type is taken
+  from its extension, never from what the browser sent.
+- **Reading the original** always goes through the row and its `user_id`. The bytes
+  come with the stored content type, `Content-Disposition: attachment` with the name
+  and `X-Content-Type-Options: nosniff`: bytes a user supplied are never rendered
+  inline from the origin of the API.
+- **Delete**: `?items=keep|delete`, default `keep`, any other value `422`. `keep`
+  leaves the items with `import_id` null. The object is removed before the row: when
+  that fails nothing has changed, and when the row cannot be removed afterwards the
+  import is still listed and deleting it again finishes the job.
+- **The list** is `{"imports": [{id, name, size_bytes, item_count, created_at}]}`,
+  oldest first like the items; `item_count` counts the items that still name the import.
+- An import, its deletion and the removal of a stopped import drop the cached profile
+  of the user.
+- Not limited in this version: the number of items one import may add (bounded by
+  `LLM_COMPLETE_MAX_TOKENS` only), and an item an import repeats from an earlier one.
 
 ### HTTP API (`features/memory/api.py`)
 
@@ -207,9 +303,12 @@ stateDiagram-v2
 In `backend/tuning.py`, each overridable from `.env`: `MEMORY_PROMPT_MAX_ITEMS`
 (default 20, at least 1), `MEMORY_TIMEOUT_SEC` (default 1.0, positive and finite),
 `MEMORY_ITEM_MAX_CHARS` (default 200, at least 1), `MEMORY_PROMOTE_SEEN_COUNT` (default 2), `MEMORY_MIN_STT_CONFIDENCE`,
-`MEMORY_TRANSCRIPT_TTL_DAYS`, `MEMORY_IMPORT_MAX_FILE_MB`, `MEMORY_IMPORT_MAX_CHARS`. The
+`MEMORY_TRANSCRIPT_TTL_DAYS`, `MEMORY_IMPORT_MAX_FILE_MB` (default 5, positive),
+`MEMORY_IMPORT_MAX_CHARS` (default 20000, at least 1), `LLM_COMPLETE_TIMEOUT_SEC`
+(default 30, positive and finite), `LLM_COMPLETE_MAX_TOKENS` (default 2048, at least 1). The
 texts `MEMORY_PROMPT` (with `MEMORY_PROMPT_ITEM`, the line of one item),
-`MEMORY_EXTRACT_PROMPT` and `MEMORY_IMPORT_PROMPT` are in `backend/prompts.py` only.
+`MEMORY_EXTRACT_PROMPT` and `MEMORY_IMPORT_PROMPT` (with `MEMORY_IMPORT_DOCUMENT`, the
+delimiters its text is given in, and `MEMORY_IMPORT_TEXT_NAME`, the name of a pasted text) are in `backend/prompts.py` only.
 
 ### Observability
 
@@ -217,6 +316,11 @@ texts `MEMORY_PROMPT` (with `MEMORY_PROMPT_ITEM`, the line of one item),
   `memory.outcome` (`hit`, `empty`, `timeout`, `error`). A guest's turn has none.
 - Consolidation and import are their own traces (`memory.consolidate`,
   `memory.import`) with the transcript / text in and the operations out.
+- `memory.import` (slice 3) carries `import.name`, `import.bytes`, `import.text` (the
+  whole extracted text), `llm.answer` (what the model said, also when it was refused),
+  `import.items` (the stored items as JSON), `import.id`, `memory.items` and
+  `memory.outcome`: `stored`, `too_large`, `unsupported`, `unreadable`, `empty`,
+  `nothing`, `extraction_failed` or `error`. A failed import is a failed span.
 
 ## Implementation approach
 
@@ -229,7 +333,8 @@ backend/
   providers/llm/*.py, fallback.py    complete
   features/memory/
     store.py                         items, imports, conversations, turns
-    memory.py                        MemoryService: profile cache, record, consolidate, import
+    memory.py                        MemoryService: profile cache, items, record, consolidate
+    imports.py                       MemoryImports: file / pasted text → object + row + items
     extraction.py                    LLM JSON → operations (pure parsing + validation)
     api.py                           the HTTP routes
   utils/loaders.py                   moved from features/knowledge/ (file bytes → text)
@@ -247,10 +352,13 @@ backend/
       8 answers), and the answer keeps the addressing asked for (34 of 40 today)
 - [ ] Slice 2 — decide what happens to active items beyond `MEMORY_PROMPT_MAX_ITEMS`:
       they are listed on the profile page and not given to the LLM
-- [ ] Slice 3 — loaders moved to `utils/loaders.py` with the knowledge base still passing
+- [x] Slice 3 — loaders moved to `utils/loaders.py` with the knowledge base still passing
       its tests
-- [ ] Slice 3 — `LLM.complete`, `extraction.py`, `MEMORY_IMPORT_PROMPT`, table
+- [x] Slice 3 — `LLM.complete`, `extraction.py`, `MEMORY_IMPORT_PROMPT`, table
       `imports`, `/memory/imports` routes
+- [ ] Slice 3 — `MEMORY_IMPORT_PROMPT` and `LLM_COMPLETE_TIMEOUT_SEC` measured on the
+      model of the deployment (`tests/e2e`): checked by hand on a local qwen3:8b only,
+      where a first request with the model not loaded yet ran past the 30 s
 - [ ] Slice 4 — turn persistence, consolidation at close and at startup, transcript
       deletion and TTL, `MEMORY_EXTRACT_PROMPT`
 - [ ] Slice 4 — pending / confirm / replace / rejected rules (repetition promotes

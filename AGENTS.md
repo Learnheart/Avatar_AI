@@ -105,7 +105,8 @@ cover as much logic as possible with unit tests.
 | **Conversation — TTS** | **ZeroTTS** (open-source, tiếng Việt) | Text → audio tiếng Việt; chạy local real-time trên CPU, có streaming |
 | **Knowledge base** | sqlite-vec (SQLite extension) + embedding qua `EMBEDDING_BACKEND` (`local_hash` \| `openai_compatible` \| `databricks` \| `ollama`), backup qua `EMBEDDING_BACKEND_BACKUP`; pypdf, python-docx | Upload tài liệu (txt, md, csv, pdf, docx) → chunk → vector; tra cứu đoạn liên quan cho mỗi câu hỏi trước khi gọi LLM |
 | **Application database** | SQLAlchemy Core trên `DATABASE_URL` (file SQLite local; PostgreSQL khi deploy) | Lưu user và memory (những điều avatar nhớ về từng user); bảng được tạo lúc startup, chưa có migration tool |
-| **Memory** | logic nội bộ trên application database; `AUTH_DEV_USER_ID` thay cho login | Hồ sơ của user đã đăng nhập (các memory item `active`) đưa vào LLM mỗi turn; guest không có memory |
+| **Memory** | logic nội bộ trên application database; `AUTH_DEV_USER_ID` thay cho login; import đọc bằng một lần gọi LLM ngoài turn (`LLM.complete`) | Hồ sơ của user đã đăng nhập (các memory item `active`) đưa vào LLM mỗi turn; import file / đoạn văn tự giới thiệu → memory item; guest không có memory |
+| **Object store** | thư mục local `OBJECT_STORE_DIR` (thay được bằng S3-compatible) | Giữ nguyên bản gốc của file user import; chủ sở hữu chỉ ghi trong application database |
 | Observability | OpenTelemetry SDK (traces + metrics) + OTLP/HTTP exporter; JSON log trên stdout | Mỗi turn một trace, mỗi bước một span (listen, stt, knowledge, embedding, memory, llm, tts, playback) kèm input/output; số đo vòng lặp perception; `CAPTURE_ENABLED` lưu frame camera + audio + trace ra đĩa |
 | Device Capability Router | logic nội bộ (phát hiện Metal/CUDA/CPU lúc startup) | Chọn backend inference phù hợp máy; cho phép override qua config |
 
@@ -186,7 +187,6 @@ backend/
     knowledge/
       knowledge_base.py        # KnowledgeBase: add / list / select / delete documents, search
       chunking.py              # document text → chunks (pure)
-      loaders.py               # txt, md, csv, pdf, docx → text
       store.py                 # sqlite-vec store: documents, chunks, vectors (all the SQL)
       api.py                   # HTTP routes /knowledge/documents
     accounts/
@@ -194,14 +194,18 @@ backend/
       store.py                 # table users (all the SQL of the accounts)
     memory/
       memory.py                # MemoryService: memory items, the profile given to the LLM and its cache
-      store.py                 # table memory_items (all the SQL of the memory)
-      api.py                   # HTTP routes /memory/items
-  data/                        # knowledge.db, app.db, capture/ (gitignored, per machine)
+      imports.py               # MemoryImports: a file or a pasted text → original kept + memory items (one LLM call)
+      extraction.py            # LLM answer (JSON) → validated memory items (pure)
+      store.py                 # tables memory_items, imports (all the SQL of the memory)
+      api.py                   # HTTP routes /memory/items, /memory/imports
+  data/                        # knowledge.db, app.db, objects/, capture/ (gitignored, per machine)
   utils/
     env.py                     # dataclass fields read from the environment
     telemetry.py               # tracer, meter, OTLP export, `Span` log lines
     capture.py                 # CaptureStore: frames, turn audio, spans on local disk
     database.py                # application database: engine from DATABASE_URL, shared MetaData, tables created at startup
+    object_store.py            # ObjectStore: put / get / delete bytes by key, a directory (OBJECT_STORE_DIR)
+    loaders.py                 # txt, md, csv, pdf, docx → text (knowledge documents, memory imports)
     errors.py
     logging.py
   assets/
@@ -281,6 +285,15 @@ Layering rules:
   its tables and keeps all its SQL in its `store.py`, written against SQLAlchemy Core
   with nothing specific to one engine. Every per-user table carries `user_id` and every
   store method takes it: no query reads across users.
+- The original of what a user imports is kept unchanged in the object store
+  (`backend/utils/object_store.py`, `OBJECT_STORE_DIR`), one store for all users. Its
+  keys carry no user: who owns an object is recorded in the application database only,
+  and an object is never served by its key — every read goes through the row and its
+  `user_id`. The text of an import is derived from the bytes and stored nowhere. It is
+  given to the LLM between delimiters, as material to read and never as instructions.
+- Work the LLM does outside a turn (reading an import) goes through `LLM.complete`,
+  with its own limits (`LLM_COMPLETE_TIMEOUT_SEC`, `LLM_COMPLETE_MAX_TOKENS`); its
+  failure never puts the primary of the turns into the fallback cooldown.
 - The HTTP routes `/memory` are a contract between `backend/features/memory/api.py` and
   `frontend/src/memory/`.
 - Every step of a turn is a span of `backend/utils/telemetry.py` carrying its input and

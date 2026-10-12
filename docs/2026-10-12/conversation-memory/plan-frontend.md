@@ -89,6 +89,47 @@ sees. It consumes two contracts and defines neither: the WebSocket messages
     for the proposals block of slice 4.
   - The client's errors carry the HTTP `status` (0 when the request got no answer),
     which is how the page tells a guest from a failure.
+- Decided while building slice 3 (the imports block, third block of the page, under
+  the lists; a guest does not see it):
+  - A description is given one at a time: one file (chosen, or dropped on the drop
+    zone, which is a button and so works from the keyboard) or one pasted text
+    ("Đọc đoạn văn này", or Ctrl/Cmd+Enter in the field; Enter alone is a new line).
+    Several files dropped together are refused.
+  - A file of another type than `MEMORY_IMPORT_EXTENSIONS` or over
+    `MEMORY_IMPORT_MAX_FILE_MB` is refused in the page, before any request. The pasted
+    text has no length limit in the page (a limit there would cut a paste silently):
+    the backend answers `413`.
+  - Busy state: while the backend reads a description, the block shows "Đang đọc
+    <name>…" and the drop zone, the file field, the text field and its button are
+    disabled, so there is no second submit. The page can be closed meanwhile; the
+    reading goes on and its outcome is there when the page is opened again.
+  - The block has its own message line (busy, result, refusal): the one on top of the
+    page is out of sight from down there. After a success it says how many items were
+    added, and the items and the imports are read again.
+  - A refused pasted text stays in its field. `422` and `502` have their own words for
+    an import (nothing to read or to remember in it; the reading failed).
+  - Escape with a pasted text: in the text field it does nothing while the field holds
+    a text (it neither empties it nor closes the page); elsewhere it closes the page as
+    usual, and so does "Đóng", but the text is still in its field when the page is
+    opened again. Only a successful import empties the field.
+  - Deleting an import asks, in its row, what happens to the items made from it:
+    "Huỷ", "Giữ lại các mục" (`items=keep`), "Xoá cả các mục" (`items=delete`). The
+    keyboard lands on "Huỷ"; Escape cancels the question and does not close the page.
+    An import with no item left is deleted at once: there is nothing to choose.
+  - "Mở bản gốc" is a button, not a link: the page fetches the bytes of
+    `/memory/imports/{id}/content` and hands them to the browser as a file named after
+    the import. A link to the API would take the avatar page, its WebSocket and the
+    running conversation, to the error answer of the API whenever the download is
+    refused; here a refusal is a message in the block (`401`: the login note), and the
+    lists are read again, so an import deleted elsewhere leaves the list.
+  - A file dragged anywhere on the profile page is taken from the browser: beside the
+    drop zone nothing happens, instead of the file opening in place of the avatar. A
+    file dropped on the zone while a description is being read is ignored.
+  - An item shows the quote it was read from when it has one (`evidence`), and after
+    its source the name of its import while that import is listed. An item kept after
+    its import was deleted still says it was imported, without a name.
+  - The items and the imports are read together; if either read fails the page shows
+    the failure rather than half of the profile.
 
 ### Config
 
@@ -96,7 +137,9 @@ sees. It consumes two contracts and defines neither: the WebSocket messages
 person line and an avatar line each). Beside it, `TRANSCRIPT_SCROLL_SLACK_PX` (default
 24): how close to its end the list must be for a new line to scroll it.
 `MEMORY_ITEM_MAX_CHARS` (default 200) mirrors the backend limit of the same name, as
-`KNOWLEDGE_MAX_FILE_MB` does; the backend has the last word. The profile page calls the backend at
+`KNOWLEDGE_MAX_FILE_MB` does; the backend has the last word. `MEMORY_IMPORT_MAX_FILE_MB`
+(default 5) and `MEMORY_IMPORT_EXTENSIONS` (`.txt .md .csv .pdf .docx`) mirror what the
+backend accepts as an import, checked before a file is sent. The profile page calls the backend at
 `VITE_API_URL`, as the knowledge panel does.
 
 ## Implementation approach
@@ -113,7 +156,7 @@ frontend/tests/                      transcript.test.js, memory.test.js
 - [x] Slice 1 — frontend transcript window (`TRANSCRIPT_MAX_LINES`) and
       "Cuộc trò chuyện mới" button
 - [x] Slice 2 — frontend profile page: fields, lists, add, edit, delete, guest note
-- [ ] Slice 3 — imports on the profile page: drop a file or paste a text, list, open the
+- [x] Slice 3 — imports on the profile page: drop a file or paste a text, list, open the
       original, delete
 - [ ] Slice 4 — proposals on the profile page: approve or reject, with the quote
 - [ ] Unit tests per `test-plan.md` (Frontend — transcript, Frontend — memory),
