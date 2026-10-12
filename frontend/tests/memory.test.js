@@ -13,9 +13,19 @@ import {
   UNAUTHORIZED,
   apiErrorMessage,
   categoryLabel,
+  fileRefusal,
+  formatDate,
   groupItems,
+  importErrorMessage,
+  importLabel,
+  importedMessage,
+  itemCountLabel,
+  itemSourceLabel,
   sourceLabel,
 } from '../src/memory/format.js'
+
+const EXTENSIONS = ['.txt', '.md', '.csv', '.pdf', '.docx']
+const MB = 1024 * 1024
 
 function item(id, category, status = 'active', source = 'manual') {
   return { id, category, status, source, text: `item ${id}` }
@@ -120,4 +130,71 @@ test('apiErrorMessage gives a different message for each known failure', () => {
   const messages = [NETWORK_FAILURE, UNAUTHORIZED, 404, 422, 502, 500].map(apiErrorMessage)
 
   assert.equal(new Set(messages).size, messages.length)
+})
+
+// ── Imports ─────────────────────────────────────────────────────────────────
+
+test('importErrorMessage explains a file that is too large or of another type', () => {
+  assert.match(importErrorMessage(413, 5), /5 MB/)
+  assert.match(importErrorMessage(415, 5), /Định dạng/)
+  assert.notEqual(importErrorMessage(413, 5), importErrorMessage(415, 5))
+})
+
+test('importErrorMessage has its own words for an unreadable text and a failed reading', () => {
+  assert.match(importErrorMessage(422, 5), /Không đọc được|không có gì/)
+  assert.notEqual(importErrorMessage(422, 5), apiErrorMessage(422))
+  assert.match(importErrorMessage(502, 5), /thử lại/)
+  assert.notEqual(importErrorMessage(502, 5), apiErrorMessage(502))
+})
+
+test('importErrorMessage says the same as the other calls for the rest', () => {
+  for (const status of [NETWORK_FAILURE, UNAUTHORIZED, 404, 500]) {
+    assert.equal(importErrorMessage(status, 5), apiErrorMessage(status))
+  }
+})
+
+test('fileRefusal lets through a file of a supported type within the limit', () => {
+  assert.equal(fileRefusal({ name: 'cv.pdf', size: 1000 }, EXTENSIONS, 5), null)
+  assert.equal(fileRefusal({ name: 'GIOI-THIEU.DOCX', size: 5 * MB }, EXTENSIONS, 5), null)
+})
+
+test('fileRefusal refuses another type, then a file over the limit', () => {
+  assert.match(fileRefusal({ name: 'photo.png', size: 10 }, EXTENSIONS, 5), /Định dạng/)
+  assert.match(fileRefusal({ name: 'pdf', size: 10 }, EXTENSIONS, 5), /Định dạng/)
+  assert.match(fileRefusal({ name: 'cv.pdf', size: 5 * MB + 1 }, EXTENSIONS, 5), /5 MB/)
+  assert.match(fileRefusal({ name: 'big.png', size: 9 * MB }, EXTENSIONS, 5), /Định dạng/)
+})
+
+test('itemCountLabel and importedMessage say how many items an import produced', () => {
+  assert.equal(itemCountLabel(3), '3 mục')
+  assert.equal(itemCountLabel(0), 'không có mục nào')
+  assert.equal(itemCountLabel(undefined), 'không có mục nào')
+  assert.equal(importedMessage(4), 'Đã thêm 4 mục vào hồ sơ')
+})
+
+test('formatDate gives the day in the time of the browser, and nothing when unreadable', () => {
+  assert.equal(formatDate(new Date(2026, 9, 2, 12).toISOString()), '02/10/2026')
+  assert.equal(formatDate('not a date'), '')
+  assert.equal(formatDate(null), '')
+})
+
+test('importLabel shows the size, the number of items and the date of an import', () => {
+  const created_at = new Date(2026, 9, 12, 12).toISOString()
+
+  assert.equal(
+    importLabel({ size_bytes: 1536, item_count: 3, created_at }),
+    '1.5 KB · 3 mục · 12/10/2026',
+  )
+  assert.equal(importLabel({ size_bytes: 20, item_count: 0 }), '20 B · không có mục nào')
+})
+
+test('itemSourceLabel names the import of an item while that import is listed', () => {
+  const imports = [{ id: 'i1', name: 'cv.pdf' }, { id: 'i2', name: 'ghi chú.txt' }]
+  const imported = { source: 'import', import_id: 'i2' }
+
+  assert.equal(itemSourceLabel(imported, imports), `${sourceLabel('import')} · ghi chú.txt`)
+  assert.equal(itemSourceLabel(imported, [imports[0]]), sourceLabel('import'))
+  assert.equal(itemSourceLabel(imported, undefined), sourceLabel('import'))
+  assert.equal(itemSourceLabel({ source: 'import', import_id: null }, imports), sourceLabel('import'))
+  assert.equal(itemSourceLabel({ source: 'manual', import_id: null }, imports), 'Tự nhập')
 })

@@ -2,7 +2,9 @@
  * Profile page — what the avatar knows about the person, laid out as their
  * configuration: who they are and how to address them, then their preferences and
  * personality. Each group is a list with an "add" row; an item is edited in place or
- * deleted, and shows where it comes from.
+ * deleted, and shows where it comes from. Under the lists, the imports: a description
+ * of the person given as a file or a pasted text, which the backend reads into items,
+ * and the list of what was given, each with its original.
  *
  * The page is an overlay over the avatar, opened by #profile-toggle: a modal <dialog>,
  * so the browser keeps the keyboard inside it and closes it on Escape. Its frame is in
@@ -12,13 +14,21 @@
  * change.
  */
 
-import { MEMORY_ITEM_MAX_CHARS } from '../config.js'
+import {
+  MEMORY_IMPORT_EXTENSIONS,
+  MEMORY_IMPORT_MAX_FILE_MB,
+  MEMORY_ITEM_MAX_CHARS,
+} from '../config.js'
 import {
   CATEGORIES,
   UNAUTHORIZED,
   categoryLabel,
+  fileRefusal,
   groupItems,
-  sourceLabel,
+  importLabel,
+  importedMessage,
+  itemCountLabel,
+  itemSourceLabel,
 } from './format.js'
 
 // What to write in a group, shown under its title and in its "add" field.
@@ -42,6 +52,8 @@ const GROUP_TEXTS = {
 }
 
 const EMPTY_TEXT = 'Chưa có mục nào.'
+const NO_IMPORT_TEXT = 'Chưa nhập bản mô tả nào.'
+const PASTED_TEXT_NAME = 'đoạn văn bản'   // how the busy message names a pasted text
 
 /** A text field of the page, stopped at the length the backend accepts. */
 function textField(className, label) {
@@ -75,6 +87,16 @@ export class ProfilePage {
     this._items = []
     this._editingId = null  // the item being edited in place, one at a time
     this._draft = null      // what was typed in that edit, kept across redraws
+
+    this._imports = []
+    this._importDrop = document.getElementById('profile-import-drop')
+    this._importInput = document.getElementById('profile-import-input')
+    this._importText = document.getElementById('profile-import-text')
+    this._importSubmit = document.getElementById('profile-import-submit')
+    this._importMessage = document.getElementById('profile-import-message')
+    this._importList = document.getElementById('profile-import-list')
+    this._importing = false         // one description is read at a time
+    this._removingImportId = null   // the import whose row asks what to do with its items
   }
 
   init() {
@@ -91,11 +113,61 @@ export class ProfilePage {
       if (event.key === 'Escape' && event.isComposing) event.preventDefault()
     })
     this._page.addEventListener('close', () => this._toggle.focus())
+    // A file dropped beside the drop zone would open in place of the avatar page:
+    // anywhere on the page, a dragged file is taken from the browser and ignored.
+    for (const type of ['dragover', 'drop']) {
+      this._page.addEventListener(type, (event) => {
+        if (!event.dataTransfer?.types.includes('Files')) return   // a dragged text
+        event.preventDefault()
+        if (!this._importDrop.contains(event.target)) event.dataTransfer.dropEffect = 'none'
+      })
+    }
+    this._initImports()
+  }
+
+  _initImports() {
+    this._importInput.accept = MEMORY_IMPORT_EXTENSIONS.join(',')
+    document.getElementById('profile-import-hint').textContent =
+      `${MEMORY_IMPORT_EXTENSIONS.join(' ')} · tối đa ${MEMORY_IMPORT_MAX_FILE_MB} MB`
+
+    this._importDrop.addEventListener('click', () => this._importInput.click())
+    this._importInput.addEventListener('change', () => {
+      const files = [...this._importInput.files]
+      this._importInput.value = ''   // choosing the same file again fires `change` again
+      this._importFiles(files)
+    })
+    this._importDrop.addEventListener('dragover', (event) => {
+      event.preventDefault()   // also while busy: a refused drop must not open the file
+      if (!this._importing) this._importDrop.classList.add('dragging')
+    })
+    this._importDrop.addEventListener('dragleave', () => {
+      this._importDrop.classList.remove('dragging')
+    })
+    this._importDrop.addEventListener('drop', (event) => {
+      event.preventDefault()
+      this._importDrop.classList.remove('dragging')
+      this._importFiles([...event.dataTransfer.files])
+    })
+
+    this._importSubmit.addEventListener('click', () => this._importPasted())
+    this._importText.addEventListener('keydown', (event) => {
+      if (event.isComposing) return   // the key belongs to the input method (Telex, VNI)
+      if (event.key === 'Escape' && this._importText.value) {
+        // A pasted text is long and cannot be typed again: Escape neither empties it
+        // nor closes the page from here.
+        event.preventDefault()
+      } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+        this._importPasted()   // Enter alone is a new line
+      }
+    })
   }
 
   open() {
     this._stopEditing()
+    this._removingImportId = null
     this._say('')
+    // A reading in progress keeps its message; a pasted text is never emptied here.
+    if (!this._importing) this._sayImport('')
     this._page.showModal()   // modal: the page behind is inert, Tab stays inside
     this._close.focus()
     this.refresh()
@@ -105,9 +177,18 @@ export class ProfilePage {
     this._page.close()
   }
 
+  /** Read the items and the imports: an item names the import it comes from. */
+  async _read() {
+    const [items, imports] = await Promise.all([
+      this._client.list(), this._client.listImports(),
+    ])
+    this._items = items
+    this._imports = imports
+  }
+
   async refresh() {
     try {
-      this._items = await this._client.list()
+      await this._read()
       this._show({ guest: false })
       this._render()
     } catch (err) {
@@ -120,23 +201,25 @@ export class ProfilePage {
   /**
    * Run one change, say how it went, then redraw from what the backend holds.
    * Resolves with whether the change went through. An edit in progress survives the
-   * redraw with what was typed in it.
+   * redraw with what was typed in it. `done` is the message of a success, or a
+   * function giving it once the call has answered; `say` is where the outcome is
+   * written (the message on top of the page, or the one of the imports block).
    */
-  async _change(call, done) {
+  async _change(call, done, say = (text, isError) => this._say(text, isError)) {
     let failed = false
     try {
       await call()
-      this._say(done)
+      say(typeof done === 'function' ? done() : done)
     } catch (err) {
       if (err.status === UNAUTHORIZED) {
         this._fail(err)
         return false
       }
-      this._say(err.message, true)
+      say(err.message, true)
       failed = true
     }
     try {
-      this._items = await this._client.list()
+      await this._read()
     } catch (err) {
       // The message of a failed change is not replaced by the one of a failed refresh.
       if (!failed || err.status === UNAUTHORIZED) this._fail(err)
@@ -148,6 +231,104 @@ export class ProfilePage {
   _stopEditing() {
     this._editingId = null
     this._draft = null
+  }
+
+  // ── Imports ─────────────────────────────────────────────────────────────
+
+  /** A file chosen or dropped: refused here when the backend would refuse it anyway. */
+  _importFiles(files) {
+    if (this._importing || files.length === 0) return
+    if (files.length > 1) return this._sayImport('Mỗi lần chỉ nhập một tệp', true)
+    const [file] = files
+    const refusal = fileRefusal(file, MEMORY_IMPORT_EXTENSIONS, MEMORY_IMPORT_MAX_FILE_MB)
+    if (refusal) return this._sayImport(`${file.name}: ${refusal}`, true)
+    this._import(file.name, () => this._client.importFile(file), this._importDrop)
+  }
+
+  async _importPasted() {
+    const text = this._importText.value.trim()
+    if (!text || this._importing) return
+    const imported = await this._import(
+      PASTED_TEXT_NAME, () => this._client.importText(text), this._importText,
+    )
+    // A refused text stays in its field, to be sent again or corrected.
+    if (imported) this._importText.value = ''
+  }
+
+  /**
+   * Send one description and wait for the backend to read it (several seconds): the
+   * block says so and takes no other description meanwhile. `origin` is the control
+   * that started it and gets the keyboard back. Resolves with whether it went through.
+   */
+  async _import(name, send, origin) {
+    this._setImporting(true)
+    this._sayImport(`Đang đọc ${name}… Việc này mất vài giây.`)
+    let result = null
+    const imported = await this._change(
+      async () => { result = await send() },
+      () => importedMessage(result.items.length),
+      (text, isError) => this._sayImport(text, isError),
+    )
+    this._setImporting(false)
+    // Disabled while it held the focus, the control dropped it: the keyboard goes back
+    // to it, unless the person moved on to something else meanwhile.
+    const active = document.activeElement
+    const lost = active === document.body || active === this._page
+    if (lost && this._page.open && !this._body.hidden) origin.focus()
+    return imported
+  }
+
+  _setImporting(importing) {
+    this._importing = importing
+    for (const control of [
+      this._importDrop, this._importInput, this._importText, this._importSubmit,
+    ]) control.disabled = importing
+    this._importMessage.classList.toggle('busy', importing)
+    document.getElementById('profile-import-form').setAttribute('aria-busy', String(importing))
+  }
+
+  async _removeImport(entry, { keepItems }) {
+    this._removingImportId = null
+    let done = `Đã xoá ${entry.name}`
+    if (entry.item_count) done += keepItems ? ', các mục được giữ lại' : ' và các mục của nó'
+    const removed = await this._change(
+      () => this._client.removeImport(entry.id, { keepItems }),
+      done,
+      (text, isError) => this._sayImport(text, isError),
+    )
+    // The row is gone: the keyboard goes to the drop zone. After a refused delete it
+    // stays on the import, whose row was redrawn.
+    if (this._body.hidden) return
+    if (removed) this._importDrop.focus()
+    else this._focusImport(entry.id, 'button')
+  }
+
+  /**
+   * Save the original of an import as a file. The bytes are fetched and handed to the
+   * browser through a temporary link, so a refusal (the import is gone, the store
+   * fails) is a message here: the avatar page never leaves for the answer of the API.
+   */
+  async _saveOriginal(entry) {
+    await this._change(
+      async () => {
+        const { blob, name } = await this._client.importContent(entry)
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = name
+        link.click()
+        setTimeout(() => URL.revokeObjectURL(url))   // once the browser took the click
+      },
+      `Đã tải ${entry.name}`,
+      (text, isError) => this._sayImport(text, isError),
+    )
+    if (!this._body.hidden) this._focusImport(entry.id, 'button')
+  }
+
+  /** Put the keyboard on a control of an import after its row was redrawn. */
+  _focusImport(id, selector) {
+    const rows = [...this._importList.querySelectorAll('.profile-import')]
+    rows.find((row) => row.dataset.id === String(id))?.querySelector(selector)?.focus()
   }
 
   /** A guest sees the login note instead of the lists; another failure, its message. */
@@ -234,6 +415,106 @@ export class ProfilePage {
       }
       this._lists[category].replaceChildren(...rows)
     }
+    this._renderImports()
+  }
+
+  _renderImports() {
+    // An import that is gone (deleted elsewhere) no longer asks its question.
+    if (!this._imports.some((entry) => entry.id === this._removingImportId)) {
+      this._removingImportId = null
+    }
+    const rows = this._imports.map((entry) => (
+      entry.id === this._removingImportId ? this._importRemoveRow(entry) : this._importRow(entry)
+    ))
+    if (rows.length === 0) {
+      const empty = document.createElement('li')
+      empty.className = 'profile-empty'
+      empty.textContent = NO_IMPORT_TEXT
+      rows.push(empty)
+    }
+    this._importList.replaceChildren(...rows)
+  }
+
+  /** The name of an import and, under it, its size, its items and its date. */
+  _importContent(entry) {
+    const name = document.createElement('div')
+    name.className = 'profile-import-name'
+    name.textContent = entry.name
+    name.title = entry.name
+    const detail = document.createElement('div')
+    detail.className = 'profile-item-source'
+    detail.textContent = importLabel(entry)
+    const content = document.createElement('div')
+    content.className = 'profile-item-content'
+    content.append(name, detail)
+    return content
+  }
+
+  _importRow(entry) {
+    const row = document.createElement('li')
+    row.className = 'profile-item profile-import'
+    row.dataset.id = entry.id
+
+    const original = button('Mở bản gốc', 'profile-button')
+    original.addEventListener('click', () => {
+      original.disabled = true   // until the row is redrawn
+      this._saveOriginal(entry)
+    })
+
+    const remove = button('Xoá', 'profile-button danger')
+    remove.addEventListener('click', () => {
+      // Nothing was made from it: there is nothing to choose.
+      if (!entry.item_count) return this._removeImport(entry, { keepItems: true })
+      this._removingImportId = entry.id
+      this._sayImport('')
+      this._renderImports()
+      this._focusImport(entry.id, 'button')   // "Huỷ", the harmless choice
+    })
+
+    row.append(this._importContent(entry), original, remove)
+    return row
+  }
+
+  /** The row of an import being deleted: what happens to the items made from it. */
+  _importRemoveRow(entry) {
+    const row = document.createElement('li')
+    row.className = 'profile-item profile-import removing'
+    row.dataset.id = entry.id
+
+    const question = document.createElement('div')
+    question.className = 'profile-import-question'
+    question.textContent = `Xoá bản gốc này? Có ${itemCountLabel(entry.item_count)} `
+      + 'trong hồ sơ được tạo từ nó: giữ lại hay xoá luôn?'
+
+    const cancel = button('Huỷ', 'profile-button')
+    const keep = button('Giữ lại các mục', 'profile-button')
+    const drop = button('Xoá cả các mục', 'profile-button danger')
+    const stop = () => {
+      this._removingImportId = null
+      this._renderImports()
+      this._focusImport(entry.id, '.danger')   // back on "Xoá", the button that asked
+    }
+    const choose = (keepItems) => {
+      cancel.disabled = keep.disabled = drop.disabled = true
+      this._removeImport(entry, { keepItems })
+    }
+    cancel.addEventListener('click', stop)
+    keep.addEventListener('click', () => choose(true))
+    drop.addEventListener('click', () => choose(false))
+    row.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()   // cancels the question, does not close the page
+        stop()
+      }
+    })
+
+    const choices = document.createElement('div')
+    choices.className = 'profile-import-choices'
+    choices.append(cancel, keep, drop)
+    const content = this._importContent(entry)
+    content.append(question)
+    row.append(content, choices)
+    return row
   }
 
   _focusEdit() {
@@ -256,10 +537,17 @@ export class ProfilePage {
     text.textContent = item.text
     const source = document.createElement('div')
     source.className = 'profile-item-source'
-    source.textContent = sourceLabel(item.source)
+    source.textContent = itemSourceLabel(item, this._imports)
     const content = document.createElement('div')
     content.className = 'profile-item-content'
     content.append(text, source)
+    if (item.evidence) {
+      // The sentence the item was read from, in the person's own words.
+      const quote = document.createElement('q')
+      quote.className = 'profile-item-quote'
+      quote.textContent = item.evidence
+      content.append(quote)
+    }
 
     const edit = button('Sửa', 'profile-button')
     edit.addEventListener('click', () => {
@@ -331,5 +619,11 @@ export class ProfilePage {
   _say(text, isError = false) {
     this._message.textContent = text
     this._message.classList.toggle('error', isError)
+  }
+
+  /** The message of the imports block, which is too far down for the one on top. */
+  _sayImport(text, isError = false) {
+    this._importMessage.textContent = text
+    this._importMessage.classList.toggle('error', isError)
   }
 }

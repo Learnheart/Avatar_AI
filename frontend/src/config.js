@@ -38,6 +38,10 @@ export const KNOWLEDGE_MAX_FILE_MB = 10
 // The text fields stop at this length; the backend has the last word (its
 // MEMORY_ITEM_MAX_CHARS).
 export const MEMORY_ITEM_MAX_CHARS = 200
+// A description of the person, checked before it is sent; the backend has the last
+// word (its loaders and MEMORY_IMPORT_MAX_FILE_MB).
+export const MEMORY_IMPORT_EXTENSIONS = ['.txt', '.md', '.csv', '.pdf', '.docx']
+export const MEMORY_IMPORT_MAX_FILE_MB = 5
 
 // ── Transcript window ─────────────────────────────────────────────────────
 

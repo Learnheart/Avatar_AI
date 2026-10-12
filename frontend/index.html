@@ -419,6 +419,60 @@
     .profile-button:disabled { opacity: 0.4; cursor: default; }
     .profile-button:focus-visible { outline: 2px solid #6c63ff; outline-offset: 1px; }
 
+    .profile-item-quote {
+      display: block;
+      margin-top: 4px;
+      padding-left: 8px;
+      font-size: 12px;
+      font-style: italic;
+      line-height: 1.45;
+      opacity: 0.75;
+      overflow-wrap: anywhere;
+      border-left: 2px solid rgba(108, 99, 255, 0.6);
+    }
+
+    /* Imports: a description of the person, as a file or a pasted text */
+    .profile-block > .profile-hint { margin: -8px 0 16px; }
+
+    #profile-import-drop {
+      width: 100%;
+      min-height: 132px;
+      padding: 18px 12px;
+      font: inherit;
+      line-height: 1.6;
+      color: inherit;
+      background: none;
+      border: 1px dashed rgba(255,255,255,0.3);
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    #profile-import-drop:hover:enabled,
+    #profile-import-drop.dragging {
+      border-color: #6c63ff;
+      background: rgba(108, 99, 255, 0.12);
+    }
+
+    #profile-import-drop:focus-visible { outline: 2px solid #6c63ff; outline-offset: 1px; }
+    #profile-import-drop:disabled,
+    #profile-import-text:disabled { opacity: 0.4; cursor: default; }
+
+    #profile-import-hint { display: block; font-size: 12px; opacity: 0.6; }
+
+    #profile-import-text { flex: none; min-height: 132px; line-height: 1.45; resize: vertical; }
+    #profile-import-submit { align-self: flex-end; }
+
+    #profile-import-message { min-height: 18px; margin: 14px 0; font-size: 13px; color: #00c864; }
+    #profile-import-message.error { color: #ff6b6b; }
+    #profile-import-message.busy { color: #ffb400; animation: profile-busy 1.2s ease-in-out infinite; }
+
+    @keyframes profile-busy { 50% { opacity: 0.45; } }
+
+    .profile-import-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .profile-import.removing { flex-wrap: wrap; border-color: rgba(255, 107, 107, 0.6); }
+    .profile-import-question { margin-top: 6px; line-height: 1.45; }
+    .profile-import-choices { display: flex; flex-wrap: wrap; gap: 8px; }
+
     /* Narrow window: one group per row. */
     @media (max-width: 820px) {
       #profile-page { padding: 20px 12px; }
@@ -543,6 +597,31 @@
             <div class="profile-group" id="profile-group-preference"></div>
             <div class="profile-group" id="profile-group-personality"></div>
           </div>
+        </section>
+        <!-- Imports: a description of the person, read into items by the backend -->
+        <section class="profile-block">
+          <h2>Bản mô tả về bạn</h2>
+          <p class="profile-hint">
+            Đưa một tệp hoặc dán một đoạn văn giới thiệu về bạn: avatar đọc và thêm những điều
+            cần nhớ vào các danh sách ở trên. Bản gốc được giữ lại ở đây.
+          </p>
+          <div class="profile-groups" id="profile-import-form">
+            <div class="profile-group">
+              <button id="profile-import-drop" type="button">
+                Chọn hoặc kéo thả một tệp vào đây
+                <span id="profile-import-hint"></span>
+              </button>
+              <input id="profile-import-input" type="file" hidden />
+            </div>
+            <div class="profile-group">
+              <textarea id="profile-import-text" class="profile-input"
+                aria-label="Dán đoạn văn mô tả về bạn"
+                placeholder="Hoặc dán đoạn văn mô tả về bạn vào đây"></textarea>
+              <button id="profile-import-submit" class="profile-button primary" type="button">Đọc đoạn văn này</button>
+            </div>
+          </div>
+          <div id="profile-import-message" role="status"></div>
+          <ul id="profile-import-list" class="profile-list"></ul>
         </section>
       </div>
     </div>

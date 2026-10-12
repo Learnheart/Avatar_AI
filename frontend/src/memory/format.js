@@ -2,6 +2,8 @@
  * Pure helpers of the profile page (unit-tested, no DOM, no network).
  */
 
+import { formatBytes, isSupportedFile } from '../knowledge/format.js'
+
 /** The categories of a memory item, in the order the profile page shows them. */
 export const CATEGORIES = ['identity', 'addressing', 'preference', 'personality']
 
@@ -57,6 +59,17 @@ export function sourceLabel(source) {
   return SOURCE_LABELS[source] ?? String(source)
 }
 
+/**
+ * Where an item comes from, with the name of its import while that import is still
+ * listed: "Từ tệp đã nhập · cv.pdf".
+ */
+export function itemSourceLabel(item, imports) {
+  const label = sourceLabel(item.source)
+  if (item.import_id == null) return label
+  const origin = (imports ?? []).find((entry) => entry.id === item.import_id)
+  return origin ? `${label} · ${origin.name}` : label
+}
+
 /** The Vietnamese message shown for a failed call to the memory API. */
 export function apiErrorMessage(status) {
   switch (status) {
@@ -67,4 +80,61 @@ export function apiErrorMessage(status) {
     case 502: return 'Kho hồ sơ đang gặp sự cố, vui lòng thử lại'
     default: return `Lỗi máy chủ (${status})`
   }
+}
+
+/**
+ * The message for a refused import. 413 and 415 only come from there (`maxFileMb` is
+ * the size limit of a file); 422 and 502 mean something else than for an item (nothing
+ * to read or to remember; the reading failed); the rest is the same.
+ */
+export function importErrorMessage(status, maxFileMb) {
+  switch (status) {
+    case 413: return `Tệp vượt quá ${maxFileMb} MB, hoặc văn bản quá dài`
+    case 415: return 'Định dạng tệp không được hỗ trợ'
+    case 422: return 'Không đọc được nội dung, hoặc không có gì về bạn để ghi nhớ trong đó'
+    case 502: return 'Chưa đọc được bản mô tả, vui lòng thử lại'
+    default: return apiErrorMessage(status)
+  }
+}
+
+// ── Imports ─────────────────────────────────────────────────────────────────
+
+/**
+ * Why a file ({ name, size }) is refused before any request, or null when it can be
+ * sent: the backend would refuse another type or a larger file anyway.
+ */
+export function fileRefusal(file, extensions, maxFileMb) {
+  if (!isSupportedFile(file.name, extensions)) return importErrorMessage(415, maxFileMb)
+  if (file.size > maxFileMb * 1024 * 1024) return `Tệp vượt quá ${maxFileMb} MB`
+  return null
+}
+
+/** How many items an import produced, as its row says it: "3 mục". */
+export function itemCountLabel(count) {
+  const total = Math.max(0, Number(count) || 0)
+  return total === 0 ? 'không có mục nào' : `${total} mục`
+}
+
+/**
+ * What the page says after an import: how many items it added to the profile (at least
+ * one: the backend refuses a description with nothing to remember in it).
+ */
+export function importedMessage(count) {
+  return `Đã thêm ${count} mục vào hồ sơ`
+}
+
+/** "12/10/2026" for an ISO timestamp, in the time of the browser; '' when unreadable. */
+export function formatDate(iso) {
+  const date = new Date(iso ?? '')
+  if (Number.isNaN(date.getTime())) return ''
+  const two = (value) => String(value).padStart(2, '0')
+  return `${two(date.getDate())}/${two(date.getMonth() + 1)}/${date.getFullYear()}`
+}
+
+/** The line under the name of an import: "1.5 KB · 3 mục · 12/10/2026". */
+export function importLabel(entry) {
+  const parts = [formatBytes(entry.size_bytes), itemCountLabel(entry.item_count)]
+  const date = formatDate(entry.created_at)
+  if (date) parts.push(date)
+  return parts.join(' · ')
 }

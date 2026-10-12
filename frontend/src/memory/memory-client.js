@@ -1,30 +1,37 @@
 /**
  * Client of the backend memory API (backend/features/memory/api.py): the items of
- * the person's profile.
+ * the person's profile and the descriptions they imported.
  *
  * Every method rejects with an Error whose message can be shown to the user and whose
  * `status` is the HTTP status (NETWORK_FAILURE when the request got no answer).
  */
 
-import { API_URL } from '../config.js'
-import { NETWORK_FAILURE, apiErrorMessage } from './format.js'
+import { API_URL, MEMORY_IMPORT_MAX_FILE_MB } from '../config.js'
+import { NETWORK_FAILURE, apiErrorMessage, importErrorMessage } from './format.js'
 
 const ITEMS_URL = `${API_URL}/memory/items`
+const IMPORTS_URL = `${API_URL}/memory/imports`
 
-function failure(status) {
-  const error = new Error(apiErrorMessage(status))
+function failure(status, message) {
+  const error = new Error(message(status))
   error.status = status
   return error
 }
 
-async function request(url, options) {
+/** The text of a refused import, which has refusals of its own (size, type). */
+function importFailure(status) {
+  return importErrorMessage(status, MEMORY_IMPORT_MAX_FILE_MB)
+}
+
+/** `message` turns the status of a refusal into its text (apiErrorMessage by default). */
+async function request(url, options, message = apiErrorMessage) {
   let response
   try {
     response = await fetch(url, options)
   } catch {
-    throw failure(NETWORK_FAILURE)
+    throw failure(NETWORK_FAILURE, message)
   }
-  if (!response.ok) throw failure(response.status)
+  if (!response.ok) throw failure(response.status, message)
   return response
 }
 
@@ -59,5 +66,49 @@ export class MemoryClient {
 
   async remove(id) {
     await request(`${ITEMS_URL}/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  }
+
+  // ── Imports ─────────────────────────────────────────────────────────────
+
+  /** → [{ id, name, size_bytes, item_count, created_at }] */
+  async listImports() {
+    const response = await request(IMPORTS_URL)
+    return (await response.json()).imports
+  }
+
+  /**
+   * Send a description of the person, a File or a pasted text, for the backend to
+   * read: several seconds. Resolves with { import, items }, the items it made.
+   */
+  async importFile(file) {
+    const body = new FormData()
+    body.append('file', file, file.name)
+    return this._import(body)
+  }
+
+  async importText(text) {
+    const body = new FormData()
+    body.append('text', text)
+    return this._import(body)
+  }
+
+  async _import(body) {
+    const response = await request(IMPORTS_URL, { method: 'POST', body }, importFailure)
+    return response.json()
+  }
+
+  /**
+   * The original of an import (an entry of listImports()), unchanged: resolves with
+   * { blob, name }, the bytes and the file name to save them under.
+   */
+  async importContent(entry) {
+    const response = await request(`${IMPORTS_URL}/${encodeURIComponent(entry.id)}/content`)
+    return { blob: await response.blob(), name: entry.name }
+  }
+
+  /** Delete an import, and the items made from it unless `keepItems`. */
+  async removeImport(id, { keepItems }) {
+    const items = keepItems ? 'keep' : 'delete'
+    await request(`${IMPORTS_URL}/${encodeURIComponent(id)}?items=${items}`, { method: 'DELETE' })
   }
 }
