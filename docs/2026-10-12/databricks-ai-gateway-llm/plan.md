@@ -58,6 +58,7 @@ summary: Add an LLM backend that calls the Databricks AI Gateway through the Ope
 - [x] `databricks` entry in `providers/catalog.py`
 - [x] Unit tests per `test-plan.md`
 - [x] `.env.example`, `CLAUDE.md` §4
-- [ ] Real call against the gateway with a valid `DATABRICKS_TOKEN` (confirm streaming and
-      the `system` message are accepted)
+- [x] Real call against the gateway with a valid `DATABRICKS_TOKEN` (confirm streaming and
+      the `system` message are accepted) — 2026-10-12, `glm-5-3-flash-dev-tai`: streamed,
+      system prompt followed, reasoning kept out of the text deltas, first delta 1.5–2.0 s
 - [ ] Human verification (one real turn, `tests/e2e`, first audio < 3.5 s, end to end < 10 s)
