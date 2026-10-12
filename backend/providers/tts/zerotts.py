@@ -81,7 +81,8 @@ class ZeroTTSBackend(TTS):
     def sample_rate(self) -> int:
         return self._sample_rate
 
-    async def synthesize_stream(self, text: str) -> AsyncIterator[bytes]:
+    async def synthesize_stream(self, text: str) -> AsyncIterator[bytes]:  # noqa: C901
+        # ruff adds the branches of the nested worker to this function; it reads top to bottom.
         if not text.strip():
             return
         if self._model is None:

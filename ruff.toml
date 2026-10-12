@@ -1,0 +1,16 @@
+# Lint and complexity limits of the backend. Run from the repository root: `ruff check`.
+# Plan: docs/2026-10-12/backend-ci-quality-gate/plan.md
+
+[lint]
+# ruff's defaults (E4, E7, E9, F) plus the size of a function: complexity, branches,
+# arguments, statements. Style rules stay off.
+select = ["E4", "E7", "E9", "F", "C901", "PLR0912", "PLR0913", "PLR0915"]
+
+[lint.per-file-ignores]
+# A test may be long and take many fixtures; only the default rules apply to tests.
+"tests/**" = ["C901", "PLR0912", "PLR0913", "PLR0915"]
+
+[lint.pylint]
+# Thresholds are ruff's defaults (complexity 10, branches 12, statements 50), except this
+# one: constructors receive their dependencies as arguments (CLAUDE.md §4).
+max-args = 7
