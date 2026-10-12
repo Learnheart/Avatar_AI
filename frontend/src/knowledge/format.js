@@ -33,3 +33,11 @@ export function apiErrorMessage(status, maxFileMb) {
     default: return `Lỗi máy chủ (${status})`
   }
 }
+
+/** The line above the list: how many of the documents the avatar answers from. */
+export function usageSummary(documents) {
+  if (documents.length === 0) return 'Chưa có tài liệu nào.'
+  const inUse = documents.filter((doc) => doc.enabled).length
+  if (inUse === 0) return `Chưa chọn tài liệu nào (${documents.length} tài liệu)`
+  return `Đang dùng ${inUse}/${documents.length} tài liệu`
+}

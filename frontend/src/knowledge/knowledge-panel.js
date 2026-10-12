@@ -1,12 +1,13 @@
 /**
- * Knowledge panel — upload the documents the avatar answers from, list and delete them.
+ * Knowledge panel — upload documents, choose which ones the avatar answers from (the
+ * checkbox of each row), delete them.
  *
  * The markup is in index.html (#knowledge-toggle, #knowledge-panel). File names come
  * from the user: they are only ever written with textContent.
  */
 
 import { KNOWLEDGE_EXTENSIONS, KNOWLEDGE_MAX_FILE_MB } from '../config.js'
-import { formatBytes, isSupportedFile } from './format.js'
+import { formatBytes, isSupportedFile, usageSummary } from './format.js'
 
 export class KnowledgePanel {
   constructor(client) {
@@ -17,6 +18,7 @@ export class KnowledgePanel {
     this._input = document.getElementById('knowledge-input')
     this._list = document.getElementById('knowledge-list')
     this._message = document.getElementById('knowledge-message')
+    this._summary = document.getElementById('knowledge-summary')
   }
 
   init() {
@@ -95,13 +97,31 @@ export class KnowledgePanel {
 
   _render(documents) {
     this._list.replaceChildren(...documents.map((doc) => this._row(doc)))
-    document.getElementById('knowledge-empty').hidden = documents.length > 0
+    this._summary.textContent = usageSummary(documents)
   }
 
   _row(doc) {
     const row = document.createElement('li')
+    row.classList.toggle('unused', !doc.enabled)
 
-    const text = document.createElement('div')
+    // Checked = the avatar may answer from this document.
+    const use = document.createElement('input')
+    use.type = 'checkbox'
+    use.className = 'knowledge-use'
+    use.checked = doc.enabled
+    use.title = 'Dùng tài liệu này để trả lời'
+    use.addEventListener('change', async () => {
+      use.disabled = true
+      try {
+        await this._client.setEnabled(doc.id, use.checked)
+        this._say(use.checked ? `Đang dùng ${doc.name}` : `Đã bỏ chọn ${doc.name}`)
+      } catch (err) {
+        this._say(err.message, true)
+      }
+      await this.refresh()   // the list is redrawn from what the backend holds
+    })
+
+    const text = document.createElement('label')
     text.className = 'knowledge-doc'
     const name = document.createElement('div')
     name.className = 'knowledge-doc-name'
@@ -127,6 +147,7 @@ export class KnowledgePanel {
       await this.refresh()
     })
 
+    text.prepend(use)
     row.append(text, remove)
     return row
   }

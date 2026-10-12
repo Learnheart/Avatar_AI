@@ -141,7 +141,7 @@
     }
 
     #knowledge-hint,
-    #knowledge-empty,
+    #knowledge-summary,
     .knowledge-doc-detail { font-size: 12px; opacity: 0.6; }
 
     #knowledge-message { min-height: 16px; white-space: pre-line; color: #00c864; }
@@ -162,7 +162,18 @@
       gap: 10px;
     }
 
-    .knowledge-doc { min-width: 0; }
+    .knowledge-doc {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      column-gap: 10px;
+      align-items: center;
+      cursor: pointer;
+    }
+
+    .knowledge-use { grid-row: span 2; width: 16px; height: 16px; cursor: pointer; }
+
+    #knowledge-list li.unused .knowledge-doc-name { opacity: 0.45; }
 
     .knowledge-doc-name {
       overflow: hidden;
@@ -241,7 +252,7 @@
     </div>
     <input id="knowledge-input" type="file" multiple hidden />
     <div id="knowledge-message"></div>
-    <div id="knowledge-empty">Chưa có tài liệu nào.</div>
+    <div id="knowledge-summary"></div>
     <ul id="knowledge-list"></ul>
   </div>
 

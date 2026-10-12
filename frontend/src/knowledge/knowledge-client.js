@@ -23,7 +23,7 @@ async function request(url, options) {
 }
 
 export class KnowledgeClient {
-  /** → [{ id, name, size_bytes, chunk_count, created_at }] */
+  /** → [{ id, name, size_bytes, chunk_count, created_at, enabled }] */
   async list() {
     const response = await request(DOCUMENTS_URL)
     return (await response.json()).documents
@@ -34,6 +34,16 @@ export class KnowledgeClient {
     const body = new FormData()
     body.append('file', file, file.name)
     const response = await request(DOCUMENTS_URL, { method: 'POST', body })
+    return response.json()
+  }
+
+  /** Choose whether the avatar answers from the document; resolves with the document. */
+  async setEnabled(id, enabled) {
+    const response = await request(`${DOCUMENTS_URL}/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    })
     return response.json()
   }
 
