@@ -186,3 +186,33 @@ def test_groq_as_a_backup_requires_the_groq_key():
             STT_BACKEND="databricks",
             LLM_BACKEND_BACKUP="groq",
         ).validate()
+
+
+# ── Knowledge base ────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize(
+    ("overrides", "key"),
+    [
+        ({"EMBEDDING_BACKEND": "openai_compatible", "EMBEDDING_MODEL": "m"}, "EMBEDDING_BASE_URL"),
+        (
+            {"EMBEDDING_BACKEND": "openai_compatible", "EMBEDDING_BASE_URL": "http://e.test"},
+            "EMBEDDING_MODEL",
+        ),
+        ({"EMBEDDING_BACKEND": "databricks", "DATABRICKS_PROFILE": "dev"}, "DATABRICKS_SERVING_BASE_URL"),
+        (
+            {
+                "EMBEDDING_BACKEND": "databricks",
+                "DATABRICKS_SERVING_BASE_URL": "https://ws.test/serving-endpoints",
+            },
+            "DATABRICKS_TOKEN",
+        ),
+        ({"KNOWLEDGE_CHUNK_CHARS": 100, "KNOWLEDGE_CHUNK_OVERLAP_CHARS": 100}, "KNOWLEDGE_CHUNK"),
+    ],
+)
+def test_knowledge_settings_are_validated(overrides, key):
+    with pytest.raises(ValueError, match=key):
+        AppConfig(GROQ_API_KEY="test-key", **overrides).validate()
+
+
+def test_the_default_embedding_needs_no_setting():
+    AppConfig(GROQ_API_KEY="test-key").validate()

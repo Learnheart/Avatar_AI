@@ -22,6 +22,8 @@ AUTO = "auto"
 OPENAI_COMPATIBLE = "openai_compatible"
 # Backend name of the Databricks AI Gateway (LLM and STT).
 DATABRICKS = "databricks"
+# Embedding backend computed locally, with no model (providers/embedding/local_hash.py).
+LOCAL_HASH = "local_hash"
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 
@@ -78,6 +80,25 @@ class AppConfig(Tuning, Prompts):
         "DATABRICKS_STT_MODEL", "nonprod_ai.tsfai.gemini-3-6-flash-dev-tai"
     )
 
+    # ── Knowledge base (uploaded documents) ─────────────────────────────
+    # The SQLite file holding the documents, their chunks and the vectors.
+    KNOWLEDGE_DB_PATH: str = env_str("KNOWLEDGE_DB_PATH", "backend/data/knowledge.db")
+    # local_hash (no model, matches words) | openai_compatible | databricks
+    EMBEDDING_BACKEND: str = env_str("EMBEDDING_BACKEND", LOCAL_HASH, normalize=str.lower)
+    # Used when EMBEDDING_BACKEND=openai_compatible: any `/embeddings` API.
+    EMBEDDING_BASE_URL: str = env_str("EMBEDDING_BASE_URL", "")
+    EMBEDDING_API_KEY: str = env_str("EMBEDDING_API_KEY", repr=False)
+    EMBEDDING_MODEL: str = env_str("EMBEDDING_MODEL", "")
+    # Used when EMBEDDING_BACKEND=databricks: the workspace's serving endpoints root,
+    # `https://<workspace>/serving-endpoints` (not the AI Gateway URL), with the
+    # Databricks credential above.
+    DATABRICKS_SERVING_BASE_URL: str = env_str("DATABRICKS_SERVING_BASE_URL", "")
+    DATABRICKS_EMBEDDING_MODEL: str = env_str(
+        "DATABRICKS_EMBEDDING_MODEL", "databricks-qwen3-embedding-0-6b"
+    )
+    # Origins allowed to call the HTTP API from a browser, comma-separated; * = any.
+    CORS_ALLOW_ORIGINS: str = env_str("CORS_ALLOW_ORIGINS", "*")
+
     # ── Camera ──────────────────────────────────────────────────────────
     CAMERA_INDEX: int = env_int("CAMERA_INDEX", 0)
     CAMERA_URL: str = env_str("CAMERA_URL", "")
@@ -104,6 +125,23 @@ class AppConfig(Tuning, Prompts):
                 )
         if OPENAI_COMPATIBLE in stt_backends and not self.STT_BASE_URL:
             raise ValueError("STT_BASE_URL is required when STT_BACKEND=openai_compatible.")
+        if self.EMBEDDING_BACKEND == OPENAI_COMPATIBLE:
+            if not (self.EMBEDDING_BASE_URL and self.EMBEDDING_MODEL):
+                raise ValueError(
+                    "EMBEDDING_BASE_URL and EMBEDDING_MODEL are required when "
+                    "EMBEDDING_BACKEND=openai_compatible."
+                )
+        if self.EMBEDDING_BACKEND == DATABRICKS:
+            if not self.DATABRICKS_SERVING_BASE_URL:
+                raise ValueError(
+                    "DATABRICKS_SERVING_BASE_URL is required when EMBEDDING_BACKEND=databricks."
+                )
+            if not (self.DATABRICKS_TOKEN or self.DATABRICKS_PROFILE):
+                raise ValueError(
+                    "DATABRICKS_TOKEN or DATABRICKS_PROFILE is required by the databricks backends."
+                )
+        if self.KNOWLEDGE_CHUNK_OVERLAP_CHARS >= self.KNOWLEDGE_CHUNK_CHARS:
+            raise ValueError("KNOWLEDGE_CHUNK_OVERLAP_CHARS must be below KNOWLEDGE_CHUNK_CHARS.")
         if self.DEVICE != AUTO and self.DEVICE not in DEVICES:
             raise ValueError(f"Invalid DEVICE: {self.DEVICE}")
         if self.LOG_LEVEL not in LOG_LEVELS:

@@ -45,6 +45,34 @@ class Transcript:
     language: str
 
 
+@dataclass
+class Passage:
+    """A piece of an uploaded document returned by a knowledge search. `score` is the
+    cosine similarity to the query (1 = same direction)."""
+    text: str
+    source: str
+    score: float
+
+
+@dataclass
+class KnowledgeDocument:
+    """An uploaded document, as listed by the knowledge base."""
+    id: str
+    name: str
+    size_bytes: int
+    chunk_count: int
+    created_at: str  # ISO 8601, UTC
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "size_bytes": self.size_bytes,
+            "chunk_count": self.chunk_count,
+            "created_at": self.created_at,
+        }
+
+
 # ── ConversationEngine events ─────────────────────────────────────────────
 
 @dataclass

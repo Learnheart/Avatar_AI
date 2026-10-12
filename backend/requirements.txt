@@ -23,3 +23,9 @@ torchaudio>=2.2.0
 
 # TTS — ZeroTTS (local, ONNX runtime)
 zerotts==0.1.5
+
+# Knowledge base, PDF / DOCX text extraction, file upload
+sqlite-vec>=0.1.6
+pypdf>=4.0.0
+python-docx>=1.1.0
+python-multipart>=0.0.9

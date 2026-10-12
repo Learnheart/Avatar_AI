@@ -20,12 +20,19 @@ sent the utterance as audio). STT is never routed there by the device: set `STT_
 
 `STT_BACKEND_BACKUP` and `LLM_BACKEND_BACKUP` name a second backend of the same tables
 that takes over when the first one fails (`backend/providers/fallback.py`).
+
+The embedding of the knowledge base is one more stage (`EMBEDDING_BACKEND`): `local_hash`
+needs nothing, `openai_compatible` takes `EMBEDDING_BASE_URL`, `EMBEDDING_API_KEY` and
+`EMBEDDING_MODEL`, `databricks` a workspace endpoint (`DATABRICKS_SERVING_BASE_URL`,
+`DATABRICKS_EMBEDDING_MODEL`).
 """
 from typing import Callable
 
-from backend.config import AUTO, DATABRICKS, OPENAI_COMPATIBLE, AppConfig
-from backend.core.contracts import LLM, STT, TTS
+from backend.config import AUTO, DATABRICKS, LOCAL_HASH, OPENAI_COMPATIBLE, AppConfig
+from backend.core.contracts import LLM, STT, TTS, Embedder
 from backend.providers.databricks import databricks_api_key
+from backend.providers.embedding.local_hash import LocalHashEmbedder
+from backend.providers.embedding.openai_compatible import OpenAICompatibleEmbedder
 from backend.providers.fallback import FallbackLLM, FallbackSTT
 from backend.providers.llm.openai_compatible import OpenAICompatibleLLM
 from backend.providers.llm.openai_responses import OpenAIResponsesLLM
@@ -139,3 +146,31 @@ def create_tts(config: AppConfig) -> TTS:
     if config.TTS_BACKEND not in _TTS_BACKENDS:
         raise ValueError(f"Unknown TTS_BACKEND: {config.TTS_BACKEND}")
     return _TTS_BACKENDS[config.TTS_BACKEND](config)
+
+
+# ── Embedding (knowledge base) ────────────────────────────────────────────
+
+_EMBEDDING_BACKENDS: dict[str, Callable[[AppConfig], Embedder]] = {
+    LOCAL_HASH: LocalHashEmbedder,
+    OPENAI_COMPATIBLE: lambda config: OpenAICompatibleEmbedder(
+        config,
+        base_url=config.EMBEDDING_BASE_URL,
+        api_key=config.EMBEDDING_API_KEY or _NO_KEY,
+        model=config.EMBEDDING_MODEL,
+    ),
+    DATABRICKS: lambda config: OpenAICompatibleEmbedder(
+        config,
+        base_url=config.DATABRICKS_SERVING_BASE_URL,
+        api_key=databricks_api_key(config),
+        model=config.DATABRICKS_EMBEDDING_MODEL,
+    ),
+}
+
+
+def create_embedder(config: AppConfig) -> Embedder:
+    """Build the embedding backend named by `EMBEDDING_BACKEND`."""
+    name = config.EMBEDDING_BACKEND
+    if name not in _EMBEDDING_BACKENDS:
+        raise ValueError(f"Unknown EMBEDDING_BACKEND: {name}")
+    logger.info({"msg": "Embedding backend selected", "backend": name})
+    return _EMBEDDING_BACKENDS[name](config)

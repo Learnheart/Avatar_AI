@@ -34,6 +34,23 @@ class Tuning:
     # Max wait for each streamed delta, first token included.
     LLM_TIMEOUT_SEC: float = env_float("LLM_TIMEOUT_SEC", 8.0)
 
+    # ── Knowledge (uploaded documents) ──────────────────────────────────
+    # Passages given to the LLM with the question.
+    KNOWLEDGE_TOP_K: int = env_int("KNOWLEDGE_TOP_K", 4)
+    # Cosine similarity below which a passage is not used (0 = keep the top K).
+    KNOWLEDGE_MIN_SCORE: float = env_float("KNOWLEDGE_MIN_SCORE", 0.0)
+    # Max wait for the lookup in a turn; past it the question is answered without it.
+    KNOWLEDGE_TIMEOUT_SEC: float = env_float("KNOWLEDGE_TIMEOUT_SEC", 2.0)
+    # Size of a chunk of a document, and how much of it is repeated in the next one.
+    KNOWLEDGE_CHUNK_CHARS: int = env_int("KNOWLEDGE_CHUNK_CHARS", 800)
+    KNOWLEDGE_CHUNK_OVERLAP_CHARS: int = env_int("KNOWLEDGE_CHUNK_OVERLAP_CHARS", 120)
+    KNOWLEDGE_MAX_FILE_MB: float = env_float("KNOWLEDGE_MAX_FILE_MB", 10.0)
+    # Texts per embedding request, and the timeout of one request.
+    EMBEDDING_BATCH_SIZE: int = env_int("EMBEDDING_BATCH_SIZE", 32)
+    EMBEDDING_TIMEOUT_SEC: float = env_float("EMBEDDING_TIMEOUT_SEC", 20.0)
+    # Vector size of the `local_hash` embedding.
+    EMBEDDING_HASH_DIM: int = env_int("EMBEDDING_HASH_DIM", 1024)
+
     # ── Speaking (TTS) ──────────────────────────────────────────────────
     ZEROTTS_VOICE: str = env_str("ZEROTTS_VOICE", "maichi")
     # Size of each audio message.
