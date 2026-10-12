@@ -190,7 +190,7 @@ backend/
   assets/
     face_landmarker.task       # MediaPipe model
   requirements.txt             # runtime deps
-  requirements-dev.txt         # test deps
+  requirements-dev.txt         # test and lint deps
 
 frontend/                      # ── CAPABILITY 3: Expression ──
   src/
@@ -219,6 +219,10 @@ docs/
   ARCHITECTURE.md
   quality-gates.md
   YYYY-MM-DD/<feature-name>/   # plan.md, design.md, test-plan.md (§0)
+
+ruff.toml                      # lint rules and complexity limits of the backend (§5)
+.github/workflows/
+  backend-ci.yml               # on every push: ruff check + backend unit tests
 ```
 
 Layering rules:
@@ -259,6 +263,15 @@ Layering rules:
 - Frontend motion math goes in `avatar/motion.js` as pure functions; the renderer only
   applies the numbers.
 
+Keeping the code small:
+
+- An interface, a base class or a factory is written only when it has more than one
+  implementation; a single implementation is called directly.
+- A new file or class is named in the plan before it is written.
+- Code that a change replaces is deleted in the same change; nothing is kept beside its
+  replacement.
+- A parameter, a config key or a branch exists only for a case a requirement asks for.
+
 ## §5. Deployment and running
 
 Local run on the dev machine (MacBook, Apple Silicon). Windows + RTX and Docker
@@ -288,18 +301,22 @@ npm run dev                     # http://localhost:3000
 Checks:
 
 ```bash
+.venv/bin/ruff check                                     # lint + complexity
 .venv/bin/python -m pytest tests/unit -q                 # backend unit tests
 cd frontend && npm test && npm run build                 # frontend unit tests + bundle
 RUN_E2E=1 .venv/bin/python -m pytest tests/e2e -q -s     # real turn (costs Groq calls)
 ```
+
+The first two also run on GitHub Actions on every push
+(`.github/workflows/backend-ci.yml`).
 
 ## §6. Definition of Done
 
 A change is done when all of these hold:
 
 1. It has a plan under `docs/YYYY-MM-DD/<feature-name>/` and every To-do item is ticked.
-2. Backend and frontend unit tests pass, and `npm run build` succeeds if the frontend
-   changed.
+2. Backend and frontend unit tests pass, lint passes (`ruff check`; a `# noqa` carries
+   its reason), and `npm run build` succeeds if the frontend changed.
 3. The quality gates in `docs/quality-gates.md` for the touched modules still hold; a
    change to a module boundary also re-runs the matching integration gate.
 4. A change on the speech path was exercised by a real turn (`tests/e2e`) with first
