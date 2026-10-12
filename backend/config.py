@@ -24,6 +24,8 @@ OPENAI_COMPATIBLE = "openai_compatible"
 DATABRICKS = "databricks"
 # Embedding backend computed locally, with no model (providers/embedding/local_hash.py).
 LOCAL_HASH = "local_hash"
+# Embedding backend of a local Ollama server.
+OLLAMA = "ollama"
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 
@@ -83,8 +85,11 @@ class AppConfig(Tuning, Prompts):
     # ── Knowledge base (uploaded documents) ─────────────────────────────
     # The SQLite file holding the documents, their chunks and the vectors.
     KNOWLEDGE_DB_PATH: str = env_str("KNOWLEDGE_DB_PATH", "backend/data/knowledge.db")
-    # local_hash (no model, matches words) | openai_compatible | databricks
+    # local_hash (no model, matches words) | openai_compatible | databricks | ollama
     EMBEDDING_BACKEND: str = env_str("EMBEDDING_BACKEND", LOCAL_HASH, normalize=str.lower)
+    # The backend that takes over when the one above fails; empty = no backup. It must
+    # serve the same model: its vectors are compared with the primary's in the index.
+    EMBEDDING_BACKEND_BACKUP: str = env_str("EMBEDDING_BACKEND_BACKUP", "", normalize=str.lower)
     # Used when EMBEDDING_BACKEND=openai_compatible: any `/embeddings` API.
     EMBEDDING_BASE_URL: str = env_str("EMBEDDING_BASE_URL", "")
     EMBEDDING_API_KEY: str = env_str("EMBEDDING_API_KEY", repr=False)
@@ -96,6 +101,10 @@ class AppConfig(Tuning, Prompts):
     DATABRICKS_EMBEDDING_MODEL: str = env_str(
         "DATABRICKS_EMBEDDING_MODEL", "databricks-qwen3-embedding-0-6b"
     )
+    # Used when an embedding backend is `ollama`: the server's OpenAI-compatible root.
+    # The default model is the one the Databricks endpoint above serves.
+    OLLAMA_BASE_URL: str = env_str("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+    OLLAMA_EMBEDDING_MODEL: str = env_str("OLLAMA_EMBEDDING_MODEL", "qwen3-embedding:0.6b")
     # Origins allowed to call the HTTP API from a browser, comma-separated; * = any.
     CORS_ALLOW_ORIGINS: str = env_str("CORS_ALLOW_ORIGINS", "*")
 
@@ -125,13 +134,14 @@ class AppConfig(Tuning, Prompts):
                 )
         if OPENAI_COMPATIBLE in stt_backends and not self.STT_BASE_URL:
             raise ValueError("STT_BASE_URL is required when STT_BACKEND=openai_compatible.")
-        if self.EMBEDDING_BACKEND == OPENAI_COMPATIBLE:
+        embedding_backends = {self.EMBEDDING_BACKEND, self.EMBEDDING_BACKEND_BACKUP} - {""}
+        if OPENAI_COMPATIBLE in embedding_backends:
             if not (self.EMBEDDING_BASE_URL and self.EMBEDDING_MODEL):
                 raise ValueError(
                     "EMBEDDING_BASE_URL and EMBEDDING_MODEL are required when "
                     "EMBEDDING_BACKEND=openai_compatible."
                 )
-        if self.EMBEDDING_BACKEND == DATABRICKS:
+        if DATABRICKS in embedding_backends:
             if not self.DATABRICKS_SERVING_BASE_URL:
                 raise ValueError(
                     "DATABRICKS_SERVING_BASE_URL is required when EMBEDDING_BACKEND=databricks."

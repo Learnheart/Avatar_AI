@@ -24,16 +24,18 @@ that takes over when the first one fails (`backend/providers/fallback.py`).
 The embedding of the knowledge base is one more stage (`EMBEDDING_BACKEND`): `local_hash`
 needs nothing, `openai_compatible` takes `EMBEDDING_BASE_URL`, `EMBEDDING_API_KEY` and
 `EMBEDDING_MODEL`, `databricks` a workspace endpoint (`DATABRICKS_SERVING_BASE_URL`,
-`DATABRICKS_EMBEDDING_MODEL`).
+`DATABRICKS_EMBEDDING_MODEL`), `ollama` a local Ollama server (`OLLAMA_BASE_URL`,
+`OLLAMA_EMBEDDING_MODEL`). `EMBEDDING_BACKEND_BACKUP` names its backup, which must serve
+the same model as the primary.
 """
 from typing import Callable
 
-from backend.config import AUTO, DATABRICKS, LOCAL_HASH, OPENAI_COMPATIBLE, AppConfig
+from backend.config import AUTO, DATABRICKS, LOCAL_HASH, OLLAMA, OPENAI_COMPATIBLE, AppConfig
 from backend.core.contracts import LLM, STT, TTS, Embedder
 from backend.providers.databricks import databricks_api_key
 from backend.providers.embedding.local_hash import LocalHashEmbedder
 from backend.providers.embedding.openai_compatible import OpenAICompatibleEmbedder
-from backend.providers.fallback import FallbackLLM, FallbackSTT
+from backend.providers.fallback import FallbackEmbedder, FallbackLLM, FallbackSTT
 from backend.providers.llm.openai_compatible import OpenAICompatibleLLM
 from backend.providers.llm.openai_responses import OpenAIResponsesLLM
 from backend.providers.stt.chat_audio import ChatAudioSTT
@@ -164,13 +166,25 @@ _EMBEDDING_BACKENDS: dict[str, Callable[[AppConfig], Embedder]] = {
         api_key=databricks_api_key(config),
         model=config.DATABRICKS_EMBEDDING_MODEL,
     ),
+    OLLAMA: lambda config: OpenAICompatibleEmbedder(
+        config,
+        base_url=config.OLLAMA_BASE_URL,
+        api_key=_NO_KEY,
+        model=config.OLLAMA_EMBEDDING_MODEL,
+    ),
 }
 
 
 def create_embedder(config: AppConfig) -> Embedder:
-    """Build the embedding backend named by `EMBEDDING_BACKEND`."""
-    name = config.EMBEDDING_BACKEND
-    if name not in _EMBEDDING_BACKENDS:
-        raise ValueError(f"Unknown EMBEDDING_BACKEND: {name}")
-    logger.info({"msg": "Embedding backend selected", "backend": name})
-    return _EMBEDDING_BACKENDS[name](config)
+    """Build the embedding backend named by `EMBEDDING_BACKEND`; with
+    `EMBEDDING_BACKEND_BACKUP`, backed by a second one serving the same model."""
+    name, backup = config.EMBEDDING_BACKEND, config.EMBEDDING_BACKEND_BACKUP
+    for backend in filter(None, (name, backup)):
+        if backend not in _EMBEDDING_BACKENDS:
+            raise ValueError(f"Unknown EMBEDDING_BACKEND: {backend}")
+
+    logger.info({"msg": "Embedding backend selected", "backend": name, "backup": backup})
+    embedder = _EMBEDDING_BACKENDS[name](config)
+    if backup and backup != name:
+        return FallbackEmbedder(config, embedder, _EMBEDDING_BACKENDS[backup](config))
+    return embedder

@@ -3,11 +3,11 @@ import asyncio
 import pytest
 
 from backend.config import AppConfig
-from backend.core.contracts import LLM, STT, LLMError, STTError
+from backend.core.contracts import LLM, STT, Embedder, EmbeddingError, LLMError, STTError
 from backend.models import Transcript
 from backend.providers import catalog, fallback
 from backend.providers.catalog import create_llm, create_stt
-from backend.providers.fallback import FallbackLLM, FallbackSTT
+from backend.providers.fallback import FallbackEmbedder, FallbackLLM, FallbackSTT
 
 
 class ScriptedSTT(STT):
@@ -226,3 +226,83 @@ def test_unknown_backup_raises_value_error(backends):
         create_llm(AppConfig(LLM_BACKEND="one", LLM_BACKEND_BACKUP="nope"))
     with pytest.raises(ValueError, match="nope"):
         create_stt(AppConfig(STT_BACKEND="one", STT_BACKEND_BACKUP="nope"))
+
+
+# ── Embedding ─────────────────────────────────────────────────────────────
+
+class ScriptedEmbedder(Embedder):
+    def __init__(self, value=0.0, error=None, hang=False, signature="model"):
+        self.value, self.error, self.hang = value, error, hang
+        self._signature = signature
+        self.calls = 0
+
+    @property
+    def signature(self):
+        return self._signature
+
+    async def embed(self, texts):
+        self.calls += 1
+        if self.hang:
+            await asyncio.Event().wait()
+        if self.error:
+            raise self.error
+        return [[self.value] for _ in texts]
+
+
+async def test_a_healthy_primary_embeds_and_the_backup_is_not_called(config, clock):
+    primary, backup = ScriptedEmbedder(1.0, signature="primary"), ScriptedEmbedder(2.0)
+    embedder = FallbackEmbedder(config, primary, backup)
+
+    assert await embedder.embed(["a", "b"]) == [[1.0], [1.0]]
+    assert backup.calls == 0
+    assert embedder.signature == "primary"
+
+
+async def test_the_backup_embeds_when_the_primary_fails(config, clock):
+    primary = ScriptedEmbedder(error=EmbeddingError("token expired"), signature="primary")
+    backup = ScriptedEmbedder(2.0, signature="backup")
+    embedder = FallbackEmbedder(config, primary, backup)
+
+    assert await embedder.embed(["a"]) == [[2.0]]
+    # Same index: the signature does not follow the backend that answered.
+    assert embedder.signature == "primary"
+
+
+async def test_a_failed_embedding_primary_is_skipped_then_tried_again(config, clock):
+    primary, backup = ScriptedEmbedder(error=EmbeddingError("down")), ScriptedEmbedder(2.0)
+    embedder = FallbackEmbedder(config, primary, backup)
+
+    await embedder.embed(["a"])
+    await embedder.embed(["a"])
+    assert (primary.calls, backup.calls) == (1, 2)
+
+    clock[0] += config.FALLBACK_COOLDOWN_SEC + 1
+    primary.error, primary.value = None, 1.0
+    assert await embedder.embed(["a"]) == [[1.0]]
+    assert (primary.calls, backup.calls) == (2, 2)
+
+
+async def test_a_caller_giving_up_on_a_hung_primary_sends_the_next_requests_to_the_backup(
+    config,
+):
+    # No patched clock here: the event loop needs the real one for the caller's timeout.
+    primary, backup = ScriptedEmbedder(hang=True), ScriptedEmbedder(2.0)
+    embedder = FallbackEmbedder(config, primary, backup)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(embedder.embed(["a"]), timeout=0.05)
+    assert backup.calls == 0
+
+    assert await embedder.embed(["a"]) == [[2.0]]
+    assert primary.calls == 1
+
+
+async def test_the_error_of_the_embedding_backup_reaches_the_caller(config, clock):
+    embedder = FallbackEmbedder(
+        config,
+        ScriptedEmbedder(error=EmbeddingError("primary down")),
+        ScriptedEmbedder(error=EmbeddingError("backup down")),
+    )
+
+    with pytest.raises(EmbeddingError, match="backup down"):
+        await embedder.embed(["a"])

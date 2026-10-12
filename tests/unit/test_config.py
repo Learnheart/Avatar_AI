@@ -216,3 +216,10 @@ def test_knowledge_settings_are_validated(overrides, key):
 
 def test_the_default_embedding_needs_no_setting():
     AppConfig(GROQ_API_KEY="test-key").validate()
+
+
+def test_an_embedding_backup_needs_its_settings_like_a_primary():
+    with pytest.raises(ValueError, match="DATABRICKS_SERVING_BASE_URL"):
+        AppConfig(GROQ_API_KEY="test-key", EMBEDDING_BACKEND_BACKUP="databricks").validate()
+
+    AppConfig(GROQ_API_KEY="test-key", EMBEDDING_BACKEND_BACKUP="ollama").validate()

@@ -1,10 +1,12 @@
 """
-A primary backend with a backup behind it, for the stages that call a provider (STT, LLM).
+A primary backend with a backup behind it, for the stages that call a provider (STT, LLM,
+embedding).
 
 The backup takes over when the primary fails or does not answer within
 `FALLBACK_PRIMARY_TIMEOUT_SEC`. After a failure the primary is skipped for
 `FALLBACK_COOLDOWN_SEC`, so a network that blocks it costs one slow turn, not every turn.
-Which backend is the backup is configuration: `STT_BACKEND_BACKUP`, `LLM_BACKEND_BACKUP`.
+Which backend is the backup is configuration: `STT_BACKEND_BACKUP`, `LLM_BACKEND_BACKUP`,
+`EMBEDDING_BACKEND_BACKUP`.
 """
 import asyncio
 import time
@@ -12,7 +14,7 @@ from contextlib import aclosing
 from typing import AsyncIterator
 
 from backend.config import AppConfig
-from backend.core.contracts import LLM, STT, LLMError, STTError
+from backend.core.contracts import LLM, STT, Embedder, EmbeddingError, LLMError, STTError
 from backend.models import Transcript
 from backend.utils.logging import get_logger
 
@@ -95,3 +97,33 @@ class FallbackLLM(LLM):
         async with aclosing(self._backup.stream_answer(user_text)) as answer:
             async for delta in answer:
                 yield delta
+
+
+class FallbackEmbedder(Embedder):
+    """The backup must serve the same model as the primary: its vectors are compared
+    with the ones the primary put in the index, which is why the signature stays the
+    primary's and nothing is re-indexed when the backup answers."""
+
+    def __init__(self, config: AppConfig, primary: Embedder, backup: Embedder) -> None:
+        self._primary = primary
+        self._backup = backup
+        self._state = _Primary(config, "embedding")
+
+    @property
+    def signature(self) -> str:
+        return self._primary.signature
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        if self._state.available():
+            try:
+                # No timeout of its own: an upload embeds many chunks and may take
+                # seconds. The primary's request timeout arrives as an EmbeddingError.
+                return await self._primary.embed(texts)
+            except EmbeddingError as e:
+                self._state.failed(str(e))
+            except asyncio.CancelledError:
+                # The caller gave up waiting (the lookup timeout of a turn): this
+                # request is lost, the next ones go to the backup.
+                self._state.failed("the caller stopped waiting for it")
+                raise
+        return await self._backup.embed(texts)

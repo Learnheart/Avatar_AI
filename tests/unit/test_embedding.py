@@ -11,6 +11,7 @@ from backend.providers.databricks import ProfileToken
 from backend.providers.embedding import openai_compatible
 from backend.providers.embedding.local_hash import LocalHashEmbedder
 from backend.providers.embedding.openai_compatible import OpenAICompatibleEmbedder
+from backend.providers.fallback import FallbackEmbedder
 
 
 def cosine(a: list[float], b: list[float]) -> float:
@@ -148,3 +149,41 @@ def test_databricks_backend_uses_the_serving_url_and_the_profile(monkeypatch):
 def test_unknown_embedding_backend_raises_value_error():
     with pytest.raises(ValueError, match="nope"):
         create_embedder(AppConfig(EMBEDDING_BACKEND="nope"))
+
+
+def test_ollama_backend_uses_the_local_server_and_its_model(monkeypatch):
+    monkeypatch.setattr(openai_compatible, "AsyncOpenAI", FakeAsyncOpenAI)
+
+    embedder = create_embedder(AppConfig(EMBEDDING_BACKEND="ollama"))
+
+    assert embedder._client.options["base_url"] == "http://localhost:11434/v1"
+    assert embedder._client.options["api_key"] == "not-needed"
+    assert embedder.signature == "openai_compatible:qwen3-embedding:0.6b"
+
+
+def test_a_named_backup_wraps_the_primary_and_keeps_its_signature(monkeypatch):
+    monkeypatch.setattr(openai_compatible, "AsyncOpenAI", FakeAsyncOpenAI)
+
+    embedder = create_embedder(AppConfig(
+        EMBEDDING_BACKEND="databricks",
+        DATABRICKS_SERVING_BASE_URL="https://ws.test/serving-endpoints",
+        DATABRICKS_PROFILE="dev",
+        EMBEDDING_BACKEND_BACKUP="ollama",
+        OLLAMA_BASE_URL="http://ollama.test/v1",
+    ))
+
+    assert isinstance(embedder, FallbackEmbedder)
+    assert embedder.signature == "openai_compatible:databricks-qwen3-embedding-0-6b"
+    assert embedder._backup._client.options["base_url"] == "http://ollama.test/v1"
+
+
+@pytest.mark.parametrize("backup", ["", "local_hash"])
+def test_an_empty_or_identical_backup_builds_the_primary_alone(backup):
+    embedder = create_embedder(AppConfig(EMBEDDING_BACKEND_BACKUP=backup))
+
+    assert isinstance(embedder, LocalHashEmbedder)
+
+
+def test_unknown_embedding_backup_raises_value_error():
+    with pytest.raises(ValueError, match="nope"):
+        create_embedder(AppConfig(EMBEDDING_BACKEND_BACKUP="nope"))

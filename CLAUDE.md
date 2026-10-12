@@ -90,7 +90,7 @@ cover as much logic as possible with unit tests.
 | **Conversation — STT** | Whisper qua **Groq API** (OpenAI-compatible client) - gọi qua `groq_api_key` trong .env | Speech → text tiếng Việt (cloud, không tốn GPU máy) |
 | **Conversation — LLM** | Groq LLM - openai/gpt-oss-20b | Text → câu trả lời tiếng Việt, streaming |
 | **Conversation — TTS** | **ZeroTTS** (open-source, tiếng Việt) | Text → audio tiếng Việt; chạy local real-time trên CPU, có streaming |
-| **Knowledge base** | sqlite-vec (SQLite extension) + embedding qua `EMBEDDING_BACKEND` (`local_hash` \| `openai_compatible` \| `databricks`); pypdf, python-docx | Upload tài liệu (txt, md, csv, pdf, docx) → chunk → vector; tra cứu đoạn liên quan cho mỗi câu hỏi trước khi gọi LLM |
+| **Knowledge base** | sqlite-vec (SQLite extension) + embedding qua `EMBEDDING_BACKEND` (`local_hash` \| `openai_compatible` \| `databricks` \| `ollama`), backup qua `EMBEDDING_BACKEND_BACKUP`; pypdf, python-docx | Upload tài liệu (txt, md, csv, pdf, docx) → chunk → vector; tra cứu đoạn liên quan cho mỗi câu hỏi trước khi gọi LLM |
 | Device Capability Router | logic nội bộ (phát hiện Metal/CUDA/CPU lúc startup) | Chọn backend inference phù hợp máy; cho phép override qua config |
 
 ### Frontend (browser)
@@ -158,10 +158,10 @@ backend/
     stt/openai_compatible.py   # Groq Whisper or a self-hosted Whisper server
     stt/chat_audio.py          # a chat model that is sent the audio: Gemini on Databricks
     databricks.py              # Databricks credential: static token or CLI profile
-    fallback.py                # primary + backup backend (STT_BACKEND_BACKUP, LLM_BACKEND_BACKUP)
+    fallback.py                # primary + backup backend (STT_, LLM_, EMBEDDING_BACKEND_BACKUP)
     tts/zerotts.py             # ZeroTTS backend
     embedding/local_hash.py    # hashed words, no model: the knowledge flow runs anywhere
-    embedding/openai_compatible.py  # any /embeddings API; Databricks embedding endpoints
+    embedding/openai_compatible.py  # any /embeddings API; Databricks endpoints, Ollama
   runtime/                     # ── what depends on the machine (macOS / Windows) ──
     device.py                  # metal / cuda / cpu detection
   features/                    # ── built beside the core: knowledge (RAG), memory ──
@@ -225,7 +225,10 @@ Layering rules:
   `DATABRICKS_PROFILE`.
 - `STT_BACKEND_BACKUP` and `LLM_BACKEND_BACKUP` name the backend that takes over when
   the primary fails; any catalog entry can be a backup, so a new provider needs no
-  fallback code.
+  fallback code. `EMBEDDING_BACKEND_BACKUP` does the same for the embedding, with one
+  rule: the backup serves the same model as the primary (Databricks Qwen3-Embedding-0.6B
+  ↔ `ollama` with `qwen3-embedding:0.6b`), because its vectors are searched in the index
+  the primary built.
 - The knowledge base reaches the turn through the `Knowledge` contract only: the engine
   asks it for passages between STT and LLM and answers without them when it is empty,
   slow or failing. Its embedding is a catalog stage (`EMBEDDING_BACKEND`); its vector DB
