@@ -15,7 +15,8 @@ concurrency:
 
 jobs:
   backend:
-    runs-on: ubuntu-latest
+    # A named image, not ubuntu-latest: the runner changes when this line does.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
