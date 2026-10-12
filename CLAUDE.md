@@ -1,4 +1,7 @@
-# CLAUDE.md — Avatar AI (Magic Mirror)
+# Avatar AI (Magic Mirror) — instructions for coding agents
+
+> `CLAUDE.md` and `AGENTS.md` hold this same text, for the tools that read one or the
+> other. Edit both in the same change: `tests/unit/test_docs.py` fails when they differ.
 
 A kiosk avatar that notices a person in front of it, listens, and answers in a natural
 Vietnamese voice while a 3D VRM avatar turns its head and lip-syncs to the audio. The MVP
