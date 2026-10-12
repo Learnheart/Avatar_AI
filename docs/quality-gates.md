@@ -155,6 +155,18 @@ the most relevant passages out, best first, each with its source and score.
 > Retrieval quality (recall on a golden set of question → passage pairs) is not gated
 > yet: there is no golden set. Backlog.
 
+### 1.9 Observability (traces, perception measurements, capture)
+
+**Contract:** a turn in → one trace whose spans name every step with its duration,
+input and output; the perception loops → metrics and events; with capture on → frames,
+turn audio and spans on disk.
+
+| Type | Gate criteria |
+|---|---|
+| Functional | Each turn is one trace rooted at `turn` (from speech start) with `listen`, `stt`, `knowledge` (when wired), `llm`, one `tts` per sentence and `playback`; a failed, timed-out or cancelled turn says so on its root; every log line of the turn carries its `trace_id`; capture writes a playable `utterance.wav` / `answer.wav` and a `trace.json` per turn |
+| Performance | No measurable cost on a turn: with capture on, local stages (TTS first chunk, tracking time per frame) stay within their run-to-run variation; nothing is written or exported on the event loop |
+| Resilience | No OTLP endpoint, an unreachable one, a full capture queue or a disk error → the turn is unaffected; dropped capture items are counted; the capture directory stays under `CAPTURE_MAX_GB` once an hour has passed |
+
 ---
 
 ## 2. Integration Gates

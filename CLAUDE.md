@@ -91,6 +91,7 @@ cover as much logic as possible with unit tests.
 | **Conversation — LLM** | Groq LLM - openai/gpt-oss-20b | Text → câu trả lời tiếng Việt, streaming |
 | **Conversation — TTS** | **ZeroTTS** (open-source, tiếng Việt) | Text → audio tiếng Việt; chạy local real-time trên CPU, có streaming |
 | **Knowledge base** | sqlite-vec (SQLite extension) + embedding qua `EMBEDDING_BACKEND` (`local_hash` \| `openai_compatible` \| `databricks` \| `ollama`), backup qua `EMBEDDING_BACKEND_BACKUP`; pypdf, python-docx | Upload tài liệu (txt, md, csv, pdf, docx) → chunk → vector; tra cứu đoạn liên quan cho mỗi câu hỏi trước khi gọi LLM |
+| Observability | OpenTelemetry SDK (traces + metrics) + OTLP/HTTP exporter; JSON log trên stdout | Mỗi turn một trace, mỗi bước một span (listen, stt, knowledge, embedding, llm, tts, playback) kèm input/output; số đo vòng lặp perception; `CAPTURE_ENABLED` lưu frame camera + audio + trace ra đĩa |
 | Device Capability Router | logic nội bộ (phát hiện Metal/CUDA/CPU lúc startup) | Chọn backend inference phù hợp máy; cho phép override qua config |
 
 ### Frontend (browser)
@@ -171,9 +172,11 @@ backend/
       loaders.py               # txt, md, csv, pdf, docx → text
       store.py                 # sqlite-vec store: documents, chunks, vectors (all the SQL)
       api.py                   # HTTP routes /knowledge/documents
-  data/                        # knowledge.db (gitignored, per machine)
+  data/                        # knowledge.db, capture/ (gitignored, per machine)
   utils/
     env.py                     # dataclass fields read from the environment
+    telemetry.py               # tracer, meter, OTLP export, `Span` log lines
+    capture.py                 # CaptureStore: frames, turn audio, spans on local disk
     errors.py
     logging.py
   assets/
@@ -235,6 +238,12 @@ Layering rules:
   is `features/knowledge/store.py`, and replacing the DB means replacing that file.
 - The HTTP routes `/knowledge/documents` are a contract between
   `backend/features/knowledge/api.py` and `frontend/src/knowledge/`.
+- Every step of a turn is a span of `backend/utils/telemetry.py` carrying its input and
+  output; a new step gets one. Inside an async generator use `detached_span`, never
+  `start_as_current_span`. Per-frame and per-chunk work (tracking, VAD) is measured with
+  metrics, not spans. Texts go on spans whole; only the `Span` log line cuts them.
+- Where traces and metrics go is configuration (`OTLP_ENDPOINT`); the code names no
+  backend. `CAPTURE_ENABLED` stores faces and voices and stays off by default.
 - Blocking inference (VAD, TTS, vision) and the knowledge store (SQLite) run in a thread
   or executor, never on the event loop.
 - The WebSocket message shapes are a contract between `backend/core/orchestrator/` and

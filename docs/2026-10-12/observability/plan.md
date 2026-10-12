@@ -57,9 +57,12 @@ summary: Step-by-step tracing of a turn, measurements of the perception loops, a
 - **Full capture is off by default** (`CAPTURE_ENABLED`): it stores faces and voices of
   the people in front of the kiosk. When on, a writer thread stores under
   `CAPTURE_DIR/<date>/<hour>/`: `frames/*.jpg`, `tracking.jsonl`, `events.jsonl`, and
-  per turn `turns/<time>_<trace id>/utterance.wav`, `answer.wav`, `trace.json` (all
-  spans of the turn with their full attributes). The oldest hours are deleted when the
+  per trace `traces/<time>_<trace id>/utterance.wav`, `answer.wav`, `trace.json` (all
+  spans with their full attributes; a turn, or a document upload). The oldest hours are deleted when the
   directory exceeds `CAPTURE_MAX_GB`. A full queue drops the item and counts it.
+- **FastAPI opens spans of its own** for every HTTP request and WebSocket (built into
+  the installed version). They are exported over OTLP with the rest, but are not logged
+  as steps, and a trace made only of them (the health check) is not captured.
 - **Not captured**: microphone audio outside utterances (silence between turns).
 - **Not in this version**: a dashboard, alerts, the choice and deployment of the backend,
   access control and retention policy for the captured data.
@@ -83,13 +86,22 @@ features/knowledge/          ingest span
 
 ## To-do
 
-- [ ] `utils/telemetry.py`, `trace_id` in logs, OTLP export by config
-- [ ] Spans: turn, listen, stt, knowledge (+ embedding), llm, tts, playback, ingest
-- [ ] Perception metrics and events
-- [ ] `utils/capture.py` and its wiring
-- [ ] Unit tests per `test-plan.md`
-- [ ] `.env.example`, `CLAUDE.md`, `quality-gates.md`
-- [ ] Real turn with capture on: the spans, the wav files and the frames are on disk;
-      latency with and without capture
-- [ ] Export to a real OTLP backend (none is available on the dev machine: no Docker)
+- [x] `utils/telemetry.py`, `trace_id` in logs, OTLP export by config
+- [x] Spans: turn, listen, stt, knowledge (+ embedding), llm, tts, playback, ingest
+- [x] Perception metrics and events
+- [x] `utils/capture.py` and its wiring
+- [x] Unit tests per `test-plan.md`
+- [x] `.env.example`, `CLAUDE.md`, `quality-gates.md`
+- [x] Real turns with capture on (2026-10-12, Databricks STT + LLM + embedding): per turn
+      `trace.json` (turn, listen, stt, knowledge, embedding, llm, tts ×3, playback),
+      `utterance.wav`, `answer.wav`; every tracked frame as JPEG with its `tracking.jsonl`
+      line (842 frames, 61 MB in about 30 s — about 72 KB per frame, 8 GB per hour at
+      30 fps); `events.jsonl`. Capture off vs on, same test: TTS first chunk 84–110 ms vs
+      74–111 ms, tracking 6.1 ms per frame (p95 6.8) with capture on — no measurable
+      cost. First audio stays over the gate on this path for the known reason (STT about
+      2.2 s, LLM first token 1.2–2.1 s through Databricks)
+- [ ] Export to a real OTLP backend (none is available on the dev machine: no Docker).
+      The exporters are built from the config and unit-tested; no span has been received
+      by a backend yet
+- [ ] Access control and retention policy for `CAPTURE_DIR` (faces and voices)
 - [ ] Human verification
