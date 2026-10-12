@@ -4,7 +4,9 @@ from backend.config import AppConfig
 from backend.providers import catalog
 from backend.providers.catalog import DEVICE_BACKENDS, create_llm, create_stt
 from backend.providers.llm import openai_compatible as llm_module
+from backend.providers.llm import openai_responses as responses_module
 from backend.providers.llm.openai_compatible import OpenAICompatibleLLM
+from backend.providers.llm.openai_responses import OpenAIResponsesLLM
 from backend.providers.stt import openai_compatible as stt_module
 from backend.providers.stt.openai_compatible import OpenAICompatibleSTT
 from backend.runtime import device as runtime_device
@@ -77,6 +79,7 @@ class RecordingClient:
 @pytest.fixture
 def clients(monkeypatch):
     monkeypatch.setattr(llm_module, "AsyncOpenAI", RecordingClient)
+    monkeypatch.setattr(responses_module, "AsyncOpenAI", RecordingClient)
     monkeypatch.setattr(stt_module, "AsyncOpenAI", RecordingClient)
 
 
@@ -104,6 +107,20 @@ def test_openai_compatible_llm_uses_its_own_endpoint_and_no_groq_parameters(clie
     assert llm._client.kwargs["base_url"] == "http://llm.local/v1"
     assert llm._client.kwargs["api_key"] == "other-key"
     assert llm._extra_body is None
+
+
+def test_databricks_llm_uses_the_gateway_endpoint_and_token(clients):
+    llm = create_llm(
+        AppConfig(
+            LLM_BACKEND="databricks",
+            DATABRICKS_BASE_URL="https://dbx.local/ai-gateway/mlflow/v1",
+            DATABRICKS_TOKEN="dapi-token",
+        )
+    )
+
+    assert isinstance(llm, OpenAIResponsesLLM)
+    assert llm._client.kwargs["base_url"] == "https://dbx.local/ai-gateway/mlflow/v1"
+    assert llm._client.kwargs["api_key"] == "dapi-token"
 
 
 def test_openai_compatible_stt_uses_its_own_endpoint(clients):

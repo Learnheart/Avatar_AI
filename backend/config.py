@@ -20,6 +20,8 @@ DEVICES = ("metal", "cuda", "cpu")
 AUTO = "auto"
 # Backend name for any OpenAI-compatible endpoint other than Groq (LLM and STT).
 OPENAI_COMPATIBLE = "openai_compatible"
+# Backend name of the Databricks AI Gateway (LLM, OpenAI Responses API).
+DATABRICKS = "databricks"
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 
@@ -43,7 +45,7 @@ class AppConfig(Tuning, Prompts):
     # auto (picked from the device) | groq_whisper | openai_compatible
     STT_BACKEND: str = env_str("STT_BACKEND", AUTO, normalize=str.lower)
     STT_MODEL: str = env_str("STT_MODEL", "whisper-large-v3-turbo")
-    # groq | openai_compatible
+    # groq | openai_compatible | databricks
     LLM_BACKEND: str = env_str("LLM_BACKEND", "groq", normalize=str.lower)
     LLM_MODEL: str = env_str("LLM_MODEL", "openai/gpt-oss-20b")
     TTS_BACKEND: str = env_str("TTS_BACKEND", "zerotts", normalize=str.lower)
@@ -57,6 +59,11 @@ class AppConfig(Tuning, Prompts):
     LLM_API_KEY: str = env_str("LLM_API_KEY", repr=False)
     STT_BASE_URL: str = env_str("STT_BASE_URL", "")
     STT_API_KEY: str = env_str("STT_API_KEY", repr=False)
+
+    # ── Databricks AI Gateway (LLM_BACKEND=databricks) ──────────────────
+    # The gateway root, `https://<workspace>/ai-gateway/mlflow/v1`; the model is LLM_MODEL.
+    DATABRICKS_BASE_URL: str = env_str("DATABRICKS_BASE_URL", "")
+    DATABRICKS_TOKEN: str = env_str("DATABRICKS_TOKEN", repr=False)
 
     # ── Camera ──────────────────────────────────────────────────────────
     CAMERA_INDEX: int = env_int("CAMERA_INDEX", 0)
@@ -72,6 +79,11 @@ class AppConfig(Tuning, Prompts):
             raise ValueError("groq_api_key is required. Set it in .env file.")
         if self.LLM_BACKEND == OPENAI_COMPATIBLE and not self.LLM_BASE_URL:
             raise ValueError("LLM_BASE_URL is required when LLM_BACKEND=openai_compatible.")
+        if self.LLM_BACKEND == DATABRICKS:
+            if not self.DATABRICKS_BASE_URL:
+                raise ValueError("DATABRICKS_BASE_URL is required when LLM_BACKEND=databricks.")
+            if not self.DATABRICKS_TOKEN:
+                raise ValueError("DATABRICKS_TOKEN is required when LLM_BACKEND=databricks.")
         if self.STT_BACKEND == OPENAI_COMPATIBLE and not self.STT_BASE_URL:
             raise ValueError("STT_BASE_URL is required when STT_BACKEND=openai_compatible.")
         if self.DEVICE != AUTO and self.DEVICE not in DEVICES:

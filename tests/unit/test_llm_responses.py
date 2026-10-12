@@ -1,0 +1,176 @@
+from types import SimpleNamespace
+
+import pytest
+from openai import OpenAIError
+
+from backend.config import AppConfig
+from backend.core.contracts import LLMError
+from backend.providers.catalog import create_llm
+from backend.providers.llm import openai_responses
+from backend.providers.llm.openai_responses import OpenAIResponsesLLM
+
+BASE_URL = "https://dbx.local/ai-gateway/mlflow/v1"
+
+
+def _delta(text):
+    return SimpleNamespace(type="response.output_text.delta", delta=text)
+
+
+def _event(type_, **fields):
+    return SimpleNamespace(type=type_, **fields)
+
+
+class FakeStream:
+    def __init__(self, events, error=None):
+        self._events = list(events)
+        self._error = error
+        self.closed = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self._events:
+            return self._events.pop(0)
+        if self._error:
+            raise self._error
+        raise StopAsyncIteration
+
+    async def close(self):
+        self.closed = True
+
+
+class FakeAsyncOpenAI:
+    """Stands in for openai.AsyncOpenAI: records the request, returns a scripted stream."""
+
+    def __init__(self, api_key, base_url, timeout, max_retries):
+        self.api_key = api_key
+        self.base_url = base_url
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self.calls: list[dict] = []
+        self.stream = FakeStream([])
+        self.error: Exception | None = None
+        self.responses = SimpleNamespace(create=self._create)
+
+    async def _create(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.error:
+            raise self.error
+        return self.stream
+
+
+@pytest.fixture
+def config() -> AppConfig:
+    return AppConfig(
+        LLM_BACKEND="databricks",
+        LLM_MODEL="catalog.schema.model",
+        DATABRICKS_BASE_URL=BASE_URL,
+        DATABRICKS_TOKEN="dapi-token",
+    )
+
+
+@pytest.fixture
+def llm(config, monkeypatch) -> OpenAIResponsesLLM:
+    monkeypatch.setattr(openai_responses, "AsyncOpenAI", FakeAsyncOpenAI)
+    return create_llm(config)
+
+
+async def _collect(llm: OpenAIResponsesLLM, text: str = "Lãi suất tiết kiệm?") -> list[str]:
+    return [delta async for delta in llm.stream_answer(text)]
+
+
+async def test_only_output_text_deltas_are_yielded(llm):
+    llm._client.stream = FakeStream([
+        _event("response.created"),
+        _event("response.reasoning_summary_text.delta", delta="The user asks about rates."),
+        _delta(""),
+        _delta("Xin "),
+        _event("response.output_item.added"),
+        _delta("chào."),
+        _event("response.output_text.done", text="Xin chào."),
+        _event("response.completed"),
+    ])
+
+    assert await _collect(llm) == ["Xin ", "chào."]
+    assert llm._client.stream.closed
+
+
+async def test_request_is_built_from_config(llm, config):
+    await _collect(llm, "Xin chào")
+
+    call = llm._client.calls[0]
+    assert (llm._client.api_key, llm._client.base_url) == ("dapi-token", BASE_URL)
+    assert llm._client.timeout == config.LLM_TIMEOUT_SEC
+    assert llm._client.max_retries == config.GROQ_MAX_RETRIES == 0
+    assert call == {
+        "model": "catalog.schema.model",
+        "stream": True,
+        "max_output_tokens": config.LLM_MAX_TOKENS,
+        "input": [
+            {
+                "role": "system",
+                "content": [{"type": "input_text", "text": config.SYSTEM_PROMPT}],
+            },
+            {"role": "user", "content": [{"type": "input_text", "text": "Xin chào"}]},
+        ],
+    }
+
+
+async def test_provider_error_on_request_raises_llm_error(llm):
+    llm._client.error = OpenAIError("401 bad token")
+
+    with pytest.raises(LLMError, match="401 bad token"):
+        await _collect(llm)
+
+
+async def test_provider_error_mid_stream_raises_llm_error(llm):
+    llm._client.stream = FakeStream([_delta("Xin ")], error=OpenAIError("reset"))
+
+    received: list[str] = []
+    with pytest.raises(LLMError, match="reset"):
+        async for delta in llm.stream_answer("Xin chào"):
+            received.append(delta)
+
+    assert received == ["Xin "]
+    assert llm._client.stream.closed
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        _event("error", message="rate limit exceeded"),
+        _event(
+            "response.failed",
+            response=SimpleNamespace(error=SimpleNamespace(message="rate limit exceeded")),
+        ),
+        _event("response.failed", response=SimpleNamespace(error=None)),
+    ],
+)
+async def test_error_events_raise_llm_error(llm, event):
+    llm._client.stream = FakeStream([_delta("Xin "), event, _delta("chào.")])
+
+    received: list[str] = []
+    with pytest.raises(LLMError, match="rate limit" if event.type == "error" else "failed"):
+        async for delta in llm.stream_answer("Xin chào"):
+            received.append(delta)
+
+    assert received == ["Xin "]
+    assert llm._client.stream.closed
+
+
+async def test_error_text_is_summarized(llm, config):
+    error = OpenAIError("<html>\n" + "<p>blocked by proxy</p>\n" * 1000)
+    error.status_code = 403
+    llm._client.error = error
+    with pytest.raises(LLMError) as raised:
+        await _collect(llm)
+    assert "OpenAIError (status 403)" in str(raised.value)
+    assert len(str(raised.value)) < config.ERROR_SUMMARY_MAX_CHARS + 100
+
+    llm._client.error = None
+    llm._client.stream = FakeStream([_event("error", message="x\n" * 1000)])
+    with pytest.raises(LLMError) as raised:
+        await _collect(llm)
+    assert "\n" not in str(raised.value)
+    assert len(str(raised.value)) < config.ERROR_SUMMARY_MAX_CHARS + 100

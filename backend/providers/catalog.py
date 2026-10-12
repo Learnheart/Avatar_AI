@@ -12,12 +12,16 @@ drops in by adding it to both STT tables.
 `openai_compatible` (LLM and STT) points the same client at another hosted API or at a
 self-hosted server, from `.env` alone: `LLM_BACKEND`, `LLM_BASE_URL`, `LLM_API_KEY`,
 `LLM_MODEL` (and the `STT_*` equivalents).
+
+`databricks` (LLM) calls the Databricks AI Gateway through the OpenAI Responses API:
+`DATABRICKS_BASE_URL`, `DATABRICKS_TOKEN`, `LLM_MODEL`.
 """
 from typing import Callable
 
-from backend.config import AUTO, OPENAI_COMPATIBLE, AppConfig
+from backend.config import AUTO, DATABRICKS, OPENAI_COMPATIBLE, AppConfig
 from backend.core.contracts import LLM, STT, TTS
 from backend.providers.llm.openai_compatible import OpenAICompatibleLLM
+from backend.providers.llm.openai_responses import OpenAIResponsesLLM
 from backend.providers.stt.openai_compatible import OpenAICompatibleSTT
 from backend.providers.tts.zerotts import ZeroTTSBackend
 from backend.runtime.device import detect_device
@@ -72,6 +76,9 @@ _LLM_BACKENDS: dict[str, Callable[[AppConfig], LLM]] = {
     ),
     OPENAI_COMPATIBLE: lambda config: OpenAICompatibleLLM(
         config, base_url=config.LLM_BASE_URL, api_key=config.LLM_API_KEY or _NO_KEY
+    ),
+    DATABRICKS: lambda config: OpenAIResponsesLLM(
+        config, base_url=config.DATABRICKS_BASE_URL, api_key=config.DATABRICKS_TOKEN
     ),
 }
 

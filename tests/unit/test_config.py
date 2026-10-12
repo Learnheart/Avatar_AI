@@ -112,8 +112,31 @@ def test_openai_compatible_backend_requires_its_base_url(stage, key):
         ).validate()
 
 
+_DATABRICKS = {
+    "LLM_BACKEND": "databricks",
+    "DATABRICKS_BASE_URL": "https://dbx.local/ai-gateway/mlflow/v1",
+    "DATABRICKS_TOKEN": "dapi-token",
+}
+
+
+def test_databricks_llm_needs_no_groq_key_when_stt_is_not_groq():
+    AppConfig(
+        **_DATABRICKS, STT_BACKEND="openai_compatible", STT_BASE_URL="http://stt.local/v1"
+    ).validate()
+
+
+@pytest.mark.parametrize("key", ["DATABRICKS_BASE_URL", "DATABRICKS_TOKEN"])
+def test_databricks_backend_requires_its_url_and_token(key):
+    with pytest.raises(ValueError, match=key):
+        AppConfig(GROQ_API_KEY="test-key", **{**_DATABRICKS, key: ""}).validate()
+
+
 def test_endpoint_keys_never_appear_in_repr():
-    config = AppConfig(LLM_API_KEY="llm-sentinel", STT_API_KEY="stt-sentinel")
+    config = AppConfig(
+        LLM_API_KEY="llm-sentinel", STT_API_KEY="stt-sentinel", DATABRICKS_TOKEN="dbx-sentinel"
+    )
+
+    assert "dbx-sentinel" not in repr(config)
 
     assert "llm-sentinel" not in repr(config)
     assert "stt-sentinel" not in repr(config)
