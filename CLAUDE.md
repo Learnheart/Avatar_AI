@@ -156,6 +156,7 @@ backend/
     stt/openai_compatible.py   # Groq Whisper or a self-hosted Whisper server
     stt/chat_audio.py          # a chat model that is sent the audio: Gemini on Databricks
     databricks.py              # Databricks credential: static token or CLI profile
+    fallback.py                # primary + backup backend (STT_BACKEND_BACKUP, LLM_BACKEND_BACKUP)
     tts/zerotts.py             # ZeroTTS backend
   runtime/                     # ── what depends on the machine (macOS / Windows) ──
     device.py                  # metal / cuda / cpu detection
@@ -207,6 +208,9 @@ Layering rules:
   `LLM_MODEL` (same with `STT_*`). The Databricks AI Gateway is `LLM_BACKEND=databricks`
   and/or `STT_BACKEND=databricks`, with `DATABRICKS_BASE_URL` and `DATABRICKS_TOKEN` or
   `DATABRICKS_PROFILE`.
+- `STT_BACKEND_BACKUP` and `LLM_BACKEND_BACKUP` name the backend that takes over when
+  the primary fails; any catalog entry can be a backup, so a new provider needs no
+  fallback code.
 - Blocking inference (VAD, TTS, vision) runs in a thread or executor, never on the event
   loop.
 - The WebSocket message shapes are a contract between `backend/core/orchestrator/` and
