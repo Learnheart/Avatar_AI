@@ -102,16 +102,24 @@ frontend/src/knowledge/                client, panel, pure helpers
 
 ## To-do
 
-- [ ] `Embedder` contract, `local_hash` and `openai_compatible` backends, catalog entry,
+- [x] `Embedder` contract, `local_hash` and `openai_compatible` backends, catalog entry,
       config keys and validation
-- [ ] `features/knowledge/`: chunking, loaders, sqlite-vec store, knowledge base
-- [ ] Engine retrieval and `KNOWLEDGE_PROMPT`
-- [ ] HTTP routes, CORS, wiring in `main.py`
-- [ ] Frontend panel: upload, list, delete
-- [ ] Unit tests per `test-plan.md` (backend + frontend), `npm run build`
-- [ ] `.env.example`, `frontend/.env.example`, `CLAUDE.md`, `ARCHITECTURE.md` backlog,
+- [x] `features/knowledge/`: chunking, loaders, sqlite-vec store, knowledge base
+- [x] Engine retrieval and `KNOWLEDGE_PROMPT`
+- [x] HTTP routes, CORS, wiring in `main.py`
+- [x] Frontend panel: upload, list, delete
+- [x] Unit tests per `test-plan.md` (backend + frontend), `npm run build`
+- [x] `.env.example`, `frontend/.env.example`, `CLAUDE.md`, `ARCHITECTURE.md` backlog,
       `quality-gates.md`
-- [ ] Real run: upload through the API, retrieval with the Databricks embedding, an
-      answer that uses the document
-- [ ] Real turn (`tests/e2e`) with the latency gate (first audio < 3.5 s, end to end < 10 s)
+- [x] Real run (2026-10-12, company network, STT + LLM + embedding through Databricks,
+      `tests/e2e/test_real_turn.py::test_turn_answers_from_an_uploaded_document`):
+      upload over HTTP 0.75 s; lookup 485 ms, top score 0.74; the spoken answer gives the
+      rate of the uploaded document (7,35 %) where the same question without it gets a
+      generic range
+- [ ] Real turn inside the latency gate. Measured on the Databricks path: first audio
+      5.1 s with the document (end to end 6.6 s), 5.8 s without any (end to end 10.3 s)
+      — the gate already fails there without the knowledge base (STT alone takes 2.2 s;
+      see `../databricks-stt-and-profile-auth/plan.md`). The lookup adds about 0.5 s.
+      The Groq path cannot be measured from this network
+- [ ] The panel opened in a real browser (upload a PDF and a DOCX, list, delete)
 - [ ] Human verification

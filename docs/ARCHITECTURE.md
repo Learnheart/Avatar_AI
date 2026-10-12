@@ -233,3 +233,12 @@ scope.
 - **Deferred to backlog (not in MVP):** viseme/phoneme-accurate lip-sync; speaking
   body gestures; emotion-driven expression; long-term memory; knowledge base;
   tool/function calling; identity recognition.
+- **2026-10-12 — Knowledge base (first version).** A user uploads documents in the UI;
+  they are cut into chunks, embedded and kept in an embedded vector DB (sqlite-vec, one
+  file). In a turn, the Conversation engine looks up the passages matching the question
+  between STT and LLM and gives them to the LLM with the question; an empty, slow or
+  failing knowledge base never blocks the turn. The embedding model is a swappable
+  backend like STT / LLM. Upload, list and delete go over HTTP beside the WebSocket.
+  Still deferred: authentication on the upload API, OCR of scanned files, hybrid search
+  and re-ranking, long-term memory, tool calling. Plan:
+  `docs/2026-10-12/knowledge-base/`.

@@ -141,6 +141,20 @@ gated here; it is left to visual review.
 > Perceptual quality (smoothness, phase sync, naturalness) is deferred to visual review,
 > not an automated gate.
 
+### 1.8 Knowledge (uploaded documents → passages for a question)
+
+**Contract:** a file in → an indexed document (or a defined refusal); a question in →
+the most relevant passages out, best first, each with its source and score.
+
+| Type | Gate criteria |
+|---|---|
+| Functional | An uploaded txt / md / csv / pdf / docx is listed with its chunk count; a question about a fact of an uploaded document returns the passage holding it within the top `KNOWLEDGE_TOP_K`; a deleted document is never returned; the index survives a restart |
+| Performance | Lookup in a turn **< 1 s**, and never longer than `KNOWLEDGE_TIMEOUT_SEC`; an empty base costs no embedding call |
+| Resilience | Unsupported, unreadable, empty or oversized file → refused with a reason, nothing stored; embedding failure on upload → nothing stored; lookup failure or timeout in a turn → the question is answered without passages, the turn completes |
+
+> Retrieval quality (recall on a golden set of question → passage pairs) is not gated
+> yet: there is no golden set. Backlog.
+
 ---
 
 ## 2. Integration Gates
@@ -245,3 +259,5 @@ noise**. Deliberately simple: binary classification, no timeline/segment labels.
 - Viseme/phoneme-accurate lip-sync gate — deferred (MVP is amplitude-driven).
 - Expand golden datasets beyond ~30 samples and add per-condition WER thresholds once
   real kiosk recordings are available.
+- Knowledge retrieval golden set (question → expected passage) and a recall@K gate —
+  deferred; the first version gates the flow, not the retrieval quality.

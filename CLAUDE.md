@@ -29,7 +29,7 @@ summary: <one line>
 ```
 
 - Module IDs for `agents:` are `vision`, `vad`, `stt`, `llm`, `tts`, `orchestrator`,
-  `expression`.
+  `expression`, `knowledge`.
 - A plan contains: problem statement, requirements, decisions made, implementation
   approach, and ends with a `## To-do` checklist (`- [ ] task`).
 - Status: `todo` = not started, `in-progress` = implementation started, `done` =
@@ -90,6 +90,7 @@ cover as much logic as possible with unit tests.
 | **Conversation — STT** | Whisper qua **Groq API** (OpenAI-compatible client) - gọi qua `groq_api_key` trong .env | Speech → text tiếng Việt (cloud, không tốn GPU máy) |
 | **Conversation — LLM** | Groq LLM - openai/gpt-oss-20b | Text → câu trả lời tiếng Việt, streaming |
 | **Conversation — TTS** | **ZeroTTS** (open-source, tiếng Việt) | Text → audio tiếng Việt; chạy local real-time trên CPU, có streaming |
+| **Knowledge base** | sqlite-vec (SQLite extension) + embedding qua `EMBEDDING_BACKEND` (`local_hash` \| `openai_compatible` \| `databricks`); pypdf, python-docx | Upload tài liệu (txt, md, csv, pdf, docx) → chunk → vector; tra cứu đoạn liên quan cho mỗi câu hỏi trước khi gọi LLM |
 | Device Capability Router | logic nội bộ (phát hiện Metal/CUDA/CPU lúc startup) | Chọn backend inference phù hợp máy; cho phép override qua config |
 
 ### Frontend (browser)
@@ -100,6 +101,7 @@ cover as much logic as possible with unit tests.
 | 3D avatar | Three.js + @pixiv/three-vrm | Render avatar VRM, head motion, idle |
 | Audio | Web Audio API (AudioWorklet + AnalyserNode) | Thu mic (PCM 16kHz), phát audio, đo loudness cho lip-sync |
 | Lip-sync | logic thuần (RMS → blendshape mồm) | Amplitude-driven, bám audio đang phát |
+| Knowledge panel | DOM thuần + fetch (`VITE_API_URL`) | Upload / liệt kê / xoá tài liệu tri thức |
 
 ### External (cloud)
 
@@ -132,13 +134,13 @@ in `core/contracts.py`, and backends are swapped by config, not by editing calle
 
 ```
 backend/
-  main.py                      # FastAPI app, /ws, /health; wires core + providers
+  main.py                      # FastAPI app, /ws, /health, /knowledge; wires core + providers + features
   config.py                    # AppConfig — secrets, per-machine and provider values
   tuning.py                    # behaviour parameters (VAD, timeouts, head clamps, voice)
   prompts.py                   # system prompt and other texts
   models.py                    # shared dataclasses and enums
   core/                        # ── one turn; imports no provider, runtime or feature ──
-    contracts.py               # STT, LLM, TTS interfaces and their errors
+    contracts.py               # STT, LLM, TTS, Embedder, Knowledge interfaces and their errors
     orchestrator/
       orchestrator.py          # turn state machine + routing (only owner of state)
       state.py                 # allowed state transitions
@@ -148,7 +150,7 @@ backend/
       tracking.py              # MediaPipe presence + head rotation
       vad.py                   # Silero VAD: speech_start / speech_end
     conversation/              # ── CAPABILITY 2 (separated pipeline) ──
-      engine.py                # ConversationEngine: audio in → text + audio out
+      engine.py                # ConversationEngine: audio in → (knowledge lookup) → text + audio out
   providers/                   # ── model backends behind core/contracts.py ──
     catalog.py                 # backend name → builder, for every stage (+ device router)
     llm/openai_compatible.py   # Groq, OpenRouter, vLLM, Ollama, ...
@@ -158,9 +160,18 @@ backend/
     databricks.py              # Databricks credential: static token or CLI profile
     fallback.py                # primary + backup backend (STT_BACKEND_BACKUP, LLM_BACKEND_BACKUP)
     tts/zerotts.py             # ZeroTTS backend
+    embedding/local_hash.py    # hashed words, no model: the knowledge flow runs anywhere
+    embedding/openai_compatible.py  # any /embeddings API; Databricks embedding endpoints
   runtime/                     # ── what depends on the machine (macOS / Windows) ──
     device.py                  # metal / cuda / cpu detection
   features/                    # ── built beside the core: knowledge (RAG), memory ──
+    knowledge/
+      knowledge_base.py        # KnowledgeBase: add / list / delete documents, search
+      chunking.py              # document text → chunks (pure)
+      loaders.py               # txt, md, csv, pdf, docx → text
+      store.py                 # sqlite-vec store: documents, chunks, vectors (all the SQL)
+      api.py                   # HTTP routes /knowledge/documents
+  data/                        # knowledge.db (gitignored, per machine)
   utils/
     env.py                     # dataclass fields read from the environment
     errors.py
@@ -177,6 +188,10 @@ frontend/                      # ── CAPABILITY 3: Expression ──
     ws-client.js               # WebSocket client, reconnect
     audio/
       audio-manager.js         # mic capture + gapless playback
+    knowledge/
+      knowledge-client.js      # calls the backend /knowledge API
+      knowledge-panel.js       # upload / list / delete panel
+      format.js                # pure helpers (unit-tested)
     avatar/
       avatar-renderer.js       # VRM render, applies head / mouth values
       lip-sync.js              # reads loudness of the audio being played
@@ -211,8 +226,14 @@ Layering rules:
 - `STT_BACKEND_BACKUP` and `LLM_BACKEND_BACKUP` name the backend that takes over when
   the primary fails; any catalog entry can be a backup, so a new provider needs no
   fallback code.
-- Blocking inference (VAD, TTS, vision) runs in a thread or executor, never on the event
-  loop.
+- The knowledge base reaches the turn through the `Knowledge` contract only: the engine
+  asks it for passages between STT and LLM and answers without them when it is empty,
+  slow or failing. Its embedding is a catalog stage (`EMBEDDING_BACKEND`); its vector DB
+  is `features/knowledge/store.py`, and replacing the DB means replacing that file.
+- The HTTP routes `/knowledge/documents` are a contract between
+  `backend/features/knowledge/api.py` and `frontend/src/knowledge/`.
+- Blocking inference (VAD, TTS, vision) and the knowledge store (SQLite) run in a thread
+  or executor, never on the event loop.
 - The WebSocket message shapes are a contract between `backend/core/orchestrator/` and
   `frontend/src/`; change both sides and the design doc together.
 - Frontend motion math goes in `avatar/motion.js` as pure functions; the renderer only
