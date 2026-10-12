@@ -175,3 +175,43 @@ async def test_a_failed_reindex_fails_the_start(config, knowledge):
 
     with pytest.raises(KnowledgeError, match="could not be re-indexed"):
         await reopened.start()
+
+
+# ── Choosing the documents in use ─────────────────────────────────────────
+
+async def test_a_document_that_is_not_selected_is_not_found(knowledge):
+    leave = await knowledge.add_document("leave.txt", LEAVE)
+    await knowledge.add_document("rates.txt", RATES)
+
+    unselected = await knowledge.set_enabled(leave.id, False)
+
+    passages = await knowledge.search("nhân viên được nghỉ phép năm bao nhiêu ngày")
+    assert unselected.enabled is False
+    assert [p.source for p in passages] == ["rates.txt"]
+
+    await knowledge.set_enabled(leave.id, True)
+    assert (await knowledge.search("nghỉ phép năm"))[0].source == "leave.txt"
+
+
+async def test_with_no_document_selected_the_question_is_not_embedded(knowledge, embedder):
+    document = await knowledge.add_document("leave.txt", LEAVE)
+    await knowledge.set_enabled(document.id, False)
+    embedder.calls.clear()
+
+    assert await knowledge.search("nghỉ phép") == []
+    assert embedder.calls == []
+
+
+async def test_selecting_an_unknown_document_returns_none(knowledge):
+    assert await knowledge.set_enabled("nope", False) is None
+
+
+async def test_uploading_again_selects_the_document(knowledge):
+    document = await knowledge.add_document("leave.txt", LEAVE)
+    await knowledge.set_enabled(document.id, False)
+
+    replaced = await knowledge.add_document("leave.txt", LEAVE)
+
+    assert replaced.enabled is True
+    assert [d.enabled for d in await knowledge.list_documents()] == [True]
+    assert await knowledge.search("nghỉ phép năm")

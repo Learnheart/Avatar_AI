@@ -62,6 +62,8 @@ class KnowledgeDocument:
     size_bytes: int
     chunk_count: int
     created_at: str  # ISO 8601, UTC
+    # False: kept in the base but left out of the lookups.
+    enabled: bool = True
 
     def to_dict(self) -> dict:
         return {
@@ -70,6 +72,7 @@ class KnowledgeDocument:
             "size_bytes": self.size_bytes,
             "chunk_count": self.chunk_count,
             "created_at": self.created_at,
+            "enabled": self.enabled,
         }
 
 

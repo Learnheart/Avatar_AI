@@ -8,6 +8,7 @@ loop.
 import sqlite3
 import threading
 from pathlib import Path
+from typing import Optional
 
 import sqlite_vec
 
@@ -19,7 +20,8 @@ CREATE TABLE IF NOT EXISTS documents (
     name TEXT NOT NULL,
     size_bytes INTEGER NOT NULL,
     chunk_count INTEGER NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS chunks (
     id INTEGER PRIMARY KEY,
@@ -31,6 +33,16 @@ CREATE INDEX IF NOT EXISTS chunks_document ON chunks(document_id);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 _SIGNATURE = "embedding_signature"
+# Ids of the chunks a lookup may return: those of the enabled documents.
+_ENABLED_CHUNKS = (
+    "SELECT chunks.id FROM chunks JOIN documents ON documents.id = chunks.document_id "
+    "WHERE documents.enabled = 1"
+)
+_DOCUMENT_COLUMNS = "id, name, size_bytes, chunk_count, created_at, enabled"
+
+
+def _document(row: tuple) -> KnowledgeDocument:
+    return KnowledgeDocument(*row[:5], enabled=bool(row[5]))
 
 
 class SqliteVecStore:
@@ -48,6 +60,12 @@ class SqliteVecStore:
         self._db.enable_load_extension(False)
         with self._lock, self._db:
             self._db.executescript(_SCHEMA)
+            # A store created before documents could be switched off: all enabled.
+            columns = [row[1] for row in self._db.execute("PRAGMA table_info(documents)")]
+            if "enabled" not in columns:
+                self._db.execute(
+                    "ALTER TABLE documents ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1"
+                )
 
     def close(self) -> None:
         with self._lock:
@@ -70,9 +88,9 @@ class SqliteVecStore:
             ).fetchall():
                 self._delete(existing)
             self._db.execute(
-                "INSERT INTO documents VALUES (?, ?, ?, ?, ?)",
+                f"INSERT INTO documents ({_DOCUMENT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?)",
                 (document.id, document.name, document.size_bytes, len(chunks),
-                 document.created_at),
+                 document.created_at, int(document.enabled)),
             )
             self._create_vectors(len(vectors[0]))
             for position, (text, vector) in enumerate(zip(chunks, vectors)):
@@ -88,29 +106,46 @@ class SqliteVecStore:
         with self._lock, self._db:
             return self._delete(document_id)
 
+    def set_enabled(self, document_id: str, enabled: bool) -> Optional[KnowledgeDocument]:
+        """Put a document in or out of the lookups. None if there is no such document."""
+        with self._lock, self._db:
+            self._db.execute(
+                "UPDATE documents SET enabled = ? WHERE id = ?", (int(enabled), document_id)
+            )
+            row = self._db.execute(
+                f"SELECT {_DOCUMENT_COLUMNS} FROM documents WHERE id = ?", (document_id,)
+            ).fetchone()
+        return _document(row) if row else None
+
     def list_documents(self) -> list[KnowledgeDocument]:
         with self._lock:
             rows = self._db.execute(
-                "SELECT id, name, size_bytes, chunk_count, created_at FROM documents "
-                "ORDER BY created_at DESC, name"
+                f"SELECT {_DOCUMENT_COLUMNS} FROM documents ORDER BY created_at DESC, name"
             ).fetchall()
-        return [KnowledgeDocument(*row) for row in rows]
+        return [_document(row) for row in rows]
 
-    def count_chunks(self) -> int:
+    def count_chunks(self, enabled_only: bool = False) -> int:
+        """Chunks in the store; with `enabled_only`, those a lookup can return."""
+        query = "SELECT COUNT(*) FROM chunks"
+        if enabled_only:
+            query += f" WHERE id IN ({_ENABLED_CHUNKS})"
         with self._lock:
-            return self._db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+            return self._db.execute(query).fetchone()[0]
 
     # ── Search ────────────────────────────────────────────────────────────
 
     def search(self, vector: list[float], limit: int) -> list[Passage]:
-        """The `limit` chunks nearest to the vector, best first."""
+        """The `limit` chunks nearest to the vector among the enabled documents, best
+        first. The filter is part of the search, so disabled documents do not use up
+        places in the result."""
         with self._lock:
             if not self._has_vectors():
                 return []
             rows = self._db.execute(
                 "SELECT chunks.text, documents.name, nearest.distance "
                 "FROM (SELECT rowid, distance FROM vec_chunks "
-                "      WHERE embedding MATCH ? AND k = ?) AS nearest "
+                "      WHERE embedding MATCH ? AND k = ? "
+                f"      AND rowid IN ({_ENABLED_CHUNKS})) AS nearest "
                 "JOIN chunks ON chunks.id = nearest.rowid "
                 "JOIN documents ON documents.id = chunks.document_id "
                 "ORDER BY nearest.distance",

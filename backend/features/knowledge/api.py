@@ -3,11 +3,13 @@ HTTP routes of the knowledge base, used by the "Tài liệu" panel of the fronte
 
   GET    /knowledge/documents        → {"documents": [...]}
   POST   /knowledge/documents        multipart field `file` → 201 + the document
+  PATCH  /knowledge/documents/{id}   {"enabled": bool} → the document, or 404
   DELETE /knowledge/documents/{id}   → 204, or 404
 
 The knowledge base is read from `app.state.knowledge`, set at startup by `backend/main.py`.
 """
 from fastapi import APIRouter, HTTPException, Request, Response, UploadFile
+from pydantic import BaseModel
 
 from backend.config import AppConfig
 from backend.core.contracts import KnowledgeError
@@ -18,6 +20,11 @@ from backend.utils.logging import get_logger
 logger = get_logger("knowledge.api")
 
 _MB = 1024 * 1024
+
+
+class DocumentSelection(BaseModel):
+    """Body of PATCH: whether the avatar answers from the document."""
+    enabled: bool
 
 
 def create_knowledge_router(config: AppConfig) -> APIRouter:
@@ -47,6 +54,15 @@ def create_knowledge_router(config: AppConfig) -> APIRouter:
         except KnowledgeError as e:
             logger.error({"msg": "Document upload failed", "error": str(e)})
             raise HTTPException(502, "The document could not be indexed") from e
+        return document.to_dict()
+
+    @router.patch("/documents/{document_id}")
+    async def select_document(
+        request: Request, document_id: str, selection: DocumentSelection
+    ) -> dict:
+        document = await knowledge(request).set_enabled(document_id, selection.enabled)
+        if document is None:
+            raise HTTPException(404, "No such document")
         return document.to_dict()
 
     @router.delete("/documents/{document_id}", status_code=204)

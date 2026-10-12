@@ -10,6 +10,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import PurePath
+from typing import Optional
 
 from backend.config import AppConfig
 from backend.core.contracts import Embedder, EmbeddingError, Knowledge, KnowledgeError
@@ -46,7 +47,8 @@ class KnowledgeBase(Knowledge):
     # ── Documents ─────────────────────────────────────────────────────────
 
     async def add_document(self, filename: str, data: bytes) -> KnowledgeDocument:
-        """Index one uploaded file; a document of the same name is replaced.
+        """Index one uploaded file, selected for the lookups; a document of the same name
+        is replaced.
         Raises UnsupportedDocument, UnreadableDocument, EmptyDocument (bad file) or
         KnowledgeError (the embedding or the store failed; nothing is stored)."""
         name = PurePath(filename.replace("\\", "/")).name.strip()
@@ -83,6 +85,14 @@ class KnowledgeBase(Knowledge):
     async def list_documents(self) -> list[KnowledgeDocument]:
         return await asyncio.to_thread(self._store.list_documents)
 
+    async def set_enabled(self, document_id: str, enabled: bool) -> Optional[KnowledgeDocument]:
+        """Choose whether the avatar answers from this document. None if there is no
+        such document."""
+        document = await asyncio.to_thread(self._store.set_enabled, document_id, enabled)
+        if document:
+            logger.info({"msg": "Document selection changed", "id": document_id, "enabled": enabled})
+        return document
+
     async def delete_document(self, document_id: str) -> bool:
         """False if there is no such document."""
         deleted = await asyncio.to_thread(self._store.delete_document, document_id)
@@ -94,8 +104,8 @@ class KnowledgeBase(Knowledge):
 
     async def search(self, query: str) -> list[Passage]:
         try:
-            # Nothing uploaded: no embedding call, the turn pays nothing.
-            if not await asyncio.to_thread(self._store.count_chunks):
+            # Nothing uploaded or nothing selected: no embedding call, the turn pays nothing.
+            if not await asyncio.to_thread(self._store.count_chunks, True):
                 return []
             (vector,) = await self._embedder.embed([query])
             nearest = await asyncio.to_thread(

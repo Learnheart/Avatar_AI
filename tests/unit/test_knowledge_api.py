@@ -35,6 +35,7 @@ def test_an_uploaded_document_is_returned_and_listed(client):
         "leave.txt", 1, len(LEAVE)
     )
     assert document["id"] and document["created_at"]
+    assert document["enabled"] is True
     assert client.get(URL).json() == {"documents": [document]}
 
 
@@ -111,3 +112,29 @@ def test_only_the_configured_origins_are_allowed(config):
 
     assert allowed.headers["access-control-allow-origin"] == "http://kiosk.test:3000"
     assert "access-control-allow-origin" not in other.headers
+
+
+# ── Choosing the documents in use ─────────────────────────────────────────
+
+def test_a_document_is_unselected_then_selected_again(client):
+    document = _upload(client, "leave.txt", LEAVE).json()
+
+    unselected = client.patch(f"{URL}/{document['id']}", json={"enabled": False})
+
+    assert unselected.status_code == 200
+    assert unselected.json() == {**document, "enabled": False}
+    assert client.get(URL).json() == {"documents": [{**document, "enabled": False}]}
+
+    selected = client.patch(f"{URL}/{document['id']}", json={"enabled": True})
+    assert selected.json() == document
+
+
+def test_selecting_an_unknown_document_answers_404(client):
+    assert client.patch(f"{URL}/nope", json={"enabled": False}).status_code == 404
+
+
+@pytest.mark.parametrize("body", [{}, {"enabled": "maybe"}])
+def test_a_selection_without_a_boolean_is_refused(client, body):
+    document_id = _upload(client, "leave.txt", LEAVE).json()["id"]
+
+    assert client.patch(f"{URL}/{document_id}", json=body).status_code == 422
