@@ -5,7 +5,7 @@ import pytest
 from backend.config import AppConfig
 from backend.core.contracts import Embedder, EmbeddingError, KnowledgeError
 from backend.features.knowledge.knowledge_base import EmptyDocument, KnowledgeBase
-from backend.features.knowledge.loaders import UnsupportedDocument
+from backend.utils.loaders import UnsupportedDocument
 from backend.features.knowledge.store import SqliteVecStore
 from backend.providers.embedding.local_hash import LocalHashEmbedder
 

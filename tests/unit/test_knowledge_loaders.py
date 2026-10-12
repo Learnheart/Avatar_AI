@@ -1,6 +1,6 @@
 import pytest
 
-from backend.features.knowledge.loaders import (
+from backend.utils.loaders import (
     UnreadableDocument,
     UnsupportedDocument,
     extract_text,

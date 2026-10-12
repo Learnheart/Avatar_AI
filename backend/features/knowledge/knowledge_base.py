@@ -15,7 +15,7 @@ from typing import Optional
 from backend.config import AppConfig
 from backend.core.contracts import Embedder, EmbeddingError, Knowledge, KnowledgeError
 from backend.features.knowledge.chunking import split_text
-from backend.features.knowledge.loaders import extract_text
+from backend.utils.loaders import extract_text
 from backend.features.knowledge.store import SqliteVecStore
 from backend.models import KnowledgeDocument, Passage
 from backend.utils.logging import get_logger

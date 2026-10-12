@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from backend.config import AppConfig
 from backend.core.contracts import KnowledgeError
 from backend.features.knowledge.knowledge_base import EmptyDocument, KnowledgeBase
-from backend.features.knowledge.loaders import UnreadableDocument, UnsupportedDocument
+from backend.utils.loaders import UnreadableDocument, UnsupportedDocument
 from backend.utils.logging import get_logger
 
 logger = get_logger("knowledge.api")
