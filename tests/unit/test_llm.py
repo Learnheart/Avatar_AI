@@ -15,6 +15,14 @@ def _chunk(content=None, reasoning=None):
     return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
 
 
+def _completion(content, reasoning=None, finish_reason="stop"):
+    """A whole (not streamed) chat completion."""
+    message = SimpleNamespace(content=content, reasoning=reasoning)
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=message, finish_reason=finish_reason)]
+    )
+
+
 class FakeStream:
     def __init__(self, chunks, error=None):
         self._chunks = list(chunks)
@@ -45,6 +53,7 @@ class FakeAsyncOpenAI:
         self.max_retries = max_retries
         self.calls: list[dict] = []
         self.stream = FakeStream([])
+        self.completion = _completion("")
         self.error: Exception | None = None
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
 
@@ -52,7 +61,7 @@ class FakeAsyncOpenAI:
         self.calls.append(kwargs)
         if self.error:
             raise self.error
-        return self.stream
+        return self.stream if kwargs["stream"] else self.completion
 
 
 @pytest.fixture
@@ -151,3 +160,63 @@ async def test_provider_error_body_is_not_embedded_in_the_llm_error(llm, config)
     assert "\n" not in message
     assert len(message) < config.ERROR_SUMMARY_MAX_CHARS + 100
     assert raised.value.__cause__ is error
+
+
+# ── complete: a whole answer, outside a turn ──────────────────────────────
+
+async def test_complete_sends_the_given_system_text_and_returns_the_whole_answer(llm, config):
+    llm._client.completion = _completion('[{"category": "identity"}]', reasoning="thinking")
+
+    answer = await llm.complete("Trích thông tin về người dùng.", "Tôi tên là Linh.")
+
+    assert answer == '[{"category": "identity"}]'
+    (call,) = llm._client.calls
+    assert call["messages"] == [
+        {"role": "system", "content": "Trích thông tin về người dùng."},
+        {"role": "user", "content": "Tôi tên là Linh."},
+    ]
+    assert config.SYSTEM_PROMPT not in str(call["messages"])
+    assert call["stream"] is False
+    assert call["model"] == config.LLM_MODEL
+
+
+async def test_complete_has_its_own_limits_not_those_of_a_spoken_answer(llm, config):
+    await llm.complete("s", "u")
+
+    (call,) = llm._client.calls
+    assert call["max_completion_tokens"] == config.LLM_COMPLETE_MAX_TOKENS == 2048
+    assert call["timeout"] == config.LLM_COMPLETE_TIMEOUT_SEC == 30
+    assert call["extra_body"] == {"reasoning_effort": "low", "include_reasoning": False}
+
+
+@pytest.mark.parametrize("content", [None, ""])
+async def test_complete_without_content_is_an_empty_answer(llm, content):
+    llm._client.completion = _completion(content)
+
+    assert await llm.complete("s", "u") == ""
+
+
+async def test_complete_provider_error_raises_llm_error_without_the_body(llm):
+    llm._client.error = OpenAIError("401 " + "x" * 500 + " sk-secret")
+
+    with pytest.raises(LLMError) as raised:
+        await llm.complete("s", "u")
+
+    assert "sk-secret" not in str(raised.value)
+
+
+async def test_complete_without_a_choice_raises_llm_error(llm):
+    llm._client.completion = SimpleNamespace(choices=[])
+
+    with pytest.raises(LLMError):
+        await llm.complete("s", "u")
+
+
+async def test_complete_cut_at_the_token_limit_raises_llm_error_naming_the_cause(llm, config):
+    llm._client.completion = _completion('[{"category": "identity", "te', finish_reason="length")
+
+    with pytest.raises(LLMError, match="LLM_COMPLETE_MAX_TOKENS") as raised:
+        await llm.complete("s", "u")
+
+    assert str(config.LLM_COMPLETE_MAX_TOKENS) in str(raised.value)
+    assert "identity" not in str(raised.value)  # the cut answer is not repeated

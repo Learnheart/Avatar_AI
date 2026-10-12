@@ -36,6 +36,10 @@ class Tuning:
     LLM_MAX_TOKENS: int = env_int("LLM_MAX_TOKENS", 512)
     # Max wait for each streamed delta, first token included.
     LLM_TIMEOUT_SEC: float = env_float("LLM_TIMEOUT_SEC", 8.0)
+    # A whole answer asked in the background (`LLM.complete`: reading an import), not
+    # spoken: it may take longer and be longer than the answer of a turn.
+    LLM_COMPLETE_TIMEOUT_SEC: float = env_float("LLM_COMPLETE_TIMEOUT_SEC", 30.0)
+    LLM_COMPLETE_MAX_TOKENS: int = env_int("LLM_COMPLETE_MAX_TOKENS", 2048)
 
     # ── Conversation (short-term memory) ────────────────────────────────
     # A conversation closes after this long without a face (while the camera is
@@ -54,6 +58,11 @@ class Tuning:
     # Characters of one memory item: a short sentence, since every active item is in
     # every prompt. A longer text is refused.
     MEMORY_ITEM_MAX_CHARS: int = env_int("MEMORY_ITEM_MAX_CHARS", 200)
+    # An import (a file or a pasted text the person describes themselves with): the
+    # size of the file, and the characters of its text given to the LLM in one request.
+    # Past either it is refused.
+    MEMORY_IMPORT_MAX_FILE_MB: float = env_float("MEMORY_IMPORT_MAX_FILE_MB", 5.0)
+    MEMORY_IMPORT_MAX_CHARS: int = env_int("MEMORY_IMPORT_MAX_CHARS", 20000)
 
     # ── Knowledge (uploaded documents) ──────────────────────────────────
     # Passages given to the LLM with the question.

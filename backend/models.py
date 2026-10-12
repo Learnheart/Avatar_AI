@@ -113,6 +113,7 @@ class User:
 MEMORY_CATEGORIES = ("identity", "addressing", "preference", "personality")
 MEMORY_STATUS_ACTIVE = "active"  # given to the LLM
 MEMORY_SOURCE_MANUAL = "manual"  # typed by the person on the profile page
+MEMORY_SOURCE_IMPORT = "import"  # read from a file or a pasted text the person gave
 
 
 @dataclass
@@ -146,6 +147,31 @@ class MemoryItem:
             "evidence": self.evidence,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
+        }
+
+
+@dataclass
+class MemoryImport:
+    """A file or a pasted text a user described themselves with. The original bytes are
+    in the object store under `object_key`; this is what the database keeps of it."""
+    id: str
+    user_id: str
+    name: str
+    content_type: str
+    size_bytes: int
+    sha256: str
+    object_key: str
+    created_at: datetime  # UTC
+
+    def to_dict(self, item_count: int) -> dict:
+        """The import as the HTTP API gives it (`/memory/imports`), with the number of
+        memory items that name it. Where the bytes are kept is not part of it."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "size_bytes": self.size_bytes,
+            "item_count": item_count,
+            "created_at": self.created_at.isoformat(),
         }
 
 

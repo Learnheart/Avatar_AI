@@ -129,6 +129,9 @@ class AppConfig(Tuning, Prompts):
     # Until the login exists: the id of the user every connection and request belongs
     # to. Empty = a guest, who has no memory.
     AUTH_DEV_USER_ID: str = env_str("AUTH_DEV_USER_ID", "")
+    # The directory of the object store: the original bytes of what users import. Who
+    # owns an object is recorded in the application database only.
+    OBJECT_STORE_DIR: str = env_str("OBJECT_STORE_DIR", "backend/data/objects")
 
     # ── Camera ──────────────────────────────────────────────────────────
     CAMERA_INDEX: int = env_int("CAMERA_INDEX", 0)
@@ -194,6 +197,15 @@ class AppConfig(Tuning, Prompts):
             raise ValueError("MEMORY_TIMEOUT_SEC must be positive and finite.")
         if not self.DATABASE_URL.strip():
             raise ValueError("DATABASE_URL must not be empty.")
+        if not self.OBJECT_STORE_DIR.strip():
+            raise ValueError("OBJECT_STORE_DIR must not be empty.")
+        for key in ("LLM_COMPLETE_TIMEOUT_SEC", "MEMORY_IMPORT_MAX_FILE_MB"):
+            value = getattr(self, key)
+            if not (math.isfinite(value) and value > 0):
+                raise ValueError(f"{key} must be positive and finite.")
+        for key in ("LLM_COMPLETE_MAX_TOKENS", "MEMORY_IMPORT_MAX_CHARS"):
+            if getattr(self, key) < 1:
+                raise ValueError(f"{key} must be at least 1.")
         if not 0.0 <= self.STT_NO_SPEECH_MAX_PROB <= 1.0:
             raise ValueError("STT_NO_SPEECH_MAX_PROB must be between 0 and 1.")
         if self.DEVICE != AUTO and self.DEVICE not in DEVICES:

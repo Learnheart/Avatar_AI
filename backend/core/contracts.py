@@ -27,7 +27,8 @@ class STT(ABC):
         """
 
 
-# ── LLM: user text + earlier turns in → streamed Vietnamese answer text out ──
+# ── LLM: user text + earlier turns in → streamed Vietnamese answer text out;
+#    an instruction + a text in → one whole answer out ──────────────────────
 
 class LLMError(Exception):
     """The LLM provider failed (network, auth, timeout, bad response)."""
@@ -43,6 +44,16 @@ class LLM(ABC):
         `history` holds the earlier turns of the conversation, oldest first; `profile`
         is what is known about the person, given as a second system message after the
         fixed system prompt. No tools. Provider failures raise LLMError.
+        """
+
+    @abstractmethod
+    async def complete(self, system: str, user: str) -> str:
+        """
+        The whole answer to one request, for work done outside a turn (reading what a
+        person imported): `system` is the instruction, sent in place of the persona,
+        `user` the text it applies to. Not streamed, no reasoning text, no tools. It has
+        its own limits, `LLM_COMPLETE_TIMEOUT_SEC` and `LLM_COMPLETE_MAX_TOKENS`.
+        Provider failures raise LLMError.
         """
 
 

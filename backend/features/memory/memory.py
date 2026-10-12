@@ -4,7 +4,8 @@ MemoryService — what the avatar remembers about a logged-in user.
 A memory item is one short sentence about the user. The active items are written into
 the profile the LLM is given with each turn; the profile is cached per user and dropped
 when one of the user's items changes, so a turn reads from RAM and an edit applies to the
-next turn. The store is given by `backend/main.py`.
+next turn. The store is given by `backend/main.py`. What a user imports is read into
+items by `imports.py`.
 """
 import asyncio
 import unicodedata
@@ -86,6 +87,12 @@ class MemoryService(Memory):
         )
         return MemoryProfile(self.config.MEMORY_PROMPT.format(items=listed), len(chosen))
 
+    def forget_profile(self, user_id: str) -> None:
+        """Drop the cached profile of the user: their items changed, or may have. The
+        next turn reads them again."""
+        self._writes[user_id] = self._writes.get(user_id, 0) + 1
+        self._profiles.pop(user_id, None)
+
     # ── Items (the profile page) ──────────────────────────────────────────
 
     async def list_items(self, user_id: str) -> list[MemoryItem]:
@@ -141,31 +148,34 @@ class MemoryService(Memory):
     # ── Internals ─────────────────────────────────────────────────────────
 
     def _text(self, text: str) -> str:
-        """The text as it is stored: one line, not empty, one short sentence."""
-        text = one_line(text)
-        if not text:
-            raise InvalidMemoryItem("A memory item needs a text")
-        limit = self.config.MEMORY_ITEM_MAX_CHARS
-        if len(text) > limit:
-            raise InvalidMemoryItem(
-                f"A memory item is one short sentence: at most {limit} characters, "
-                f"this text has {len(text)}"
-            )
-        return text
+        return item_text(text, self.config.MEMORY_ITEM_MAX_CHARS)
 
     async def _write(self, user_id: str, call: Callable[..., T], *args) -> T:
         """Run a store call that changes the user's items, then drop their profile."""
         try:
             return await self._call(call, *args)
         finally:
-            self._writes[user_id] = self._writes.get(user_id, 0) + 1
-            self._profiles.pop(user_id, None)
+            self.forget_profile(user_id)
 
     async def _call(self, call: Callable[..., T], *args) -> T:
         try:
             return await asyncio.to_thread(call, *args)
         except DatabaseError as e:
             raise MemoryServiceError(f"The memory store failed: {e}") from e
+
+
+def item_text(text: str, max_chars: int) -> str:
+    """The text of an item as it is stored, whatever wrote it: one line, not empty, at
+    most `max_chars` characters. Raises InvalidMemoryItem."""
+    text = one_line(text)
+    if not text:
+        raise InvalidMemoryItem("A memory item needs a text")
+    if len(text) > max_chars:
+        raise InvalidMemoryItem(
+            f"A memory item is one short sentence: at most {max_chars} characters, "
+            f"this text has {len(text)}"
+        )
+    return text
 
 
 def one_line(text: str) -> str:

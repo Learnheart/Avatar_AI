@@ -21,6 +21,14 @@ def _event(type_, **fields):
     return SimpleNamespace(type=type_, **fields)
 
 
+def _response(text, status="completed", error=None, incomplete=None):
+    """A whole (not streamed) response."""
+    details = SimpleNamespace(reason=incomplete) if incomplete else None
+    return SimpleNamespace(
+        output_text=text, status=status, error=error, incomplete_details=details
+    )
+
+
 class FakeStream:
     def __init__(self, events, error=None):
         self._events = list(events)
@@ -51,6 +59,7 @@ class FakeAsyncOpenAI:
         self.max_retries = max_retries
         self.calls: list[dict] = []
         self.stream = FakeStream([])
+        self.response = _response("")
         self.error: Exception | None = None
         self.responses = SimpleNamespace(create=self._create)
 
@@ -58,7 +67,7 @@ class FakeAsyncOpenAI:
         self.calls.append(kwargs)
         if self.error:
             raise self.error
-        return self.stream
+        return self.stream if kwargs["stream"] else self.response
 
 
 @pytest.fixture
@@ -204,3 +213,65 @@ async def test_error_text_is_summarized(llm, config):
         await _collect(llm)
     assert "\n" not in str(raised.value)
     assert len(str(raised.value)) < config.ERROR_SUMMARY_MAX_CHARS + 100
+
+
+# ── complete: a whole answer, outside a turn ──────────────────────────────
+
+async def test_complete_sends_the_given_system_text_and_returns_the_whole_answer(llm, config):
+    llm._client.response = _response('[{"category": "identity"}]')
+
+    answer = await llm.complete("Trích thông tin về người dùng.", "Tôi tên là Linh.")
+
+    assert answer == '[{"category": "identity"}]'
+    (call,) = llm._client.calls
+    assert call["input"] == [
+        _part("system", "Trích thông tin về người dùng."),
+        _part("user", "Tôi tên là Linh."),
+    ]
+    assert config.SYSTEM_PROMPT not in str(call["input"])
+    assert call["stream"] is False
+    assert call["model"] == "catalog.schema.model"
+
+
+async def test_complete_has_its_own_limits_not_those_of_a_spoken_answer(llm, config):
+    await llm.complete("s", "u")
+
+    (call,) = llm._client.calls
+    assert call["max_output_tokens"] == config.LLM_COMPLETE_MAX_TOKENS == 2048
+    assert call["timeout"] == config.LLM_COMPLETE_TIMEOUT_SEC == 30
+    assert call["reasoning"] == {"effort": config.LLM_REASONING_EFFORT}
+
+
+async def test_complete_provider_error_raises_llm_error(llm):
+    llm._client.error = OpenAIError("503 upstream")
+
+    with pytest.raises(LLMError):
+        await llm.complete("s", "u")
+
+
+async def test_complete_failed_response_raises_llm_error(llm):
+    llm._client.response = _response(
+        "", status="failed", error=SimpleNamespace(message="model overloaded")
+    )
+
+    with pytest.raises(LLMError, match="model overloaded"):
+        await llm.complete("s", "u")
+
+
+async def test_complete_cut_at_the_token_limit_raises_llm_error_naming_the_cause(llm, config):
+    llm._client.response = _response(
+        '[{"category": "identity", "te', status="incomplete", incomplete="max_output_tokens"
+    )
+
+    with pytest.raises(LLMError, match="LLM_COMPLETE_MAX_TOKENS") as raised:
+        await llm.complete("s", "u")
+
+    assert str(config.LLM_COMPLETE_MAX_TOKENS) in str(raised.value)
+    assert "identity" not in str(raised.value)
+
+
+async def test_complete_left_incomplete_for_another_reason_raises_llm_error(llm):
+    llm._client.response = _response("[", status="incomplete", incomplete="content_filter")
+
+    with pytest.raises(LLMError, match="content_filter"):
+        await llm.complete("s", "u")

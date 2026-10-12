@@ -48,6 +48,9 @@ class FakeLLM(LLM):
         self.profiles: list[str] = []
         self.closed = False
 
+    async def complete(self, system, user) -> str:
+        return "".join(self.deltas)
+
     async def stream_answer(self, user_text, history=(), profile="") -> AsyncIterator[str]:
         self.calls.append(user_text)
         self.histories.append(tuple(history))

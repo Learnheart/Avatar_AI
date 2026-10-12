@@ -40,6 +40,11 @@ def test_defaults_load():
     assert config.MEMORY_PROMPT_MAX_ITEMS == 20
     assert config.MEMORY_TIMEOUT_SEC == 1.0
     assert config.MEMORY_ITEM_MAX_CHARS == 200
+    assert config.OBJECT_STORE_DIR == "backend/data/objects"
+    assert config.LLM_COMPLETE_TIMEOUT_SEC == 30
+    assert config.LLM_COMPLETE_MAX_TOKENS == 2048
+    assert config.MEMORY_IMPORT_MAX_FILE_MB == 5
+    assert config.MEMORY_IMPORT_MAX_CHARS == 20000
 
 
 def test_missing_groq_api_key_fails_validation():
@@ -107,6 +112,16 @@ def test_invalid_values_fail_validation(overrides):
         {"MEMORY_TIMEOUT_SEC": float("nan")},
         {"MEMORY_TIMEOUT_SEC": float("inf")},
         {"DATABASE_URL": " "},
+        {"OBJECT_STORE_DIR": " "},
+        {"LLM_COMPLETE_TIMEOUT_SEC": 0},
+        {"LLM_COMPLETE_TIMEOUT_SEC": -1},
+        {"LLM_COMPLETE_TIMEOUT_SEC": float("nan")},
+        {"LLM_COMPLETE_TIMEOUT_SEC": float("inf")},
+        {"LLM_COMPLETE_MAX_TOKENS": 0},
+        {"MEMORY_IMPORT_MAX_FILE_MB": 0},
+        {"MEMORY_IMPORT_MAX_FILE_MB": -1},
+        {"MEMORY_IMPORT_MAX_FILE_MB": float("nan")},
+        {"MEMORY_IMPORT_MAX_CHARS": 0},
     ],
 )
 def test_invalid_conversation_settings_fail_validation(overrides):
@@ -123,6 +138,9 @@ def test_the_edges_of_the_conversation_settings_are_accepted():
         STT_NO_SPEECH_MAX_PROB=0.0,
         MEMORY_PROMPT_MAX_ITEMS=1,
         MEMORY_ITEM_MAX_CHARS=1,
+        LLM_COMPLETE_MAX_TOKENS=1,
+        MEMORY_IMPORT_MAX_CHARS=1,
+        MEMORY_IMPORT_MAX_FILE_MB=0.001,
     ).validate()
 
 

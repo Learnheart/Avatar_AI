@@ -6,22 +6,38 @@ HTTP routes of the memory, used by the "Hồ sơ" page of the frontend.
   PATCH  /memory/items/{id}   {"text"?, "category"?} → the item, or 404
   DELETE /memory/items/{id}   → 204, or 404
 
-Every route is scoped to `current_user_id()`: a guest gets 401, and an item of another
-user is a 404. The memory and the users are read from `app.state`, set at startup by
-`backend/main.py`.
+  GET    /memory/imports               → {"imports": [...]}
+  POST   /memory/imports               multipart field `file`, or field `text`
+                                       → 201 + {"import": {...}, "items": [...]}
+  GET    /memory/imports/{id}/content  → the original bytes, as a download, or 404
+  DELETE /memory/imports/{id}?items=keep|delete   → 204, or 404
+
+Every route is scoped to `current_user_id()`: a guest gets 401, and an item or an import
+of another user is a 404. The memory, the imports and the users are read from `app.state`, set at
+startup by `backend/main.py`.
 """
 import asyncio
 from contextlib import contextmanager
-from typing import Iterator, Optional
+from typing import Iterator, Literal, Optional
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, ConfigDict
 
 from backend.config import AppConfig
 from backend.core.contracts import MemoryServiceError
 from backend.features.accounts.identity import current_user_id
+from backend.features.memory.imports import (
+    EmptyImport,
+    ImportExtractionFailed,
+    ImportTooLarge,
+    MemoryImports,
+    NothingToRemember,
+    max_file_bytes,
+)
 from backend.features.memory.memory import InvalidMemoryItem, MemoryService
 from backend.utils.database import DatabaseError
+from backend.utils.loaders import UnreadableDocument, UnsupportedDocument
 from backend.utils.logging import get_logger
 
 logger = get_logger("memory.api")
@@ -48,8 +64,15 @@ def _answering() -> Iterator[None]:
     """Turn the failures of the memory into their HTTP answers."""
     try:
         yield
-    except InvalidMemoryItem as e:
+    except ImportTooLarge as e:
+        raise HTTPException(413, str(e)) from e
+    except UnsupportedDocument as e:
+        raise HTTPException(415, str(e)) from e
+    except (InvalidMemoryItem, UnreadableDocument, EmptyImport, NothingToRemember) as e:
         raise HTTPException(422, str(e)) from e
+    except ImportExtractionFailed as e:
+        logger.error({"msg": "Memory import could not be read", "error": str(e)})
+        raise HTTPException(502, "The import could not be read") from e
     except MemoryServiceError as e:
         logger.error({"msg": "Memory request failed", "error": str(e)})
         raise HTTPException(502, "The memory is not available") from e
@@ -60,6 +83,9 @@ def create_memory_router(config: AppConfig) -> APIRouter:
 
     def memory(request: Request) -> MemoryService:
         return request.app.state.memory
+
+    def imports(request: Request) -> MemoryImports:
+        return request.app.state.imports
 
     async def user(request: Request) -> str:
         """The id of the logged-in user; a guest has no memory."""
@@ -106,6 +132,68 @@ def create_memory_router(config: AppConfig) -> APIRouter:
             deleted = await memory(request).delete_item(user_id, item_id)
         if not deleted:
             raise HTTPException(404, "No such memory item")
+        return Response(status_code=204)
+
+    @router.get("/imports")
+    async def list_imports(request: Request, user_id: str = Depends(user)) -> dict:
+        with _answering():
+            listed = await imports(request).list_imports(user_id)
+        return {"imports": [record.to_dict(item_count) for record, item_count in listed]}
+
+    @router.post("/imports", status_code=201)
+    async def add_import(
+        request: Request,
+        file: Optional[UploadFile] = File(None),
+        text: Optional[str] = Form(None),
+        user_id: str = Depends(user),
+    ) -> dict:
+        if (file is None) == (text is None):
+            raise HTTPException(422, "Give a file or a text, one of the two")
+        with _answering():
+            if file is not None:
+                # One byte past the limit is enough for the memory to refuse the file.
+                data = await file.read(max_file_bytes(config) + 1)
+                record, items = await imports(request).import_file(
+                    user_id, file.filename or "", data
+                )
+            else:
+                record, items = await imports(request).import_text(user_id, text)
+        return {
+            "import": record.to_dict(len(items)),
+            "items": [item.to_dict() for item in items],
+        }
+
+    @router.get("/imports/{import_id}/content")
+    async def import_content(
+        request: Request, import_id: str, user_id: str = Depends(user)
+    ) -> Response:
+        with _answering():
+            found = await imports(request).import_content(user_id, import_id)
+        if found is None:
+            raise HTTPException(404, "No such import")
+        record, data = found
+        return Response(
+            content=data,
+            media_type=record.content_type,
+            headers={
+                # Bytes a user supplied are saved by the browser, never shown by it from
+                # the origin of the API, and never read as another type than the stored one.
+                "Content-Disposition": f"attachment; filename*=UTF-8''{quote(record.name, safe='')}",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @router.delete("/imports/{import_id}", status_code=204)
+    async def delete_import(
+        request: Request,
+        import_id: str,
+        items: Literal["keep", "delete"] = "keep",
+        user_id: str = Depends(user),
+    ) -> Response:
+        with _answering():
+            deleted = await imports(request).delete_import(user_id, import_id, items == "delete")
+        if not deleted:
+            raise HTTPException(404, "No such import")
         return Response(status_code=204)
 
     return router

@@ -28,7 +28,15 @@ class ScriptedLLM(LLM):
         self.deltas, self.error, self.delay = list(deltas), error, delay
         self.calls = 0
         self.requests: list[tuple] = []
+        self.completions: list[tuple] = []
         self.closed = False
+
+    async def complete(self, system, user):
+        self.completions.append((system, user))
+        await asyncio.sleep(self.delay)
+        if self.error:
+            raise self.error
+        return "".join(self.deltas)
 
     async def stream_answer(self, user_text, history=(), profile=""):
         self.calls += 1
@@ -45,7 +53,9 @@ class ScriptedLLM(LLM):
 
 @pytest.fixture
 def config() -> AppConfig:
-    return AppConfig(FALLBACK_PRIMARY_TIMEOUT_SEC=0.05, FALLBACK_COOLDOWN_SEC=300)
+    return AppConfig(
+        FALLBACK_PRIMARY_TIMEOUT_SEC=0.05, FALLBACK_COOLDOWN_SEC=300, LLM_COMPLETE_TIMEOUT_SEC=0.2
+    )
 
 
 @pytest.fixture
@@ -162,6 +172,9 @@ async def test_llm_failure_after_the_first_delta_is_not_replayed_by_the_backup(c
 
 async def test_llm_only_the_first_delta_is_bounded(config):
     class SlowSecondDelta(LLM):
+        async def complete(self, system, user):
+            return ""
+
         async def stream_answer(self, user_text, history=(), profile=""):
             yield "Xin "
             await asyncio.sleep(config.FALLBACK_PRIMARY_TIMEOUT_SEC * 3)
@@ -202,6 +215,73 @@ async def test_llm_closing_the_answer_closes_the_backend_stream(config):
     await stream.aclose()
 
     assert primary.closed
+
+
+# ── LLM: a whole answer asked in the background ───────────────────────────
+
+async def test_complete_is_answered_by_a_healthy_primary(config):
+    primary, backup = ScriptedLLM(["[]"]), ScriptedLLM(["backup"])
+
+    answer = await FallbackLLM(config, primary, backup).complete("Trích thông tin.", "Tôi là Linh.")
+
+    assert answer == "[]"
+    assert primary.completions == [("Trích thông tin.", "Tôi là Linh.")]
+    assert backup.completions == []
+
+
+@pytest.mark.parametrize(
+    "primary", [ScriptedLLM(error=LLMError("503")), ScriptedLLM(["late"], delay=5)]
+)
+async def test_complete_falls_back_on_failure_and_on_timeout(config, primary):
+    backup = ScriptedLLM(["backup"])
+
+    answer = await FallbackLLM(config, primary, backup).complete("Trích thông tin.", "Tôi là Linh.")
+
+    assert answer == "backup"
+    assert backup.completions == [("Trích thông tin.", "Tôi là Linh.")]
+
+
+async def test_complete_waits_longer_than_the_first_delta_of_a_turn(config):
+    """0.1 s is past FALLBACK_PRIMARY_TIMEOUT_SEC and within LLM_COMPLETE_TIMEOUT_SEC."""
+    primary, backup = ScriptedLLM(["slow but whole"], delay=0.1), ScriptedLLM(["backup"])
+
+    assert await FallbackLLM(config, primary, backup).complete("s", "u") == "slow but whole"
+    assert backup.completions == []
+
+
+@pytest.mark.parametrize(
+    "primary", [ScriptedLLM(["x"], error=LLMError("503")), ScriptedLLM(["late"], delay=5)]
+)
+async def test_a_failed_complete_does_not_put_the_primary_of_the_turns_in_cooldown(
+    config, primary
+):
+    llm = FallbackLLM(config, primary, ScriptedLLM(["backup"]))
+
+    assert await llm.complete("s", "u") == "backup"
+    primary.error, primary.delay = None, 0.0
+
+    assert await _answer(llm) == primary.deltas  # the next turn still asks the primary
+    assert primary.calls == 1
+
+
+async def test_complete_skips_a_primary_the_turns_put_in_cooldown(config, clock):
+    primary, backup = ScriptedLLM(error=LLMError("503")), ScriptedLLM(["backup"])
+    llm = FallbackLLM(config, primary, backup)
+    await _answer(llm)  # a turn fails: the cooldown starts
+
+    assert await llm.complete("s", "u") == "backup"
+    assert primary.completions == []
+
+    clock[0] += 301
+    primary.error, primary.deltas = None, ["primary"]
+    assert await llm.complete("s", "u") == "primary"
+
+
+async def test_complete_error_of_the_backup_reaches_the_caller(config):
+    llm = FallbackLLM(config, ScriptedLLM(error=LLMError("503")), ScriptedLLM(error=LLMError("down")))
+
+    with pytest.raises(LLMError, match="down"):
+        await llm.complete("s", "u")
 
 
 # ── Catalog ───────────────────────────────────────────────────────────────

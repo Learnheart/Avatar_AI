@@ -20,12 +20,13 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def config(tmp_path) -> AppConfig:
-    # The knowledge base and the application database of a test live in its own
-    # temporary directory.
+    # The knowledge base, the application database and the object store of a test live
+    # in its own temporary directory.
     return AppConfig(
         GROQ_API_KEY="test-key",
         KNOWLEDGE_DB_PATH=str(tmp_path / "knowledge.db"),
         DATABASE_URL=f"sqlite:///{tmp_path / 'app.db'}",
+        OBJECT_STORE_DIR=str(tmp_path / "objects"),
     )
 
 

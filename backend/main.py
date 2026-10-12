@@ -27,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.config import AppConfig
-from backend.core.contracts import Knowledge, Memory
+from backend.core.contracts import LLM, Knowledge, Memory
 from backend.core.conversation.engine import ConversationEngine
 from backend.features.accounts.identity import current_user_id
 from backend.features.accounts.store import UsersStore
@@ -35,6 +35,7 @@ from backend.features.knowledge.api import create_knowledge_router
 from backend.features.knowledge.knowledge_base import KnowledgeBase
 from backend.features.knowledge.store import SqliteVecStore
 from backend.features.memory.api import create_memory_router
+from backend.features.memory.imports import MemoryImports
 from backend.features.memory.memory import MemoryService
 from backend.features.memory.store import MemoryStore
 from backend.providers.catalog import create_embedder, create_llm, create_stt, create_tts
@@ -46,6 +47,7 @@ from backend.utils import telemetry
 from backend.utils.capture import CaptureSpans, CaptureStore
 from backend.utils.database import Database, DatabaseError
 from backend.utils.logging import configure_logging, get_logger
+from backend.utils.object_store import ObjectStore
 
 logger = get_logger("main")
 
@@ -60,17 +62,32 @@ def build_memory(config: AppConfig, database: Database) -> MemoryService:
     return MemoryService(config, MemoryStore(database))
 
 
+def build_imports(
+    config: AppConfig, database: Database, llm: LLM, memory: MemoryService
+) -> MemoryImports:
+    """The imports on the application database and the object store, read with the LLM
+    they are given; an import changes the profile the memory has cached."""
+    return MemoryImports(
+        config,
+        MemoryStore(database),
+        ObjectStore(config.OBJECT_STORE_DIR),
+        llm,
+        forget_profile=memory.forget_profile,
+    )
+
+
 def build_orchestrator(
     config: AppConfig,
     knowledge: Knowledge,
     memory: Memory,
+    llm: LLM,
     capture: Optional[CaptureStore] = None,
 ) -> Orchestrator:
-    """Wire the real modules together."""
+    """Wire the real modules together, on the LLM the app built."""
     engine = ConversationEngine(
         config,
         stt=create_stt(config),
-        llm=create_llm(config),
+        llm=llm,
         tts=create_tts(config),
         knowledge=knowledge,
         memory=memory,
@@ -118,13 +135,17 @@ def create_app(
             logger.error({"msg": "The application database cannot be opened", "error": str(e)})
             raise
         app.state.users = UsersStore(database)
+        # One LLM for the turns and for the imports: with a backup backend, a primary
+        # the turns found dead is not asked again by an import.
+        llm = create_llm(config)
         app.state.memory = memory or build_memory(config, database)
+        app.state.imports = build_imports(config, database, llm, app.state.memory)
         try:
             app.state.knowledge = knowledge or build_knowledge(config)
             await app.state.knowledge.start()
             try:
                 app.state.orchestrator = orchestrator or build_orchestrator(
-                    config, app.state.knowledge, app.state.memory, capture
+                    config, app.state.knowledge, app.state.memory, llm, capture
                 )
                 app.state.started_at = time.monotonic()
                 await app.state.orchestrator.start()

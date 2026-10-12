@@ -41,8 +41,38 @@ the rules are in `CLAUDE.md` / `AGENTS.md` §7.
 - `[memory]` A remembered fact is stored on one line: line breaks, tabs and repeated
   spaces become one space, and control or invisible characters are removed; a text with
   nothing visible is refused with `422`.
+- `[memory]` Import: a person describes themselves with a file (`.txt`, `.md`, `.csv`,
+  `.pdf`, `.docx`, up to `MEMORY_IMPORT_MAX_FILE_MB`) or a pasted text; the avatar reads
+  it once and keeps what it says about them as remembered facts, used from the next
+  turn, each with the sentence it comes from. The original is kept unchanged and can be
+  downloaded again; an import that cannot be read leaves nothing behind.
+- `[memory]` HTTP routes `/memory/imports`: `GET` (the imports with their number of
+  facts), `POST` (multipart field `file` or field `text` → `201` with the import and
+  its facts; `413` too large, `415` unsupported type, `422` unreadable, empty or
+  nothing to remember, `502` the LLM failed), `GET /{id}/content` (the original, as a
+  download) and `DELETE /{id}?items=keep|delete` (the facts stay without a source, or
+  go with it; default `keep`). A guest gets `401`; one user never sees, reads or
+  deletes another's import.
+- `[llm]` Every LLM backend can give one whole answer to an instruction outside a turn
+  (used to read an import), with its own limits (`LLM_COMPLETE_TIMEOUT_SEC`,
+  `LLM_COMPLETE_MAX_TOKENS`). With a backup backend, a failure of such a request never
+  makes the turns skip the primary.
+- `[shared]` An object store for the originals of what users import: a directory,
+  `OBJECT_STORE_DIR` (default `backend/data/objects`), shared by all users; who owns a
+  file is recorded in the application database.
+- `[shared]` New config keys: `OBJECT_STORE_DIR` (`backend/data/objects`),
+  `MEMORY_IMPORT_MAX_FILE_MB` (5), `MEMORY_IMPORT_MAX_CHARS` (20000),
+  `LLM_COMPLETE_TIMEOUT_SEC` (30), `LLM_COMPLETE_MAX_TOKENS` (2048). The instruction an
+  import is read with is `MEMORY_IMPORT_PROMPT`.
+- `[shared]` The application database gains the table `imports`, and a remembered fact
+  now points at its import. A database file created before this change keeps working
+  without that link being enforced; delete it (`backend/data/app.db`, created again at
+  startup) to get the new shape, since there is no migration tool yet.
 - `[expression]` A profile page, "Hồ sơ": see, add, edit and delete what the avatar
   remembers about you.
+- `[expression]` On "Hồ sơ", describe yourself with a file or a pasted text: the facts
+  read from it appear at once; see your imports, open the original, and delete an
+  import with or without its facts.
 - `[shared]` An application database for users and memory, opened from `DATABASE_URL`
   (default: the SQLite file `backend/data/app.db`; PostgreSQL by changing the URL). Its
   tables are created at startup; the avatar does not start on a database it cannot
