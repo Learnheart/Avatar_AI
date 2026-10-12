@@ -134,3 +134,20 @@ class Memory(ABC):
         What is known about the user, as the text given to the LLM. Nothing known →
         an empty profile. Failures raise MemoryServiceError.
         """
+
+    @abstractmethod
+    async def record_turn(self, user_id: str, conversation_id: str, turn: ChatTurn) -> None:
+        """
+        One turn of a conversation of the user ended: keep it until the conversation
+        closes. Called in the order of the turns, after the audio was sent, and never
+        awaited by a turn. Failures raise MemoryServiceError.
+        """
+
+    @abstractmethod
+    async def close_conversation(self, user_id: str, conversation_id: str) -> None:
+        """
+        The conversation of the user is over, its last turn recorded: gather from it
+        what is worth remembering about the user. It may take as long as a request to
+        the LLM and is never awaited by a turn. A conversation without any recorded turn
+        is nothing to do. Failures raise MemoryServiceError.
+        """

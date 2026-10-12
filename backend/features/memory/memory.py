@@ -5,13 +5,14 @@ A memory item is one short sentence about the user. The active items are written
 the profile the LLM is given with each turn; the profile is cached per user and dropped
 when one of the user's items changes, so a turn reads from RAM and an edit applies to the
 next turn. The store is given by `backend/main.py`. What a user imports is read into
-items by `imports.py`.
+items by `imports.py`, and what they say in a conversation by `consolidation.py`: the
+service hands it the turns and the closes the core tells it about.
 """
 import asyncio
 import unicodedata
 import uuid
 from datetime import datetime, timezone
-from typing import Callable, Optional, TypeVar
+from typing import TYPE_CHECKING, Callable, Optional, TypeVar
 
 from backend.config import AppConfig
 from backend.core.contracts import Memory, MemoryServiceError
@@ -20,11 +21,16 @@ from backend.models import (
     MEMORY_CATEGORIES,
     MEMORY_SOURCE_MANUAL,
     MEMORY_STATUS_ACTIVE,
+    MEMORY_STATUS_PENDING,
+    ChatTurn,
     MemoryItem,
     MemoryProfile,
 )
 from backend.utils.database import DatabaseError
 from backend.utils.logging import get_logger
+
+if TYPE_CHECKING:  # consolidation.py imports this module
+    from backend.features.memory.consolidation import MemoryConsolidation
 
 logger = get_logger("memory")
 
@@ -56,6 +62,13 @@ class MemoryService(Memory):
         # Counts the writes per user: a profile read from the store while one of the
         # user's items was changing is not cached.
         self._writes: dict[str, int] = {}
+        # Reads the conversations into items; without one nothing is gathered.
+        self._gathering: Optional["MemoryConsolidation"] = None
+
+    def gather_with(self, gathering: "MemoryConsolidation") -> None:
+        """Gather from the conversations of the users with `gathering`, built beside the
+        service on the same store."""
+        self._gathering = gathering
 
     # ── Profile (the `Memory` contract) ───────────────────────────────────
 
@@ -93,10 +106,30 @@ class MemoryService(Memory):
         self._writes[user_id] = self._writes.get(user_id, 0) + 1
         self._profiles.pop(user_id, None)
 
+    # ── Gathering from conversations (the `Memory` contract) ──────────────
+
+    async def record_turn(self, user_id: str, conversation_id: str, turn: ChatTurn) -> None:
+        if self._gathering is not None:
+            await self._gathering.record_turn(user_id, conversation_id, turn)
+
+    async def close_conversation(self, user_id: str, conversation_id: str) -> None:
+        if self._gathering is not None:
+            await self._gathering.consolidate(user_id, conversation_id)
+
+    async def consolidate_unfinished(self) -> None:
+        """At startup: read the conversations an earlier run left unread, and delete the
+        turns too old to be kept. Never raises: a failure is logged."""
+        if self._gathering is not None:
+            await self._gathering.resume()
+
     # ── Items (the profile page) ──────────────────────────────────────────
 
     async def list_items(self, user_id: str) -> list[MemoryItem]:
-        return await self._call(self._store.list_items, user_id)
+        """The items in use and the proposed ones, oldest first. A rejected item is not
+        listed."""
+        return await self._call(
+            self._store.list_items, user_id, MEMORY_STATUS_ACTIVE, MEMORY_STATUS_PENDING
+        )
 
     async def add_item(self, user_id: str, category: str, text: str) -> MemoryItem:
         """Keep what the user typed about themselves: used from the next turn on.
@@ -125,9 +158,31 @@ class MemoryService(Memory):
     ) -> Optional[MemoryItem]:
         """Change the text and / or the category. None when the user has no such item.
         Raises InvalidMemoryItem."""
+        return await self._change(self._store.update_item, user_id, item_id, text, category)
+
+    async def approve_item(
+        self,
+        user_id: str,
+        item_id: str,
+        text: Optional[str] = None,
+        category: Optional[str] = None,
+    ) -> Optional[MemoryItem]:
+        """Put a proposed item in use, with a corrected text and / or category when
+        they are given: the item it proposed to replace is removed. None when the user
+        has no such item. Raises InvalidMemoryItem."""
+        return await self._change(self._store.approve_item, user_id, item_id, text, category)
+
+    async def _change(
+        self,
+        change: Callable[..., Optional[MemoryItem]],
+        user_id: str,
+        item_id: str,
+        text: Optional[str],
+        category: Optional[str],
+    ) -> Optional[MemoryItem]:
         item = await self._write(
             user_id,
-            self._store.update_item,
+            change,
             user_id,
             item_id,
             self._clock(),
@@ -135,12 +190,16 @@ class MemoryService(Memory):
             None if category is None else _category(category),
         )
         if item:
-            logger.info({"msg": "Memory item changed", "id": item_id})
+            logger.info({"msg": "Memory item changed", "id": item_id, "status": item.status})
         return item
 
     async def delete_item(self, user_id: str, item_id: str) -> bool:
-        """False when the user has no such item."""
-        deleted = await self._write(user_id, self._store.delete_item, user_id, item_id)
+        """Remove an item, or reject a proposed one; False when the user has no such
+        item. What was gathered from a conversation is kept as rejected, never to be
+        proposed again."""
+        deleted = await self._write(
+            user_id, self._store.delete_item, user_id, item_id, self._clock()
+        )
         if deleted:
             logger.info({"msg": "Memory item deleted", "id": item_id})
         return deleted

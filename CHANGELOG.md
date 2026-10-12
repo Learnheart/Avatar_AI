@@ -92,6 +92,44 @@ the rules are in `CLAUDE.md` / `AGENTS.md` §7.
 - `[shared]` Traces: the `turn` span names its conversation and user, the `stt` span
   carries the confidence and the no-speech probability, the `llm` span the number of
   earlier turns, the `knowledge` span the query as searched.
+- `[memory]` The avatar gathers what a known person says about themselves: when their
+  conversation closes, it is read once by the LLM, outside any turn, and what is worth
+  keeping (who they are, how to address them, what they prefer, their personality) is
+  proposed, each with the words it comes from. A proposal is used in no answer until
+  the person approves it. A guest's conversation is never stored or read.
+- `[memory]` A proposed preference or personality trait becomes active by itself once
+  a later conversation states it again (`MEMORY_PROMOTE_SEEN_COUNT`, default 2
+  conversations); a name or a way of addressing never does, it waits for the approval.
+  What a conversation contradicts is never overwritten: it becomes a proposal to
+  replace the remembered fact, which only an approval settles. A proposal with no
+  quote of the person is never activated by repetition either.
+- `[memory]` `PATCH /memory/items/{id}` accepts `{"status": "active"}` (alone or with
+  `text` / `category`) to approve a proposal; approving a replacement removes the fact
+  it replaces. `DELETE /memory/items/{id}` rejects a proposal. A rejected proposal, or
+  a gathered fact that is deleted, is never proposed again; it is no longer listed and
+  answers `404`.
+- `[memory]` The turns of a known person's conversation are kept in the application
+  database only until the conversation has been read, then deleted; turns older than
+  `MEMORY_TRANSCRIPT_TTL_DAYS` (default 7) are deleted at startup whatever happened. A
+  conversation that could not be read (the LLM failed, the backend was stopped) is
+  read at the next start, in the background.
+- `[memory]` An utterance the speech-to-text was unsure of
+  (`MEMORY_MIN_STT_CONFIDENCE`, default 0.6) is not read for gathering.
+- `[orchestrator]` For a known person, each turn and the close of the conversation are
+  handed to the memory in the background: the answer and the next turn never wait for
+  it, and a failing memory costs no turn.
+- `[expression]` "Hồ sơ" shows what the avatar gathered from conversations, each
+  proposal with the quote it comes from, to approve or reject.
+- `[shared]` New config keys: `MEMORY_PROMOTE_SEEN_COUNT` (2),
+  `MEMORY_MIN_STT_CONFIDENCE` (0.6), `MEMORY_TRANSCRIPT_TTL_DAYS` (7),
+  `MEMORY_CONSOLIDATE_MAX_CHARS` (20000: a longer conversation is read from its most
+  recent turns), `MEMORY_EXTRACT_MAX_REJECTED` (50: the rejected facts shown to the LLM
+  that reads a conversation).
+- `[shared]` The application database gains the tables `conversations` and `turns`,
+  created at startup.
+- `[shared]` Traces: each reading of a closed conversation is its own trace,
+  `memory.consolidate`, with the transcript read, the operations the LLM answered, what
+  was stored and the outcome.
 
 ### Changed
 

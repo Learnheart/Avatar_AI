@@ -543,6 +543,12 @@ class FakeMemory(Memory):
             raise self.error
         return self.result
 
+    async def record_turn(self, user_id, conversation_id, turn) -> None:
+        raise AssertionError("The engine only reads the profile")
+
+    async def close_conversation(self, user_id, conversation_id) -> None:
+        raise AssertionError("The engine only reads the profile")
+
 
 def _engine_remembering(
     config: AppConfig, memory: FakeMemory, knowledge: FakeKnowledge | None = None

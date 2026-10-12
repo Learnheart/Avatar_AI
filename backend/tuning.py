@@ -36,8 +36,9 @@ class Tuning:
     LLM_MAX_TOKENS: int = env_int("LLM_MAX_TOKENS", 512)
     # Max wait for each streamed delta, first token included.
     LLM_TIMEOUT_SEC: float = env_float("LLM_TIMEOUT_SEC", 8.0)
-    # A whole answer asked in the background (`LLM.complete`: reading an import), not
-    # spoken: it may take longer and be longer than the answer of a turn.
+    # A whole answer asked in the background (`LLM.complete`: reading an import or a
+    # closed conversation), not spoken: it may take longer and be longer than the answer
+    # of a turn.
     LLM_COMPLETE_TIMEOUT_SEC: float = env_float("LLM_COMPLETE_TIMEOUT_SEC", 30.0)
     LLM_COMPLETE_MAX_TOKENS: int = env_int("LLM_COMPLETE_MAX_TOKENS", 2048)
 
@@ -53,7 +54,8 @@ class Tuning:
     # Memory items given to the LLM as the profile of the person; past it the least
     # recently updated preferences and personality traits are left out.
     MEMORY_PROMPT_MAX_ITEMS: int = env_int("MEMORY_PROMPT_MAX_ITEMS", 20)
-    # Max wait for the profile in a turn; past it the question is answered without it.
+    # Max wait for the memory: for the profile in a turn (past it the question is
+    # answered without it), and at shutdown for the turns still being written.
     MEMORY_TIMEOUT_SEC: float = env_float("MEMORY_TIMEOUT_SEC", 1.0)
     # Characters of one memory item: a short sentence, since every active item is in
     # every prompt. A longer text is refused.
@@ -63,6 +65,25 @@ class Tuning:
     # Past either it is refused.
     MEMORY_IMPORT_MAX_FILE_MB: float = env_float("MEMORY_IMPORT_MAX_FILE_MB", 5.0)
     MEMORY_IMPORT_MAX_CHARS: int = env_int("MEMORY_IMPORT_MAX_CHARS", 20000)
+    # Gathering from conversations. A closed conversation is read once by the LLM into
+    # proposed (pending) items. A proposed preference or personality trait becomes
+    # active by itself once this many conversations stated it; a name or a way of
+    # addressing never does.
+    MEMORY_PROMOTE_SEEN_COUNT: int = env_int("MEMORY_PROMOTE_SEEN_COUNT", 2)
+    # An utterance the STT was less sure of than this is left out of what is read (0 =
+    # nothing is left out). Measured: sentences about oneself 0.93-0.97, one-word
+    # answers 0.45-0.70.
+    MEMORY_MIN_STT_CONFIDENCE: float = env_float("MEMORY_MIN_STT_CONFIDENCE", 0.6)
+    # The stored turns of a conversation are deleted once it is read, and after this
+    # many days whatever happened.
+    MEMORY_TRANSCRIPT_TTL_DAYS: float = env_float("MEMORY_TRANSCRIPT_TTL_DAYS", 7.0)
+    # Characters of a conversation read in one request; a longer one keeps its most
+    # recent turns.
+    MEMORY_CONSOLIDATE_MAX_CHARS: int = env_int("MEMORY_CONSOLIDATE_MAX_CHARS", 20000)
+    # Rejected items shown to the LLM that reads a conversation, the most recently
+    # rejected first (every active and pending item is shown). One that is not shown is
+    # still never proposed again.
+    MEMORY_EXTRACT_MAX_REJECTED: int = env_int("MEMORY_EXTRACT_MAX_REJECTED", 50)
 
     # ── Knowledge (uploaded documents) ──────────────────────────────────
     # Passages given to the LLM with the question.

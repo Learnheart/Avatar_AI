@@ -199,13 +199,24 @@ class AppConfig(Tuning, Prompts):
             raise ValueError("DATABASE_URL must not be empty.")
         if not self.OBJECT_STORE_DIR.strip():
             raise ValueError("OBJECT_STORE_DIR must not be empty.")
-        for key in ("LLM_COMPLETE_TIMEOUT_SEC", "MEMORY_IMPORT_MAX_FILE_MB"):
+        for key in (
+            "LLM_COMPLETE_TIMEOUT_SEC", "MEMORY_IMPORT_MAX_FILE_MB", "MEMORY_TRANSCRIPT_TTL_DAYS"
+        ):
             value = getattr(self, key)
             if not (math.isfinite(value) and value > 0):
                 raise ValueError(f"{key} must be positive and finite.")
-        for key in ("LLM_COMPLETE_MAX_TOKENS", "MEMORY_IMPORT_MAX_CHARS"):
+        for key in (
+            "LLM_COMPLETE_MAX_TOKENS",
+            "MEMORY_IMPORT_MAX_CHARS",
+            "MEMORY_PROMOTE_SEEN_COUNT",
+            "MEMORY_CONSOLIDATE_MAX_CHARS",
+        ):
             if getattr(self, key) < 1:
                 raise ValueError(f"{key} must be at least 1.")
+        if self.MEMORY_EXTRACT_MAX_REJECTED < 0:
+            raise ValueError("MEMORY_EXTRACT_MAX_REJECTED must not be negative.")
+        if not 0.0 <= self.MEMORY_MIN_STT_CONFIDENCE <= 1.0:
+            raise ValueError("MEMORY_MIN_STT_CONFIDENCE must be between 0 and 1.")
         if not 0.0 <= self.STT_NO_SPEECH_MAX_PROB <= 1.0:
             raise ValueError("STT_NO_SPEECH_MAX_PROB must be between 0 and 1.")
         if self.DEVICE != AUTO and self.DEVICE not in DEVICES:

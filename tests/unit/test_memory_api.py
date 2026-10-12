@@ -1,5 +1,6 @@
 import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -10,6 +11,7 @@ import backend.main as main
 from backend.config import AppConfig
 from backend.core.contracts import LLMError
 from backend.features.memory.memory import MemoryService
+from backend.models import MemoryItem
 from backend.main import create_app
 from backend.utils.database import DatabaseError
 from tests.unit.fakes import build_orchestrator
@@ -118,7 +120,9 @@ def test_an_unknown_category_an_empty_text_or_an_unknown_field_is_refused(client
 
 
 @pytest.mark.parametrize(
-    "body", [{}, {"text": " "}, {"category": "hobby"}, {"status": "active"}, {"text": 3}]
+    "body",
+    [{}, {"text": " "}, {"category": "hobby"}, {"status": "pending"}, {"status": "rejected"},
+     {"status": None}, {"text": 3}, {"seen_count": 5}],
 )
 def test_a_change_without_a_valid_field_is_refused(client, body):
     item = client.post(URL, json=NAME).json()
@@ -539,3 +543,107 @@ def test_the_imported_items_are_edited_and_deleted_like_any_other(client):
     assert (changed.status_code, deleted.status_code) == (200, 204)
     assert changed.json()["import_id"] == body["import"]["id"]
     assert client.get(IMPORTS).json()["imports"][0]["item_count"] == 1
+
+
+# ── Proposals: what the avatar gathered from conversations ────────────────
+
+HEARD_AT = datetime(2026, 10, 13, 8, 0, tzinfo=timezone.utc)
+
+
+def _heard(client, item_id: str, text: str, **fields) -> dict:
+    """An item gathered from a conversation, written as the consolidation writes it."""
+    now = HEARD_AT
+    values = {
+        "category": "preference", "status": "pending", "source": "conversation",
+        "evidence": "tôi nói vậy", "created_at": now, "updated_at": now,
+    }
+    user_id = fields.pop("user_id", "linh")
+    client.app.state.users.touch(user_id, user_id, HEARD_AT)
+    item = MemoryItem(id=item_id, user_id=user_id, text=text, **{**values, **fields})
+    client.app.state.memory._store.add_item(item)
+    return item.to_dict()
+
+
+def test_a_proposed_item_is_listed_as_pending_with_its_quote(client):
+    heard = _heard(client, "heard", "Tôi thích trà.")
+
+    assert client.get(URL).json() == {"items": [heard]}
+    assert (heard["status"], heard["source"], heard["evidence"]) == (
+        "pending", "conversation", "tôi nói vậy"
+    )
+
+
+def test_approving_a_proposed_item_makes_it_active(client):
+    _heard(client, "heard", "Tôi thích trà.")
+
+    response = client.patch(f"{URL}/heard", json={"status": "active"})
+
+    assert response.status_code == 200
+    approved = response.json()
+    assert (approved["id"], approved["status"], approved["text"]) == ("heard", "active", "Tôi thích trà.")
+    assert client.get(URL).json() == {"items": [approved]}
+
+
+def test_approving_can_correct_the_text_and_the_category(client):
+    _heard(client, "heard", "Tôi tên là Lin.")
+
+    approved = client.patch(
+        f"{URL}/heard", json={"status": "active", "text": "Tôi tên là Linh.", "category": "identity"}
+    ).json()
+
+    assert (approved["status"], approved["text"], approved["category"]) == (
+        "active", "Tôi tên là Linh.", "identity"
+    )
+
+
+def test_approving_a_replacement_removes_the_item_it_replaces(client):
+    old = client.post(URL, json={"category": "identity", "text": "Tôi tên là Lan."}).json()
+    proposal = _heard(client, "new", "Tôi tên là Linh.", category="identity", replaces_id=old["id"])
+    assert client.get(URL).json() == {"items": [old, proposal]}
+
+    approved = client.patch(f"{URL}/new", json={"status": "active"}).json()
+
+    assert (approved["status"], approved["replaces_id"]) == ("active", None)
+    assert client.get(URL).json() == {"items": [approved]}
+    assert client.patch(f"{URL}/{old['id']}", json={"text": "x"}).status_code == 404
+
+
+def test_approving_an_item_that_is_active_already_changes_nothing(client):
+    item = client.post(URL, json=NAME).json()
+
+    response = client.patch(f"{URL}/{item['id']}", json={"status": "active"})
+
+    assert response.status_code == 200
+    assert response.json() == item
+
+
+def test_rejecting_a_proposed_item_removes_it_from_the_list_for_good(client):
+    _heard(client, "heard", "Tôi thích trà.")
+
+    assert client.delete(f"{URL}/heard").status_code == 204
+
+    assert client.get(URL).json() == {"items": []}
+    # A tombstone the page cannot reach: it is kept so that it is never proposed again.
+    assert client.delete(f"{URL}/heard").status_code == 404
+    assert client.patch(f"{URL}/heard", json={"status": "active"}).status_code == 404
+    assert client.patch(f"{URL}/heard", json={"text": "Tôi thích trà."}).status_code == 404
+    (kept,) = client.app.state.memory._store.list_items("linh")
+    assert (kept.id, kept.status) == ("heard", "rejected")
+
+
+def test_deleting_an_approved_item_heard_in_a_conversation_keeps_it_as_rejected(client):
+    _heard(client, "heard", "Tôi thích trà.")
+    client.patch(f"{URL}/heard", json={"status": "active"})
+
+    assert client.delete(f"{URL}/heard").status_code == 204
+
+    assert client.get(URL).json() == {"items": []}
+    assert [item.status for item in client.app.state.memory._store.list_items("linh")] == ["rejected"]
+
+
+def test_a_proposal_of_another_user_can_be_neither_approved_nor_rejected(client):
+    _heard(client, "theirs", "Tôi thích trà.", user_id="an")
+
+    assert client.patch(f"{URL}/theirs", json={"status": "active"}).status_code == 404
+    assert client.delete(f"{URL}/theirs").status_code == 404
+    assert [item.status for item in client.app.state.memory._store.list_items("an")] == ["pending"]

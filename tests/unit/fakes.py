@@ -1,4 +1,5 @@
-"""Fakes for the orchestrator's neighbours: VAD, engine, camera, tracker, WebSocket."""
+"""Fakes for the orchestrator's neighbours: VAD, engine, camera, tracker, memory,
+WebSocket."""
 import asyncio
 import base64
 import json
@@ -6,11 +7,14 @@ import time
 from typing import AsyncIterator, Callable, Optional
 
 from backend.config import AppConfig
+from backend.core.contracts import Memory
 from backend.models import (
     AudioEvent,
+    ChatTurn,
     DoneEvent,
     EngineEvent,
     HeadRotation,
+    MemoryProfile,
     TrackingResult,
     TranscriptEvent,
     VADEvent,
@@ -180,8 +184,43 @@ class FakeClock:
         self.now += seconds
 
 
+class FakeMemory(Memory):
+    """Records what the orchestrator tells the memory: `calls` holds
+    ("record_turn", user id, conversation id, turn) and ("close_conversation", user id,
+    conversation id) in the order they ran. `gate` holds every call until it is set;
+    `error` is raised by every call."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+        self.gate: Optional[asyncio.Event] = None
+        self.error: Optional[Exception] = None
+        self.cancelled: list[str] = []
+
+    async def profile(self, user_id: str) -> MemoryProfile:
+        return MemoryProfile()
+
+    async def record_turn(self, user_id: str, conversation_id: str, turn: ChatTurn) -> None:
+        await self._run("record_turn", user_id, conversation_id, turn)
+
+    async def close_conversation(self, user_id: str, conversation_id: str) -> None:
+        await self._run("close_conversation", user_id, conversation_id)
+
+    async def _run(self, *call) -> None:
+        try:
+            if self.gate is not None:
+                await self.gate.wait()
+        except asyncio.CancelledError:
+            self.cancelled.append(call[0])
+            raise
+        self.calls.append(call)
+        if self.error:
+            raise self.error
+
+
 def build_orchestrator(
-    config: AppConfig, clock: Callable[[], float] = time.monotonic
+    config: AppConfig,
+    clock: Callable[[], float] = time.monotonic,
+    memory: Optional[Memory] = None,
 ) -> Orchestrator:
     """The orchestrator measures its conversation on `clock`."""
     return Orchestrator(
@@ -190,6 +229,7 @@ def build_orchestrator(
         engine=FakeEngine(),
         camera=FakeCamera(),
         tracker=FakeTracker(),
+        memory=memory,
         clock=clock,
     )
 

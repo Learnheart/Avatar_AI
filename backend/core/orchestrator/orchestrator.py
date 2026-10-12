@@ -11,7 +11,8 @@ Sends messages through: WSManager → frontend.
 It also owns the conversation, the session of one user: it opens at the first utterance,
 its turns are recorded here as they were spoken and handed to the engine with each new
 utterance, and it closes when the person left, stayed silent, changed, or asked for a
-new one.
+new one. For a logged-in user the memory is told about each recorded turn and about the
+close, in the background: no turn and no close waits for it.
 """
 import asyncio
 import base64
@@ -30,7 +31,7 @@ from opentelemetry import trace
 from backend.config import AppConfig
 from backend.core.conversation.engine import ConversationEngine
 from backend.core.conversation.history import Conversation, TurnRecord
-from backend.core.contracts import STTError
+from backend.core.contracts import Memory, STTError
 from backend.models import (
     MIC_SAMPLE_RATE,
     PCM_SAMPLE_WIDTH,
@@ -72,6 +73,11 @@ logger = get_logger("orchestrator")
 
 _MIC_BYTES_PER_SEC = MIC_SAMPLE_RATE * PCM_SAMPLE_WIDTH
 
+# The names of the background tasks that tell the memory about a conversation: one per
+# recorded turn (a write, quick) and one for its close (as long as an LLM request).
+_MEMORY_RECORD = "memory-record_turn"
+_MEMORY_CLOSE = "memory-close_conversation"
+
 
 class Orchestrator:
     def __init__(
@@ -81,12 +87,14 @@ class Orchestrator:
         engine: ConversationEngine,
         camera: Camera,
         tracker: HeadTracker,
+        memory: Optional[Memory] = None,
         capture: Optional[CaptureStore] = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        """With `capture`, every tracked frame, the audio of each turn and the perception
-        events are stored on disk. `clock` gives the seconds the conversation boundary
-        and the record of what was spoken are measured in."""
+        """With `memory`, the turns and the close of a logged-in user's conversation are
+        handed to it. With `capture`, every tracked frame, the audio of each turn and
+        the perception events are stored on disk. `clock` gives the seconds the
+        conversation boundary and the record of what was spoken are measured in."""
         self.config = config
         self._clock = clock
         self.ws_manager = WSManager(config)
@@ -95,6 +103,7 @@ class Orchestrator:
         self._engine = engine
         self._camera = camera
         self._tracker = tracker
+        self._memory = memory
         self._capture = capture
 
         # Blocking inference never runs on the event loop: one thread per model.
@@ -134,6 +143,11 @@ class Orchestrator:
         self._absent_since: Optional[float] = None
         # What the running turn has heard and spoken so far.
         self._turn_record: Optional[TurnRecord] = None
+        # What the memory is being told, in the background, each task named after its
+        # call. Per conversation the calls run one after the other, in the order they
+        # were made: `_memory_last` holds the latest of each conversation.
+        self._memory_jobs: set[asyncio.Task] = set()
+        self._memory_last: dict[str, asyncio.Task] = {}
 
     @property
     def state(self) -> AvatarState:
@@ -168,6 +182,7 @@ class Orchestrator:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks = []
+        await self._stop_memory_jobs()
 
         loop = asyncio.get_running_loop()
         await self._release("camera", asyncio.to_thread(self._camera.stop))
@@ -415,6 +430,12 @@ class Orchestrator:
             "sentences": len(turn.sentences),
             "interrupted": turn.interrupted,
         })
+        if self._memory is not None and conversation.user_id is not None:
+            self._tell_memory(
+                conversation.id,
+                _MEMORY_RECORD,
+                self._memory.record_turn(conversation.user_id, conversation.id, turn),
+            )
 
     async def _turn(self, pcm: bytes, conversation: Conversation, record: TurnRecord) -> None:
         playback_end = await asyncio.wait_for(
@@ -581,7 +602,79 @@ class Orchestrator:
             "reason": reason,
             "turns": len(conversation.history),
         })
+        if self._memory is not None and conversation.user_id is not None:
+            self._tell_memory(
+                conversation.id,
+                _MEMORY_CLOSE,
+                self._memory.close_conversation(conversation.user_id, conversation.id),
+            )
         await self.ws_manager.send(conversation_message(None))
+
+    # ── Memory: told in the background, for a logged-in user only ─────────
+
+    def _tell_memory(self, conversation_id: str, what: str, call: Awaitable[None]) -> None:
+        """Run a call of the memory about a conversation in the background, after the
+        calls already made about that conversation: its close is not read before its
+        last turn was written. Nothing waits for it."""
+        job = asyncio.create_task(
+            self._memory_job(self._memory_last.get(conversation_id), conversation_id, what, call),
+            name=what,
+        )
+        self._memory_jobs.add(job)
+        self._memory_last[conversation_id] = job
+        job.add_done_callback(lambda done: self._memory_job_done(conversation_id, done))
+
+    async def _memory_job(
+        self,
+        previous: Optional[asyncio.Task],
+        conversation_id: str,
+        what: str,
+        call: Awaitable[None],
+    ) -> None:
+        """One call of the memory. Its failure is logged: the memory never costs a turn."""
+        try:
+            if previous is not None:
+                # `wait` does not cancel what it waits for when this job is cancelled.
+                await asyncio.wait({previous})
+            await call
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error({
+                "msg": "Memory call failed",
+                "call": what,
+                "conversation_id": conversation_id,
+                "error": summarize_error(e, self.config.ERROR_SUMMARY_MAX_CHARS),
+            })
+        finally:
+            if asyncio.iscoroutine(call):
+                call.close()  # a call cancelled before it started is not left unawaited
+
+    def _memory_job_done(self, conversation_id: str, job: asyncio.Task) -> None:
+        self._memory_jobs.discard(job)
+        if self._memory_last.get(conversation_id) is job:
+            del self._memory_last[conversation_id]
+
+    async def _stop_memory_jobs(self) -> None:
+        """At shutdown: a conversation still being read is dropped (it is read again
+        at the next start), and the turns still being written are waited for, no longer
+        than MEMORY_TIMEOUT_SEC: a memory that answers no more does not hang the
+        shutdown. What is abandoned then is cancelled and logged."""
+        jobs = set(self._memory_jobs)
+        if not jobs:
+            return
+        for job in jobs:
+            if job.get_name() == _MEMORY_CLOSE:
+                job.cancel()
+        _, hanging = await asyncio.wait(jobs, timeout=self.config.MEMORY_TIMEOUT_SEC)
+        if hanging:
+            for job in hanging:
+                job.cancel()
+            logger.warning({
+                "msg": "Memory calls abandoned",
+                "calls": sorted(job.get_name() for job in hanging),
+                "timeout_sec": self.config.MEMORY_TIMEOUT_SEC,
+            })
 
     async def _reset_conversation(self) -> None:
         """The person asked for a new conversation. A running turn is cancelled as by a

@@ -34,7 +34,7 @@ def test_startup_creates_the_tables_in_an_empty_file(config, tmp_path):
     with TestClient(create_app(config, build_orchestrator(config))):
         pass
 
-    assert _tables(config.DATABASE_URL) == {"users", "memory_items", "imports"}
+    assert _tables(config.DATABASE_URL) == {"users", "memory_items", "imports", "conversations", "turns"}
 
 
 def test_a_second_start_changes_nothing_and_keeps_the_data(config):
@@ -45,7 +45,7 @@ def test_a_second_start_changes_nothing_and_keeps_the_data(config):
         user = client.app.state.users.get("linh")
 
     assert (user.display_name, user.created_at) == ("Linh", NOW)
-    assert _tables(config.DATABASE_URL) == {"users", "memory_items", "imports"}
+    assert _tables(config.DATABASE_URL) == {"users", "memory_items", "imports", "conversations", "turns"}
 
 
 def test_an_unreachable_database_fails_startup_with_the_reason(config, tmp_path):

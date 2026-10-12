@@ -12,7 +12,8 @@ Endpoints:
 
 Startup: validate config → telemetry (+ capture) → open the application database (its
          missing tables are created) → open the knowledge base → build modules
-         → start orchestrator
+         → start orchestrator → in the background, read the conversations an earlier
+         run left unread into the memory
 Shutdown: stop the orchestrator, which releases every module; close the knowledge base
           and the application database
 """
@@ -35,6 +36,7 @@ from backend.features.knowledge.api import create_knowledge_router
 from backend.features.knowledge.knowledge_base import KnowledgeBase
 from backend.features.knowledge.store import SqliteVecStore
 from backend.features.memory.api import create_memory_router
+from backend.features.memory.consolidation import MemoryConsolidation
 from backend.features.memory.imports import MemoryImports
 from backend.features.memory.memory import MemoryService
 from backend.features.memory.store import MemoryStore
@@ -57,9 +59,15 @@ def build_knowledge(config: AppConfig) -> KnowledgeBase:
     return KnowledgeBase(config, create_embedder(config), SqliteVecStore(config.KNOWLEDGE_DB_PATH))
 
 
-def build_memory(config: AppConfig, database: Database) -> MemoryService:
-    """The memory on the application database."""
-    return MemoryService(config, MemoryStore(database))
+def build_memory(config: AppConfig, database: Database, llm: LLM) -> MemoryService:
+    """The memory on the application database; the conversations of a logged-in user
+    are read into proposed items with the LLM it is given."""
+    store = MemoryStore(database)
+    memory = MemoryService(config, store)
+    memory.gather_with(
+        MemoryConsolidation(config, store, llm, forget_profile=memory.forget_profile)
+    )
+    return memory
 
 
 def build_imports(
@@ -98,6 +106,7 @@ def build_orchestrator(
         engine=engine,
         camera=Camera(config),
         tracker=HeadTracker(config),
+        memory=memory,
         capture=capture,
     )
 
@@ -135,10 +144,11 @@ def create_app(
             logger.error({"msg": "The application database cannot be opened", "error": str(e)})
             raise
         app.state.users = UsersStore(database)
-        # One LLM for the turns and for the imports: with a backup backend, a primary
-        # the turns found dead is not asked again by an import.
+        # One LLM for the turns, the imports and the reading of closed conversations:
+        # with a backup backend, a primary the turns found dead is not asked again in
+        # the background.
         llm = create_llm(config)
-        app.state.memory = memory or build_memory(config, database)
+        app.state.memory = memory or build_memory(config, database, llm)
         app.state.imports = build_imports(config, database, llm, app.state.memory)
         try:
             app.state.knowledge = knowledge or build_knowledge(config)
@@ -149,9 +159,18 @@ def create_app(
                 )
                 app.state.started_at = time.monotonic()
                 await app.state.orchestrator.start()
+                # In the background, so that the start does not wait for the LLM: what
+                # an earlier run left unread of the conversations.
+                gathering = asyncio.create_task(
+                    app.state.memory.consolidate_unfinished(), name="memory-startup"
+                )
                 logger.info({"msg": "System ready"})
 
-                yield
+                try:
+                    yield
+                finally:
+                    gathering.cancel()
+                    await asyncio.gather(gathering, return_exceptions=True)
 
                 logger.info({"msg": "Avatar AI shutting down"})
                 await app.state.orchestrator.stop()

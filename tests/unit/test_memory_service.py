@@ -36,11 +36,11 @@ class CountingStore(MemoryStore):
         self.reads = 0
         self.down = False
 
-    def list_items(self, user_id, status=None):
+    def list_items(self, user_id, *statuses):
         if self.down:
             raise DatabaseError("database is gone")
         self.reads += 1
-        return super().list_items(user_id, status)
+        return super().list_items(user_id, *statuses)
 
     def add_item(self, item):
         if self.down:
@@ -353,3 +353,40 @@ async def test_a_failing_store_raises_the_memory_error(memory, store):
         await memory.profile("linh")
     with pytest.raises(MemoryServiceError):
         await memory.add_item("linh", "identity", "Tên là Linh.")
+
+
+# ── What was gathered from conversations ──────────────────────────────────
+
+def _heard(item_id: str, status: str = "pending", **fields) -> MemoryItem:
+    values = {
+        "category": "preference", "text": "Tôi thích trà.", "source": "conversation",
+        "created_at": START, "updated_at": START,
+    }
+    return MemoryItem(id=item_id, user_id="linh", status=status, **{**values, **fields})
+
+
+async def test_a_proposed_item_is_listed_and_not_in_the_profile_until_it_is_approved(memory, store):
+    store.add_item(_heard("heard"))
+    assert (await memory.profile("linh")).items == 0  # cached
+
+    assert [item.status for item in await memory.list_items("linh")] == ["pending"]
+    approved = await memory.approve_item("linh", "heard")
+
+    assert approved.status == "active"
+    assert _lines(await memory.profile("linh")) == ["Tôi thích trà."]  # the cache was dropped
+
+
+async def test_a_rejected_item_is_neither_listed_nor_in_the_profile(memory, store):
+    store.add_item(_heard("refused", status="rejected"))
+    store.add_item(_heard("heard", status="active", text="Tôi thích cà phê."))
+    assert _lines(await memory.profile("linh")) == ["Tôi thích cà phê."]
+
+    assert await memory.delete_item("linh", "heard") is True
+
+    assert await memory.list_items("linh") == []
+    assert (await memory.profile("linh")).items == 0
+    assert {item.id: item.status for item in store.list_items("linh")} == {
+        "refused": "rejected", "heard": "rejected"
+    }
+    assert await memory.delete_item("linh", "refused") is False
+    assert await memory.approve_item("linh", "refused") is None

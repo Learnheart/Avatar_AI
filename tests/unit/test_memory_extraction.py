@@ -1,9 +1,15 @@
-"""What the LLM answered to an extraction request → validated items. Pure."""
+"""What the LLM answered to an extraction request → validated items or operations. Pure."""
 import json
 
 import pytest
 
-from backend.features.memory.extraction import ExtractedItem, InvalidExtraction, parse_items
+from backend.features.memory.extraction import (
+    ExtractedItem,
+    InvalidExtraction,
+    Operation,
+    parse_items,
+    parse_operations,
+)
 
 NAME = {"category": "identity", "text": "Tôi tên là Linh.", "evidence": "Mình là Linh"}
 TEA = {"category": "preference", "text": "Tôi thích trà.", "evidence": "thích uống trà"}
@@ -111,3 +117,78 @@ def test_invalid_json_or_prose_around_the_json_gives_nothing(answer):
 def test_json_that_is_not_an_array_gives_nothing(answer):
     with pytest.raises(InvalidExtraction):
         parse_items(json.dumps(answer), _clean)
+
+
+# ── Operations: what a conversation does to the items ─────────────────────
+
+KNOWN = ("1", "2")
+ADD = {"op": "add", **TEA}
+CONFIRM = {"op": "confirm", "id": "1"}
+REPLACE = {"op": "replace", "id": "2", **NAME}
+
+
+def _operations(answer) -> list[Operation]:
+    answer = answer if isinstance(answer, str) else json.dumps(answer)
+    return parse_operations(answer, _clean, KNOWN)
+
+
+def test_valid_json_gives_the_operations_in_the_order_of_the_answer():
+    assert _operations([ADD, CONFIRM, REPLACE]) == [
+        Operation("add", None, ExtractedItem("preference", "Tôi thích trà.", "thích uống trà")),
+        Operation("confirm", "1"),
+        Operation("replace", "2", ExtractedItem("identity", "Tôi tên là Linh.", "Mình là Linh")),
+    ]
+
+
+def test_an_id_may_be_answered_as_a_number():
+    assert _operations([{"op": "confirm", "id": 2}]) == [Operation("confirm", "2")]
+
+
+@pytest.mark.parametrize(
+    "dropped",
+    [
+        {"op": "add", **TEA, "category": "hobby"},  # unknown category
+        {"op": "add", "category": "preference"},  # no text
+        {"op": "add", "category": "preference", "text": "   "},
+        {"op": "add", "category": "preference", "text": "x" * 21},  # no valid item text
+        {"op": "replace", "id": "1", "category": "identity"},  # no text
+        {"op": "replace", "id": "9", **NAME},  # not an item of this user
+        {"op": "replace", **NAME},  # no id
+        {"op": "confirm", "id": "9"},
+        {"op": "confirm", "id": None},
+        {"op": "confirm", "id": True},
+        {"op": "confirm", "id": ["1"]},
+        {"op": "confirm"},
+        {"op": "delete", "id": "1"},  # no such operation
+        TEA,  # no operation at all
+        "confirm 1",
+        None,
+    ],
+)
+def test_an_operation_that_cannot_be_one_is_dropped_and_the_others_kept(dropped):
+    assert _operations([ADD, dropped, CONFIRM]) == _operations([ADD, CONFIRM])
+
+
+def test_an_add_ignores_an_id_and_a_confirm_ignores_an_item():
+    assert _operations([{**ADD, "id": "9"}, {**CONFIRM, **TEA}]) == _operations([ADD, CONFIRM])
+
+
+def test_an_empty_list_of_operations_is_accepted():
+    assert _operations("[]") == []
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "",
+        "Không có gì để ghi nhớ.",
+        f"```json\n{json.dumps([ADD])}\n```",
+        f"Đây là kết quả: {json.dumps([ADD])}",
+        json.dumps({"operations": [ADD]}),
+        json.dumps(ADD),
+        "[" + json.dumps(ADD),
+    ],
+)
+def test_an_answer_that_is_not_the_array_gives_no_operation(answer):
+    with pytest.raises(InvalidExtraction):
+        _operations(answer)

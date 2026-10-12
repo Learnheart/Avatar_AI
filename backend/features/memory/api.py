@@ -3,8 +3,9 @@ HTTP routes of the memory, used by the "Hồ sơ" page of the frontend.
 
   GET    /memory/items        → {"items": [...]}
   POST   /memory/items        {"category", "text"} → 201 + the item
-  PATCH  /memory/items/{id}   {"text"?, "category"?} → the item, or 404
-  DELETE /memory/items/{id}   → 204, or 404
+  PATCH  /memory/items/{id}   {"text"?, "category"?, "status"?: "active"} → the item,
+                              or 404; `status` approves a proposed (pending) item
+  DELETE /memory/items/{id}   → 204, or 404; also rejects a proposed item
 
   GET    /memory/imports               → {"imports": [...]}
   POST   /memory/imports               multipart field `file`, or field `text`
@@ -52,11 +53,13 @@ class NewItem(BaseModel):
 
 
 class ItemChanges(BaseModel):
-    """Body of PATCH: the fields to change. Any other field is refused."""
+    """Body of PATCH: the fields to change. Any other field is refused. `status` takes
+    one value: it approves an item proposed after a conversation."""
     model_config = ConfigDict(extra="forbid")
 
     text: Optional[str] = None
     category: Optional[str] = None
+    status: Optional[Literal["active"]] = None
 
 
 @contextmanager
@@ -114,12 +117,13 @@ def create_memory_router(config: AppConfig) -> APIRouter:
     async def change_item(
         request: Request, item_id: str, changes: ItemChanges, user_id: str = Depends(user)
     ) -> dict:
-        if changes.text is None and changes.category is None:
-            raise HTTPException(422, "Nothing to change: give a text or a category")
+        if changes.text is None and changes.category is None and changes.status is None:
+            raise HTTPException(422, "Nothing to change: give a text, a category or a status")
+        service = memory(request)
+        # `status` takes one value: it approves a proposed item.
+        change = service.update_item if changes.status is None else service.approve_item
         with _answering():
-            item = await memory(request).update_item(
-                user_id, item_id, changes.text, changes.category
-            )
+            item = await change(user_id, item_id, changes.text, changes.category)
         if item is None:
             raise HTTPException(404, "No such memory item")
         return item.to_dict()

@@ -12,8 +12,6 @@ given by `backend/main.py`.
 import asyncio
 import hashlib
 import json
-import re
-import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePath
@@ -25,6 +23,7 @@ from backend.config import AppConfig
 from backend.core.contracts import LLM, LLMError, MemoryServiceError
 from backend.features.memory.extraction import InvalidExtraction, parse_items
 from backend.features.memory.memory import item_text, one_line
+from backend.features.memory.reading import as_document, comparable, finish, quote
 from backend.features.memory.store import MemoryStore
 from backend.models import (
     MEMORY_SOURCE_IMPORT,
@@ -62,10 +61,6 @@ _CONTENT_TYPES = {
     ".pdf": "application/pdf",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
-
-# The name of the tags of MEMORY_IMPORT_DOCUMENT, read from its opening tag.
-_TAG_NAME = re.compile(r"<\s*(\w+)\s*>")
-
 
 class ImportTooLarge(ValueError):
     """The file is larger, or its text longer, than an import may be."""
@@ -249,7 +244,8 @@ class MemoryImports:
         max_chars = self.config.MEMORY_ITEM_MAX_CHARS
         prompt = self.config.MEMORY_IMPORT_PROMPT.format(max_chars=max_chars)
         try:
-            answer = await self._llm.complete(prompt, self._as_document(text))
+            document = as_document(self.config.MEMORY_IMPORT_DOCUMENT, text)
+            answer = await self._llm.complete(prompt, document)
         except LLMError as e:
             raise ImportExtractionFailed(f"The LLM failed: {e}") from e
         span.set_attribute("llm.answer", answer)
@@ -261,7 +257,7 @@ class MemoryImports:
             raise NothingToRemember(f"Nothing to remember in '{record.name}'")
 
         now = self._clock()
-        document = _comparable(text)
+        document = comparable(text)
         return [
             MemoryItem(
                 id=uuid.uuid4().hex,
@@ -274,24 +270,10 @@ class MemoryImports:
                 status=MEMORY_STATUS_ACTIVE,
                 source=MEMORY_SOURCE_IMPORT,
                 import_id=record.id,
-                evidence=_quote(found.evidence, document),
+                evidence=quote(found.evidence, document),
             )
             for position, found in enumerate(extracted)
         ]
-
-    def _as_document(self, text: str) -> str:
-        """The text as the LLM is given it: between the two tags the import prompt
-        names, so that it is read as material and not as instructions. Every writing of
-        those tags is taken out of the text first (opening or closing, any case, spaces
-        inside), again and again until none is left: removing one can join the pieces of
-        another. A document cannot close the block it is given in."""
-        template = self.config.MEMORY_IMPORT_DOCUMENT
-        name = _TAG_NAME.search(template).group(1)
-        tag = re.compile(rf"<\s*/?\s*{re.escape(name)}\s*>", re.IGNORECASE)
-        stripped = tag.sub("", text)
-        while stripped != text:
-            text, stripped = stripped, tag.sub("", stripped)
-        return template.format(text=text)
 
     async def _discard_import(self, record: MemoryImport) -> None:
         """Remove what a stopped import left: its row (with any item) and its object.
@@ -303,7 +285,7 @@ class MemoryImports:
                 (self._objects.delete, (record.object_key,)),
             ):
                 try:
-                    await _finish(call, *args)
+                    await finish(call, *args)
                 except (DatabaseError, ObjectStoreError) as e:
                     logger.error({
                         "msg": "A stopped import was not removed", "id": record.id, "error": str(e)
@@ -326,7 +308,7 @@ class MemoryImports:
 
     async def _call(self, call: Callable[..., T], *args) -> T:
         try:
-            return await _finish(call, *args)
+            return await finish(call, *args)
         except DatabaseError as e:
             raise MemoryServiceError(f"The memory store failed: {e}") from e
 
@@ -334,39 +316,6 @@ class MemoryImports:
         """Run a call of the object store. A missing object is a failure too: an import
         that is listed has its original."""
         try:
-            return await _finish(call, *args)
+            return await finish(call, *args)
         except ObjectStoreError as e:
             raise MemoryServiceError(f"The object store failed: {e}") from e
-
-
-def _comparable(text: str) -> str:
-    """The text as two writings of it are compared: on one line, letters composed."""
-    return unicodedata.normalize("NFC", one_line(text))
-
-
-def _quote(evidence: Optional[str], document: str) -> Optional[str]:
-    """The quote an item is said to come from, on one line, when the document (given
-    as `_comparable`) really holds it. The LLM may invent a quote, or be led by the
-    document to write something else there: such an item is kept without evidence."""
-    quote = one_line(evidence or "")
-    if not quote or _comparable(quote) not in document:
-        return None
-    return quote
-
-
-async def _finish(call: Callable[..., T], *args) -> T:
-    """Run a blocking call of a store in a thread and wait for its end, also when the
-    request is dropped meanwhile. A thread cannot be stopped: the cancellation is raised
-    once the call is over, so what it wrote is removed after it, never while it runs."""
-    task = asyncio.ensure_future(asyncio.to_thread(call, *args))
-    dropped = False
-    while not task.done():
-        try:
-            await asyncio.wait({task})
-        except asyncio.CancelledError:
-            dropped = True
-    if dropped:
-        if not task.cancelled():
-            task.exception()  # read, so that it is not reported as never retrieved
-        raise asyncio.CancelledError
-    return task.result()

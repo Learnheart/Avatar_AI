@@ -112,8 +112,12 @@ class User:
 # the avatar call each other. `preference`: answer style, topics. `personality`.
 MEMORY_CATEGORIES = ("identity", "addressing", "preference", "personality")
 MEMORY_STATUS_ACTIVE = "active"  # given to the LLM
+MEMORY_STATUS_PENDING = "pending"  # proposed after a conversation, not used until approved
+# A tombstone: the person rejected it. Not listed, not used, never proposed again.
+MEMORY_STATUS_REJECTED = "rejected"
 MEMORY_SOURCE_MANUAL = "manual"  # typed by the person on the profile page
 MEMORY_SOURCE_IMPORT = "import"  # read from a file or a pasted text the person gave
+MEMORY_SOURCE_CONVERSATION = "conversation"  # gathered from what the person said
 
 
 @dataclass
@@ -148,6 +152,24 @@ class MemoryItem:
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
+
+
+@dataclass(frozen=True)
+class StatedAgain:
+    """An existing memory item that a conversation stated again, as it was when the
+    conversation was read."""
+    item_id: str
+    status: str  # what the item was then: the count only moves while it still is
+    promote: bool  # a pending item that this statement makes active
+
+
+@dataclass
+class StoredTurn:
+    """One turn of a logged-in user's conversation, as the application database keeps it
+    until the conversation is consolidated."""
+    user_text: str
+    answer_text: str  # the sentences that were spoken, may be empty
+    stt_confidence: Optional[float]  # None when the backend gave none
 
 
 @dataclass

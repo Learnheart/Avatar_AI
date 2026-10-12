@@ -45,6 +45,11 @@ def test_defaults_load():
     assert config.LLM_COMPLETE_MAX_TOKENS == 2048
     assert config.MEMORY_IMPORT_MAX_FILE_MB == 5
     assert config.MEMORY_IMPORT_MAX_CHARS == 20000
+    assert config.MEMORY_PROMOTE_SEEN_COUNT == 2
+    assert config.MEMORY_MIN_STT_CONFIDENCE == 0.6
+    assert config.MEMORY_TRANSCRIPT_TTL_DAYS == 7
+    assert config.MEMORY_CONSOLIDATE_MAX_CHARS == 20000
+    assert config.MEMORY_EXTRACT_MAX_REJECTED == 50
 
 
 def test_missing_groq_api_key_fails_validation():
@@ -122,6 +127,15 @@ def test_invalid_values_fail_validation(overrides):
         {"MEMORY_IMPORT_MAX_FILE_MB": -1},
         {"MEMORY_IMPORT_MAX_FILE_MB": float("nan")},
         {"MEMORY_IMPORT_MAX_CHARS": 0},
+        {"MEMORY_PROMOTE_SEEN_COUNT": 0},
+        {"MEMORY_MIN_STT_CONFIDENCE": -0.1},
+        {"MEMORY_MIN_STT_CONFIDENCE": 1.1},
+        {"MEMORY_MIN_STT_CONFIDENCE": float("nan")},
+        {"MEMORY_TRANSCRIPT_TTL_DAYS": 0},
+        {"MEMORY_TRANSCRIPT_TTL_DAYS": -1},
+        {"MEMORY_TRANSCRIPT_TTL_DAYS": float("inf")},
+        {"MEMORY_CONSOLIDATE_MAX_CHARS": 0},
+        {"MEMORY_EXTRACT_MAX_REJECTED": -1},
     ],
 )
 def test_invalid_conversation_settings_fail_validation(overrides):
@@ -141,7 +155,13 @@ def test_the_edges_of_the_conversation_settings_are_accepted():
         LLM_COMPLETE_MAX_TOKENS=1,
         MEMORY_IMPORT_MAX_CHARS=1,
         MEMORY_IMPORT_MAX_FILE_MB=0.001,
+        MEMORY_PROMOTE_SEEN_COUNT=1,
+        MEMORY_MIN_STT_CONFIDENCE=0.0,
+        MEMORY_TRANSCRIPT_TTL_DAYS=0.01,
+        MEMORY_CONSOLIDATE_MAX_CHARS=1,
+        MEMORY_EXTRACT_MAX_REJECTED=0,
     ).validate()
+    AppConfig(GROQ_API_KEY="test-key", MEMORY_MIN_STT_CONFIDENCE=1.0).validate()
 
 
 def test_the_database_url_never_appears_in_repr():

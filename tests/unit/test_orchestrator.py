@@ -26,6 +26,7 @@ from tests.unit.fakes import (
     START_END,
     TTS_RATE,
     FakeClock,
+    FakeMemory,
     FakeWebSocket,
     audio_message,
     build_orchestrator,
@@ -1333,3 +1334,201 @@ async def test_reset_with_no_conversation_open_changes_nothing_and_sends_no_erro
     assert orch.state == AvatarState.IDLE
     assert ws.turn_messages() == before
     assert orch._vad.resets == 1  # the one of the connect
+
+
+# ── The memory is told, in the background, for a logged-in user only ──────
+
+@pytest.fixture
+def memory() -> FakeMemory:
+    return FakeMemory()
+
+
+@pytest.fixture
+async def remembering(config, clock, memory) -> AsyncIterator[Orchestrator]:
+    """An orchestrator wired to a memory, with a logged-in user connected."""
+    orchestrator = build_orchestrator(config, clock, memory)
+    await orchestrator.start()
+    yield orchestrator
+    await orchestrator.stop()
+
+
+async def _connect(orch: Orchestrator, user_id=None) -> FakeWebSocket:
+    websocket = FakeWebSocket()
+    await orch.handle_connect(websocket, user_id=user_id)
+    return websocket
+
+
+async def _told(orch: Orchestrator) -> None:
+    """Everything the memory was told has run."""
+    await wait_until(lambda: not orch._memory_jobs)
+
+
+async def test_a_logged_in_user_s_turn_is_handed_to_the_memory(remembering, memory):
+    ws = await _connect(remembering, "user-7")
+
+    await _complete_turn(remembering, ws)
+    await _told(remembering)
+
+    conversation = remembering._conversation
+    assert memory.calls == [
+        ("record_turn", "user-7", conversation.id, ChatTurn("xin chào", ("Xin chào.",)))
+    ]
+
+
+async def test_the_turn_does_not_wait_for_the_memory(remembering, memory):
+    memory.gate = asyncio.Event()  # the memory hangs
+    ws = await _connect(remembering, "user-7")
+
+    await _complete_turn(remembering, ws)
+    await _complete_turn(remembering, ws)
+
+    assert remembering.state == AvatarState.IDLE
+    assert memory.calls == []
+    memory.gate.set()
+    await _told(remembering)
+    assert [call[0] for call in memory.calls] == ["record_turn", "record_turn"]
+
+
+async def test_a_failing_memory_is_logged_and_costs_no_turn(remembering, memory, caplog):
+    memory.error = RuntimeError("database is gone")
+    ws = await _connect(remembering, "user-7")
+
+    with caplog.at_level(logging.ERROR, logger="orchestrator"):
+        await _complete_turn(remembering, ws)
+        await _told(remembering)
+        await _complete_turn(remembering, ws)
+        await _told(remembering)
+
+    assert ws.of_type("error") == []
+    assert len(remembering._conversation.history) == 2
+    failures = [r.msg for r in caplog.records if r.msg.get("msg") == "Memory call failed"]
+    assert [failure["call"] for failure in failures] == ["memory-record_turn"] * 2
+
+
+@pytest.mark.parametrize("reason", ["idle", "absence", "reset", "user_changed"])
+async def test_a_logged_in_user_s_closed_conversation_is_handed_to_the_memory(
+    remembering, memory, clock, config, reason
+):
+    ws = await _connect(remembering, "user-7")
+    if reason == "absence":
+        remembering._camera.connected = True  # and no frame: nobody is seen
+    await _complete_turn(remembering, ws)
+    conversation = remembering._conversation
+
+    if reason == "idle":
+        clock.advance(config.CONVERSATION_IDLE_SEC + 1)
+        await _closed(remembering)
+    elif reason == "absence":
+        assert config.CONVERSATION_ABSENCE_SEC < config.CONVERSATION_IDLE_SEC
+        clock.advance(config.CONVERSATION_ABSENCE_SEC + 1)
+        await _closed(remembering)
+    elif reason == "reset":
+        await remembering.handle_client_message(RESET)
+    else:
+        await _connect(remembering, "user-8")
+    await _told(remembering)
+
+    assert [call[:3] for call in memory.calls] == [
+        ("record_turn", "user-7", conversation.id),
+        ("close_conversation", "user-7", conversation.id),
+    ]
+
+
+async def test_the_close_is_read_after_the_interrupted_turn_was_written(
+    remembering, memory, config
+):
+    """A reset during a turn: the turn is recorded as interrupted and the conversation
+    closed in one go, and the memory hears of them in that order, however slow it is."""
+    memory.gate = asyncio.Event()
+    ws = await _connect(remembering, "user-7")
+    await _thinking_after_the_transcript(remembering, ws)
+    conversation = remembering._conversation
+
+    await remembering.handle_client_message(RESET)
+    assert memory.calls == []  # nothing was awaited
+    memory.gate.set()
+    await _told(remembering)
+
+    assert memory.calls == [
+        ("record_turn", "user-7", conversation.id, ChatTurn("xin chào", (), True, None)),
+        ("close_conversation", "user-7", conversation.id),
+    ]
+
+
+async def test_a_failed_record_does_not_stop_the_close(remembering, memory):
+    memory.error = RuntimeError("database is gone")
+    ws = await _connect(remembering, "user-7")
+    await _complete_turn(remembering, ws)
+
+    await remembering.handle_client_message(RESET)
+    await _told(remembering)
+
+    assert [call[0] for call in memory.calls] == ["record_turn", "close_conversation"]
+    assert remembering._memory_last == {}
+
+
+async def test_closing_a_guest_s_conversation_tells_the_memory_nothing(
+    remembering, memory, clock, config
+):
+    ws = await _connect(remembering)  # a guest
+
+    await _complete_turn(remembering, ws)
+    clock.advance(config.CONVERSATION_IDLE_SEC + 1)
+    await _closed(remembering)
+    await _complete_turn(remembering, ws)
+    await remembering.handle_client_message(RESET)
+
+    assert remembering._memory_jobs == set()
+    assert memory.calls == []
+
+
+async def test_a_turn_in_which_nothing_was_understood_is_not_handed_to_the_memory(
+    remembering, memory
+):
+    await _connect(remembering, "user-7")
+    remembering._engine.events = [TranscriptEvent(""), DoneEvent()]
+
+    await _send(remembering, chunk(START), chunk(END))
+    await _reach(remembering, AvatarState.IDLE)
+    await wait_until(lambda: not remembering._turn_running())
+
+    assert remembering._memory_jobs == set()
+    assert memory.calls == []
+
+
+async def test_stopping_waits_for_the_turns_and_drops_a_conversation_being_read(config, clock):
+    memory = FakeMemory()
+    orch = build_orchestrator(config, clock, memory)
+    await orch.start()
+    ws = await _connect(orch, "user-7")
+    await _complete_turn(orch, ws)
+    await _told(orch)
+    memory.gate = asyncio.Event()  # from now on the memory hangs
+    await orch.handle_client_message(RESET)  # the close is being read
+    await _complete_turn(orch, ws)  # a turn of the next conversation is being written
+    asyncio.get_running_loop().call_later(0.05, memory.gate.set)
+
+    await orch.stop()
+
+    assert orch._memory_jobs == set()
+    assert memory.cancelled == ["close_conversation"]
+    assert [call[0] for call in memory.calls] == ["record_turn", "record_turn"]
+
+
+async def test_stopping_does_not_wait_longer_than_the_memory_timeout(config, clock, caplog):
+    """A memory call that hangs (a database that answers no more) does not hang the
+    shutdown: past MEMORY_TIMEOUT_SEC it is abandoned, and the log says which."""
+    config.MEMORY_TIMEOUT_SEC = 0.05
+    memory = FakeMemory()
+    memory.gate = asyncio.Event()  # never set: every call hangs
+    orch = build_orchestrator(config, clock, memory)
+    await orch.start()
+    ws = await _connect(orch, "user-7")
+    await _complete_turn(orch, ws)
+
+    with caplog.at_level(logging.WARNING, logger="orchestrator"):
+        await asyncio.wait_for(orch.stop(), timeout=2.0)
+
+    (abandoned,) = [r.msg for r in caplog.records if r.msg.get("msg") == "Memory calls abandoned"]
+    assert abandoned["calls"] == ["memory-record_turn"]
+    assert memory.calls == []
