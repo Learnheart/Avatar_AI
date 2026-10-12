@@ -431,6 +431,22 @@
       border-left: 2px solid rgba(108, 99, 255, 0.6);
     }
 
+    /* Proposals: what the avatar heard and the person has not confirmed */
+    #profile-proposals { border-color: rgba(255, 180, 0, 0.45); }
+    #profile-proposals[hidden] { display: none; }
+    .profile-proposal { flex-wrap: wrap; }
+    .profile-proposal .profile-item-content { flex: 1 1 260px; }
+    .profile-proposal .profile-item-source { margin: 0 0 2px; }
+    .profile-proposal .profile-edit-input { width: 100%; }
+    .profile-proposal-replaces {
+      margin-top: 4px;
+      font-size: 12px;
+      line-height: 1.45;
+      opacity: 0.75;
+      overflow-wrap: anywhere;
+    }
+    .profile-proposal-replaces s { opacity: 0.8; }
+
     /* Imports: a description of the person, as a file or a pasted text */
     .profile-block > .profile-hint { margin: -8px 0 16px; }
 
@@ -584,6 +600,16 @@
         Cần đăng nhập để xem và sửa hồ sơ. Khi chưa đăng nhập, avatar không ghi nhớ gì về bạn.
       </div>
       <div id="profile-body" hidden>
+        <!-- Proposals: gathered from the conversations, shown while there is one -->
+        <section class="profile-block" id="profile-proposals"
+          aria-labelledby="profile-proposals-title" hidden>
+          <h2 id="profile-proposals-title"></h2>
+          <p class="profile-hint">
+            Avatar chưa dùng những điều này khi trò chuyện. Chọn "Ghi nhớ" để đưa vào hồ sơ,
+            "Bỏ qua" nếu không đúng.
+          </p>
+          <ul id="profile-proposal-list" class="profile-list"></ul>
+        </section>
         <section class="profile-block">
           <h2>Bạn là ai</h2>
           <div class="profile-groups">

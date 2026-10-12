@@ -97,6 +97,51 @@ export function importErrorMessage(status, maxFileMb) {
   }
 }
 
+// ── Proposals ───────────────────────────────────────────────────────────────
+
+/**
+ * What the avatar gathered from the conversations and the person has not confirmed
+ * (the `pending` items), the oldest first: the order they were heard in. Proposals
+ * created at the same time, or without a readable date, keep the order of the API.
+ */
+export function proposals(items) {
+  const time = (item) => {
+    const created = Date.parse(item.created_at ?? '')
+    return Number.isNaN(created) ? Infinity : created
+  }
+  return Object.values(groupItems(items).pending)
+    .flat()
+    .map((item) => ({ item, time: time(item), index: (items ?? []).indexOf(item) }))
+    .sort((a, b) => (a.time === b.time ? a.index - b.index : a.time < b.time ? -1 : 1))
+    .map((entry) => entry.item)
+}
+
+/**
+ * The item a proposal would replace when it is approved: the active item named by its
+ * `replaces_id`, or null when it replaces nothing or that item is no longer listed
+ * (deleted meanwhile) — the proposal is then shown as a plain one.
+ */
+export function replacedItem(proposal, items) {
+  if (proposal.replaces_id == null) return null
+  const active = Object.values(groupItems(items).active).flat()
+  return active.find((item) => item.id === proposal.replaces_id) ?? null
+}
+
+/** The title of the proposals block, with their number. */
+export function proposalsHeading(count) {
+  return `Avatar nghe được, chưa xác nhận (${count})`
+}
+
+/** What the page says after a proposal was approved; `replaced`: it took an item's place. */
+export function approvedMessage(replaced) {
+  return replaced ? 'Đã ghi nhớ, thay cho mục cũ' : 'Đã ghi nhớ'
+}
+
+/** What the page says after a proposal was rejected. */
+export function rejectedMessage() {
+  return 'Đã bỏ qua, avatar sẽ không đề xuất lại điều này'
+}
+
 // ── Imports ─────────────────────────────────────────────────────────────────
 
 /**

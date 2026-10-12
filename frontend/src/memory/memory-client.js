@@ -64,6 +64,16 @@ export class MemoryClient {
     return response.json()
   }
 
+  /**
+   * Approve a proposal (a pending item): it becomes active, and the item it proposed
+   * to replace is gone. `changes` ({ text?, category? }) corrects it in the same call.
+   * Resolves with the item.
+   */
+  async approve(id, changes = {}) {
+    return this.update(id, { ...changes, status: 'active' })
+  }
+
+  /** Delete an item; for a proposal, this rejects it. */
   async remove(id) {
     await request(`${ITEMS_URL}/${encodeURIComponent(id)}`, { method: 'DELETE' })
   }

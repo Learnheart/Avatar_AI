@@ -12,6 +12,7 @@ import {
   STATUSES,
   UNAUTHORIZED,
   apiErrorMessage,
+  approvedMessage,
   categoryLabel,
   fileRefusal,
   formatDate,
@@ -21,6 +22,10 @@ import {
   importedMessage,
   itemCountLabel,
   itemSourceLabel,
+  proposals,
+  proposalsHeading,
+  rejectedMessage,
+  replacedItem,
   sourceLabel,
 } from '../src/memory/format.js'
 
@@ -197,4 +202,84 @@ test('itemSourceLabel names the import of an item while that import is listed', 
   assert.equal(itemSourceLabel(imported, undefined), sourceLabel('import'))
   assert.equal(itemSourceLabel({ source: 'import', import_id: null }, imports), sourceLabel('import'))
   assert.equal(itemSourceLabel({ source: 'manual', import_id: null }, imports), 'Tự nhập')
+})
+
+// ── Proposals ───────────────────────────────────────────────────────────────
+
+function proposal(id, created_at, extra = {}) {
+  return { ...item(id, 'preference', 'pending', 'conversation'), created_at, ...extra }
+}
+
+test('proposals are the pending items, the oldest first, whatever their category', () => {
+  const listed = proposals([
+    item('a', 'identity'),
+    proposal('new', '2026-10-13T09:00:00+00:00'),
+    proposal('old', '2026-10-11T09:00:00+00:00', { category: 'identity' }),
+    proposal('mid', '2026-10-12T09:00:00+00:00', { category: 'personality' }),
+    { ...item('r', 'preference', 'rejected', 'conversation'), created_at: '2026-10-01T09:00:00Z' },
+  ])
+
+  assert.deepEqual(ids(listed), ['old', 'mid', 'new'])
+})
+
+test('proposals compare dates as times, not as texts', () => {
+  const listed = proposals([
+    proposal('later', '2026-10-12T09:00:00+00:00'),
+    proposal('earlier', '2026-10-12T10:00:00+07:00'),   // 03:00 UTC
+  ])
+
+  assert.deepEqual(ids(listed), ['earlier', 'later'])
+})
+
+test('proposals without a readable date, or of the same time, keep the order of the API', () => {
+  const same = '2026-10-12T09:00:00Z'
+  const listed = proposals([
+    proposal('x', undefined),
+    proposal('b', same, { category: 'personality' }),
+    proposal('y', 'not a date'),
+    proposal('a', same, { category: 'identity' }),
+  ])
+
+  assert.deepEqual(ids(listed), ['b', 'a', 'x', 'y'])
+})
+
+test('proposals are empty when nothing is pending', () => {
+  assert.deepEqual(proposals([item('a', 'identity')]), [])
+  assert.deepEqual(proposals([]), [])
+  assert.deepEqual(proposals(undefined), [])
+})
+
+test('replacedItem is the active item a proposal would replace', () => {
+  const old = item('a', 'preference')
+  const items = [old, item('b', 'identity'), proposal('p', undefined, { replaces_id: 'a' })]
+
+  assert.equal(replacedItem(items[2], items), old)
+})
+
+test('replacedItem is null for a plain proposal and when the item is no longer active', () => {
+  const other = proposal('q', undefined)
+  const items = [item('a', 'preference'), other]
+
+  assert.equal(replacedItem(proposal('p', undefined, { replaces_id: null }), items), null)
+  assert.equal(replacedItem(proposal('p', undefined), items), null)
+  assert.equal(replacedItem(proposal('p', undefined, { replaces_id: 'gone' }), items), null)
+  // Another proposal is not something to replace.
+  assert.equal(replacedItem(proposal('p', undefined, { replaces_id: 'q' }), items), null)
+  assert.equal(replacedItem(proposal('p', undefined, { replaces_id: 'a' }), undefined), null)
+})
+
+test('proposalsHeading says they are heard, not confirmed, and how many', () => {
+  assert.match(proposalsHeading(3), /nghe được/)
+  assert.match(proposalsHeading(3), /chưa xác nhận/)
+  assert.match(proposalsHeading(3), /3/)
+  assert.match(proposalsHeading(1), /1/)
+})
+
+test('the messages after a proposal tell approve, replace and reject apart', () => {
+  const messages = [approvedMessage(false), approvedMessage(true), rejectedMessage()]
+
+  assert.match(messages[0], /ghi nhớ/)
+  assert.match(messages[1], /thay/)
+  assert.match(messages[2], /bỏ qua/)
+  assert.equal(new Set(messages).size, 3)
 })

@@ -2,7 +2,9 @@
  * Profile page — what the avatar knows about the person, laid out as their
  * configuration: who they are and how to address them, then their preferences and
  * personality. Each group is a list with an "add" row; an item is edited in place or
- * deleted, and shows where it comes from. Under the lists, the imports: a description
+ * deleted, and shows where it comes from. Above the lists, while there is one, the
+ * proposals: what the avatar heard in a conversation and does not use until the person
+ * approves it (corrected or not) or rejects it. Under the lists, the imports: a description
  * of the person given as a file or a pasted text, which the backend reads into items,
  * and the list of what was given, each with its original.
  *
@@ -22,6 +24,7 @@ import {
 import {
   CATEGORIES,
   UNAUTHORIZED,
+  approvedMessage,
   categoryLabel,
   fileRefusal,
   groupItems,
@@ -29,6 +32,10 @@ import {
   importedMessage,
   itemCountLabel,
   itemSourceLabel,
+  proposals,
+  proposalsHeading,
+  rejectedMessage,
+  replacedItem,
 } from './format.js'
 
 // What to write in a group, shown under its title and in its "add" field.
@@ -85,8 +92,13 @@ export class ProfilePage {
     this._lists = {}        // category → <ul>
     this._addInputs = {}    // category → the field of its "add" row
     this._items = []
-    this._editingId = null  // the item being edited in place, one at a time
+    this._editingId = null  // the item or proposal being edited in place, one at a time
     this._draft = null      // what was typed in that edit, kept across redraws
+    this._busy = new Set()  // ids of the items with a request running: their rows wait
+
+    this._proposals = document.getElementById('profile-proposals')
+    this._proposalsTitle = document.getElementById('profile-proposals-title')
+    this._proposalList = document.getElementById('profile-proposal-list')
 
     this._imports = []
     this._importDrop = document.getElementById('profile-import-drop')
@@ -231,6 +243,67 @@ export class ProfilePage {
   _stopEditing() {
     this._editingId = null
     this._draft = null
+  }
+
+  /**
+   * Run the request of one item or proposal. Until it has answered, the row of that
+   * item takes no action, also when it is redrawn meanwhile (a change elsewhere, the
+   * page opened again): one request per item at a time.
+   */
+  async _request(id, send) {
+    this._busy.add(id)
+    try {
+      return await send()
+    } finally {
+      this._busy.delete(id)
+    }
+  }
+
+  // ── Proposals ───────────────────────────────────────────────────────────
+
+  /**
+   * Approve a proposal, with `changes` ({ text }) when the person corrected it first:
+   * one call. `index` is its place among the proposals, for the keyboard afterwards.
+   */
+  async _approve(item, index, changes = {}) {
+    const replaced = replacedItem(item, this._items) !== null
+    await this._change(async () => {
+      await this._request(item.id, () => this._client.approve(item.id, changes))
+      if (this._editingId === item.id) this._stopEditing()
+    }, approvedMessage(replaced))
+    this._afterProposal(item, index)
+  }
+
+  async _reject(item, index) {
+    await this._change(
+      () => this._request(item.id, () => this._client.remove(item.id)), rejectedMessage(),
+    )
+    this._afterProposal(item, index)
+  }
+
+  /**
+   * Where the keyboard goes once a proposal was handled and the page redrawn: on the
+   * proposal that took its place (the next one, or the last one left), on "Đóng" when
+   * none is left. A proposal still listed was refused: the keyboard stays on it, in its
+   * field when it was being corrected.
+   */
+  _afterProposal(item, index) {
+    if (this._body.hidden) return this._close.focus()   // a guest by now
+    const left = proposals(this._items)
+    if (left.some((entry) => entry.id === item.id)) {
+      if (this._editingId === item.id) this._focusEdit()
+      else this._focusProposal(item.id)
+      return
+    }
+    const next = left[Math.min(index, left.length - 1)]
+    if (next) this._focusProposal(next.id)
+    else this._close.focus()
+  }
+
+  /** Put the keyboard on a proposal ("Ghi nhớ" unless another control is asked for). */
+  _focusProposal(id, selector = 'button') {
+    const rows = [...this._proposalList.querySelectorAll('.profile-proposal')]
+    rows.find((row) => row.dataset.id === String(id))?.querySelector(selector)?.focus()
   }
 
   // ── Imports ─────────────────────────────────────────────────────────────
@@ -401,7 +474,8 @@ export class ProfilePage {
   _render() {
     // An item that is gone (deleted elsewhere) is no longer being edited.
     if (!this._items.some((item) => item.id === this._editingId)) this._stopEditing()
-    // This page shows what the avatar uses; what it has not confirmed is not listed.
+    this._renderProposals()
+    // The lists show what the avatar uses; what it has not confirmed is above them.
     const active = groupItems(this._items).active
     for (const category of CATEGORIES) {
       const rows = active[category].map((item) => (
@@ -416,6 +490,122 @@ export class ProfilePage {
       this._lists[category].replaceChildren(...rows)
     }
     this._renderImports()
+  }
+
+  /** The proposals block, on top of the lists and only while there is a proposal. */
+  _renderProposals() {
+    const pending = proposals(this._items)
+    this._proposals.hidden = pending.length === 0
+    this._proposalsTitle.textContent = proposalsHeading(pending.length)
+    this._proposalList.replaceChildren(...pending.map((item, index) => (
+      item.id === this._editingId
+        ? this._proposalEditRow(item, index)
+        : this._proposalRow(item, index)
+    )))
+  }
+
+  /**
+   * What a proposal says, around `main` (its text, or the field correcting it): its
+   * category, the sentence it was heard in, and the item it would replace.
+   */
+  _proposalContent(item, main) {
+    const category = document.createElement('div')
+    category.className = 'profile-item-source'
+    category.textContent = categoryLabel(item.category)
+    const content = document.createElement('div')
+    content.className = 'profile-item-content'
+    content.append(category, main)
+    if (item.evidence) {
+      const quote = document.createElement('q')
+      quote.className = 'profile-item-quote'
+      quote.textContent = item.evidence
+      content.append(quote)
+    }
+    const replaced = replacedItem(item, this._items)
+    if (replaced) {
+      const old = document.createElement('s')
+      old.textContent = replaced.text
+      const replaces = document.createElement('div')
+      replaces.className = 'profile-proposal-replaces'
+      replaces.append('Thay cho: ', old)
+      content.append(replaces)
+    }
+    return content
+  }
+
+  _proposalRow(item, index) {
+    const row = document.createElement('li')
+    row.className = 'profile-item profile-proposal'
+    row.dataset.id = item.id
+
+    const text = document.createElement('div')
+    text.className = 'profile-item-text'
+    text.textContent = item.text
+
+    const approve = button('Ghi nhớ', 'profile-button primary')
+    const edit = button('Sửa', 'profile-button profile-proposal-edit')
+    const reject = button('Bỏ qua', 'profile-button danger')
+    const busy = () => { approve.disabled = edit.disabled = reject.disabled = true }
+    if (this._busy.has(item.id)) busy()   // redrawn while its request is running
+    approve.addEventListener('click', () => {
+      busy()
+      this._approve(item, index)
+    })
+    edit.addEventListener('click', () => {
+      this._editingId = item.id
+      this._draft = null
+      this._say('')
+      this._render()
+      this._focusEdit()
+    })
+    reject.addEventListener('click', () => {
+      busy()
+      this._reject(item, index)
+    })
+
+    row.append(this._proposalContent(item, text), approve, edit, reject)
+    return row
+  }
+
+  /** A proposal being corrected: saving it approves it, with the corrected text. */
+  _proposalEditRow(item, index) {
+    const row = document.createElement('li')
+    row.className = 'profile-item profile-proposal editing'
+    row.dataset.id = item.id
+
+    const input = textField('profile-input profile-edit-input', 'Sửa nội dung trước khi ghi nhớ')
+    input.value = this._draft ?? item.text
+    input.addEventListener('input', () => { this._draft = input.value })
+    const save = button('Lưu và ghi nhớ', 'profile-button primary')
+    const cancel = button('Huỷ', 'profile-button')
+    save.disabled = cancel.disabled = this._busy.has(item.id)
+
+    const stop = () => {
+      this._stopEditing()
+      this._render()
+      this._focusProposal(item.id, '.profile-proposal-edit')   // back on "Sửa"
+    }
+    const submit = () => {
+      const text = input.value.trim()
+      if (!text || save.disabled) return
+      save.disabled = cancel.disabled = true
+      // A text left as it was is approved as it is.
+      this._approve(item, index, text === item.text ? {} : { text })
+    }
+    save.addEventListener('click', submit)
+    cancel.addEventListener('click', stop)
+    row.addEventListener('keydown', (event) => {
+      if (event.isComposing) return   // the key belongs to the input method (Telex, VNI)
+      if (event.key === 'Escape') {
+        event.preventDefault()   // cancels the correction, does not close the page
+        if (!save.disabled) stop()   // while it is being saved, Escape does nothing
+      } else if (event.key === 'Enter' && event.target === input) {
+        submit()
+      }
+    })
+
+    row.append(this._proposalContent(item, input), save, cancel)
+    return row
   }
 
   _renderImports() {
@@ -558,9 +748,12 @@ export class ProfilePage {
       this._focusEdit()
     })
     const remove = button('Xoá', 'profile-button danger')
+    edit.disabled = remove.disabled = this._busy.has(item.id)
     remove.addEventListener('click', async () => {
       edit.disabled = remove.disabled = true
-      const removed = await this._change(() => this._client.remove(item.id), 'Đã xoá')
+      const removed = await this._change(
+        () => this._request(item.id, () => this._client.remove(item.id)), 'Đã xoá',
+      )
       // The row is gone: the keyboard goes to the "add" field of its group. After a
       // refused delete it stays on the item, whose row was redrawn.
       if (removed) this._addInputs[item.category].focus()
@@ -580,6 +773,7 @@ export class ProfilePage {
     input.addEventListener('input', () => { this._draft = input.value })
     const save = button('Lưu', 'profile-button primary')
     const cancel = button('Huỷ', 'profile-button')
+    save.disabled = cancel.disabled = this._busy.has(item.id)
 
     const stop = () => {
       this._stopEditing()
@@ -592,8 +786,8 @@ export class ProfilePage {
       if (text === item.text) return stop()
       save.disabled = cancel.disabled = true
       const saved = await this._change(async () => {
-        await this._client.update(item.id, { text })
-        this._stopEditing()
+        await this._request(item.id, () => this._client.update(item.id, { text }))
+        if (this._editingId === item.id) this._stopEditing()
       }, 'Đã lưu')
       // A refused edit stays open with what was typed, under the error message.
       if (saved) this._focusItem(item.id)
@@ -606,7 +800,7 @@ export class ProfilePage {
       if (event.isComposing) return   // the key belongs to the input method (Telex, VNI)
       if (event.key === 'Escape') {
         event.preventDefault()   // cancels the edit, does not close the page
-        stop()
+        if (!save.disabled) stop()   // while it is being saved, Escape does nothing
       } else if (event.key === 'Enter' && event.target === input) {
         submit()
       }
