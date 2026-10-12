@@ -7,10 +7,14 @@ Endpoints:
   WS   /ws         — the single WebSocket endpoint for all realtime communication
   /knowledge/...   — upload, list and delete the documents of the knowledge base
                      (`backend/features/knowledge/api.py`)
+  /memory/...      — what the avatar remembers about the logged-in user
+                     (`backend/features/memory/api.py`)
 
-Startup: validate config → telemetry (+ capture) → open the knowledge base → build modules
+Startup: validate config → telemetry (+ capture) → open the application database (its
+         missing tables are created) → open the knowledge base → build modules
          → start orchestrator
 Shutdown: stop the orchestrator, which releases every module; close the knowledge base
+          and the application database
 """
 import asyncio
 import time
@@ -23,11 +27,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.config import AppConfig
-from backend.core.contracts import Knowledge
+from backend.core.contracts import Knowledge, Memory
 from backend.core.conversation.engine import ConversationEngine
+from backend.features.accounts.identity import current_user_id
+from backend.features.accounts.store import UsersStore
 from backend.features.knowledge.api import create_knowledge_router
 from backend.features.knowledge.knowledge_base import KnowledgeBase
 from backend.features.knowledge.store import SqliteVecStore
+from backend.features.memory.api import create_memory_router
+from backend.features.memory.memory import MemoryService
+from backend.features.memory.store import MemoryStore
 from backend.providers.catalog import create_embedder, create_llm, create_stt, create_tts
 from backend.core.orchestrator import Orchestrator
 from backend.core.perception.camera import Camera
@@ -35,6 +44,7 @@ from backend.core.perception.tracking import HeadTracker
 from backend.core.perception.vad import VADModule
 from backend.utils import telemetry
 from backend.utils.capture import CaptureSpans, CaptureStore
+from backend.utils.database import Database, DatabaseError
 from backend.utils.logging import configure_logging, get_logger
 
 logger = get_logger("main")
@@ -45,8 +55,16 @@ def build_knowledge(config: AppConfig) -> KnowledgeBase:
     return KnowledgeBase(config, create_embedder(config), SqliteVecStore(config.KNOWLEDGE_DB_PATH))
 
 
+def build_memory(config: AppConfig, database: Database) -> MemoryService:
+    """The memory on the application database."""
+    return MemoryService(config, MemoryStore(database))
+
+
 def build_orchestrator(
-    config: AppConfig, knowledge: Knowledge, capture: Optional[CaptureStore] = None
+    config: AppConfig,
+    knowledge: Knowledge,
+    memory: Memory,
+    capture: Optional[CaptureStore] = None,
 ) -> Orchestrator:
     """Wire the real modules together."""
     engine = ConversationEngine(
@@ -55,6 +73,7 @@ def build_orchestrator(
         llm=create_llm(config),
         tts=create_tts(config),
         knowledge=knowledge,
+        memory=memory,
     )
     return Orchestrator(
         config,
@@ -70,9 +89,10 @@ def create_app(
     config: AppConfig,
     orchestrator: Optional[Orchestrator] = None,
     knowledge: Optional[KnowledgeBase] = None,
+    memory: Optional[MemoryService] = None,
 ) -> FastAPI:
-    """Build the app. Without an orchestrator or a knowledge base, the real ones are
-    built at startup."""
+    """Build the app. Without an orchestrator, a knowledge base or a memory, the real
+    ones are built at startup."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -91,22 +111,33 @@ def create_app(
             capture.start()
             telemetry.add_span_processor(CaptureSpans(capture))
 
-        app.state.knowledge = knowledge or build_knowledge(config)
-        await app.state.knowledge.start()
+        database = Database(config.DATABASE_URL)
         try:
-            app.state.orchestrator = orchestrator or build_orchestrator(
-                config, app.state.knowledge, capture
-            )
-            app.state.started_at = time.monotonic()
-            await app.state.orchestrator.start()
-            logger.info({"msg": "System ready"})
+            await asyncio.to_thread(database.start)
+        except DatabaseError as e:
+            logger.error({"msg": "The application database cannot be opened", "error": str(e)})
+            raise
+        app.state.users = UsersStore(database)
+        app.state.memory = memory or build_memory(config, database)
+        try:
+            app.state.knowledge = knowledge or build_knowledge(config)
+            await app.state.knowledge.start()
+            try:
+                app.state.orchestrator = orchestrator or build_orchestrator(
+                    config, app.state.knowledge, app.state.memory, capture
+                )
+                app.state.started_at = time.monotonic()
+                await app.state.orchestrator.start()
+                logger.info({"msg": "System ready"})
 
-            yield
+                yield
 
-            logger.info({"msg": "Avatar AI shutting down"})
-            await app.state.orchestrator.stop()
+                logger.info({"msg": "Avatar AI shutting down"})
+                await app.state.orchestrator.stop()
+            finally:
+                await app.state.knowledge.close()
         finally:
-            await app.state.knowledge.close()
+            await asyncio.to_thread(database.close)
             telemetry.flush()
             if capture:
                 await asyncio.to_thread(capture.stop)
@@ -120,6 +151,7 @@ def create_app(
         allow_headers=["*"],
     )
     app.include_router(create_knowledge_router(config))
+    app.include_router(create_memory_router(config))
 
     @app.get("/health")
     async def health() -> JSONResponse:
@@ -132,10 +164,19 @@ def create_app(
             "ws_connected": orch.ws_manager.is_connected,
         })
 
+    async def connecting_user_id() -> Optional[str]:
+        """Who is behind the new connection; None for a guest. A failing database does
+        not refuse the connection: the person talks as a guest, without the memory."""
+        try:
+            return await asyncio.to_thread(current_user_id, config, app.state.users)
+        except DatabaseError as e:
+            logger.error({"msg": "User lookup failed, connecting as a guest", "error": str(e)})
+            return None
+
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket) -> None:
         orch: Orchestrator = app.state.orchestrator
-        session_id = await orch.handle_connect(websocket)
+        session_id = await orch.handle_connect(websocket, await connecting_user_id())
         logger.info({"msg": "WebSocket connected", "session_id": session_id})
 
         try:

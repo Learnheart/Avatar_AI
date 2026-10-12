@@ -1,5 +1,6 @@
 """
-Contracts of the model stages the core calls: STT, LLM, TTS, and of the knowledge lookup.
+Contracts of the model stages the core calls: STT, LLM, TTS, and of the knowledge lookup
+and the memory.
 
 The core depends on these interfaces only. Backends live in `backend/providers/` and are
 chosen by configuration (`backend/providers/catalog.py`), never by editing a caller.
@@ -7,7 +8,7 @@ chosen by configuration (`backend/providers/catalog.py`), never by editing a cal
 from abc import ABC, abstractmethod
 from typing import AsyncIterator, Sequence
 
-from backend.models import ChatTurn, Passage, Transcript
+from backend.models import ChatTurn, MemoryProfile, Passage, Transcript
 
 
 # ── STT: utterance audio in → Transcript out, one shape for every backend ──
@@ -106,4 +107,19 @@ class Knowledge(ABC):
         """
         The passages most relevant to the question, best first. Nothing relevant or an
         empty base → []. Failures raise KnowledgeError.
+        """
+
+
+# ── Memory: user id in → what is known about that user out ────────────────
+
+class MemoryServiceError(Exception):
+    """The memory failed (its store). Not named MemoryError: that is a builtin."""
+
+
+class Memory(ABC):
+    @abstractmethod
+    async def profile(self, user_id: str) -> MemoryProfile:
+        """
+        What is known about the user, as the text given to the LLM. Nothing known →
+        an empty profile. Failures raise MemoryServiceError.
         """

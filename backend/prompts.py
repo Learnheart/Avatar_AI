@@ -36,6 +36,29 @@ class Prompts:
     )
     KNOWLEDGE_PASSAGE: str = "[{index}] (tài liệu: {source})\n{text}"
 
+    # The second system message of a logged-in user's turn: what the avatar remembers
+    # about the person (each item written with MEMORY_PROMPT_ITEM). The items are typed
+    # by the person in their own voice, so the text says whose "tôi" it is, that the way
+    # of addressing binds every answer (also when the person says "bạn"), and that the
+    # facts are known and theirs. The assistant is named "trợ lý", never "bạn": that
+    # word must stay free for the person's own speech. Wording measured on the real
+    # model; change it only with a new measurement.
+    MEMORY_PROMPT: str = (
+        "Thông tin người dùng tự viết về mình (\"tôi\" trong đó là người dùng, không phải "
+        "trợ lý):\n\n"
+        "{items}\n\n"
+        "BẮT BUỘC trong mọi câu trả lời:\n"
+        "- Gọi người dùng và tự xưng đúng theo cách xưng hô họ yêu cầu ở trên, kể cả khi họ "
+        "gọi trợ lý là \"bạn\". Ví dụ: họ viết \"Gọi tôi là anh, xưng em\" thì trợ lý gọi "
+        "họ là \"anh\" và chỉ dùng \"em\" để tự xưng; không gọi họ là \"bạn\", không tự "
+        "xưng \"tôi\" hay \"mình\".\n"
+        "- Tên, nghề nghiệp, sở thích và mọi điều ở trên là của người dùng, không phải của "
+        "trợ lý. Trợ lý đã biết những điều đó, kể cả cách họ muốn được trả lời: khi được hỏi "
+        "thì nói lại đúng điều đó, không nói là không biết, không đoán.\n"
+        "- Không nhắc đến việc có hồ sơ hay ghi chú."
+    )
+    MEMORY_PROMPT_ITEM: str = "- {text}"
+
     # Spoken when the LLM fails or answers nothing, instead of staying silent.
     LLM_FALLBACK_TEXT: str = (
         "Xin lỗi, tôi chưa thể trả lời ngay lúc này. Bạn vui lòng thử lại sau nhé."

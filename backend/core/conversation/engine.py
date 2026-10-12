@@ -1,12 +1,13 @@
 """
 ConversationEngine — the swappable boundary "audio in → text + audio out".
 
-One turn: STT → knowledge lookup (optional) → LLM (streamed) → TTS (per sentence). The LLM keeps streaming in its own
+One turn: STT → knowledge lookup (optional) → profile of the user (optional) → LLM
+(streamed) → TTS (per sentence). The LLM keeps streaming in its own
 task while finished sentences are synthesized, so the first audio does not wait for the
 whole answer. Every stage runs under its own timeout.
 
-The engine keeps nothing between turns: the earlier turns of the conversation are handed
-to it with each utterance.
+The engine keeps nothing between turns: the earlier turns of the conversation and the id
+of its user are handed to it with each utterance.
 """
 import asyncio
 import re
@@ -18,7 +19,9 @@ from opentelemetry import trace
 from opentelemetry.trace import Span
 
 from backend.config import AppConfig
-from backend.core.contracts import LLM, STT, TTS, Knowledge, LLMError, STTError, TTSError
+from backend.core.contracts import (
+    LLM, STT, TTS, Knowledge, LLMError, Memory, STTError, TTSError,
+)
 from backend.core.conversation.history import search_query
 from backend.models import (
     PCM_SAMPLE_WIDTH,
@@ -89,13 +92,16 @@ class ConversationEngine:
         llm: LLM,
         tts: TTS,
         knowledge: Optional[Knowledge] = None,
+        memory: Optional[Memory] = None,
     ) -> None:
-        """Without `knowledge`, the LLM answers the transcript alone."""
+        """Without `knowledge`, the LLM answers the transcript alone; without `memory`,
+        it is told nothing about the person."""
         self.config = config
         self._stt = stt
         self._llm = llm
         self._tts = tts
         self._knowledge = knowledge
+        self._memory = memory
 
     def load(self) -> None:
         """Load local models. Call once at startup, off the event loop (blocking)."""
@@ -106,10 +112,15 @@ class ConversationEngine:
         self._tts.close()
 
     async def respond(
-        self, pcm16: bytes, sample_rate: int, history: Sequence[ChatTurn] = ()
+        self,
+        pcm16: bytes,
+        sample_rate: int,
+        history: Sequence[ChatTurn] = (),
+        user_id: Optional[str] = None,
     ) -> AsyncIterator[EngineEvent]:
         """Run one turn. `history` holds the earlier turns of the conversation, oldest
-        first. Cancellation-safe: closing it stops the LLM stream and the TTS worker."""
+        first; `user_id` is the person speaking, None for a guest.
+        Cancellation-safe: closing it stops the LLM stream and the TTS worker."""
         transcript = await self._transcribe(pcm16, sample_rate)
         yield TranscriptEvent(transcript.text, transcript.confidence)
         if not transcript.text.strip():
@@ -117,9 +128,11 @@ class ConversationEngine:
             return
 
         question = await self._with_knowledge(transcript.text, history)
+        profile = await self._profile(user_id)
         sentences: asyncio.Queue[Optional[_QueuedSentence]] = asyncio.Queue()
         producer = asyncio.create_task(
-            self._produce_sentences(question, history, sentences), name="llm-sentences"
+            self._produce_sentences(question, history, profile, sentences),
+            name="llm-sentences",
         )
         try:
             while (sentence := await sentences.get()) is not None:
@@ -211,10 +224,49 @@ class ConversationEngine:
         })
         return passages
 
+    async def _profile(self, user_id: Optional[str]) -> str:
+        """What the avatar remembers about the user, as the text given to the LLM. A
+        guest has none and nothing is read. Nothing remembered, a slow or a failing
+        read → "": the memory never costs the turn."""
+        if self._memory is None or user_id is None:
+            return ""
+        with tracer.start_as_current_span("memory") as span:
+            started = time.perf_counter()
+            try:
+                profile = await asyncio.wait_for(
+                    self._memory.profile(user_id), timeout=self.config.MEMORY_TIMEOUT_SEC
+                )
+            except asyncio.TimeoutError as e:
+                fail(span, e)
+                span.set_attributes({"memory.items": 0, "memory.outcome": "timeout"})
+                logger.warning({
+                    "msg": "Profile read timed out, answering without it",
+                    "timeout_sec": self.config.MEMORY_TIMEOUT_SEC,
+                })
+                return ""
+            except Exception as e:
+                fail(span, e)
+                span.set_attributes({"memory.items": 0, "memory.outcome": "error"})
+                summary = summarize_error(e, self.config.ERROR_SUMMARY_MAX_CHARS)
+                logger.warning({"msg": "Profile read failed, answering without it", "error": summary})
+                return ""
+
+            span.set_attributes({
+                "memory.items": profile.items,
+                "memory.outcome": "hit" if profile.text else "empty",
+            })
+            logger.info({
+                "msg": "Profile read",
+                "items": profile.items,
+                "memory_ms": round((time.perf_counter() - started) * 1000),
+            })
+            return profile.text
+
     async def _produce_sentences(
         self,
         user_text: str,
         history: Sequence[ChatTurn],
+        profile: str,
         sentences: "asyncio.Queue[Optional[_QueuedSentence]]",
     ) -> None:
         """Queue each sentence of the LLM answer as soon as it is complete.
@@ -222,7 +274,9 @@ class ConversationEngine:
         queued = 0
         try:
             try:
-                async with aclosing(self._answer_sentences(user_text, history)) as answer:
+                async with aclosing(
+                    self._answer_sentences(user_text, history, profile)
+                ) as answer:
                     async for sentence in answer:
                         sentences.put_nowait((sentence, False))
                         queued += 1
@@ -243,10 +297,10 @@ class ConversationEngine:
             sentences.put_nowait(None)
 
     async def _answer_sentences(
-        self, user_text: str, history: Sequence[ChatTurn]
+        self, user_text: str, history: Sequence[ChatTurn], profile: str
     ) -> AsyncIterator[str]:
-        """Stream the LLM answer as speakable sentences."""
-        profile = ""  # nothing is known about the person yet
+        """Stream the LLM answer as speakable sentences. `profile` is what is known
+        about the person ("" = nothing)."""
         # LLM_TIMEOUT_SEC bounds the wait for each delta, first token included.
         deltas = _bounded(
             self._llm.stream_answer(user_text, history, profile),

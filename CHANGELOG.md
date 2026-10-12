@@ -28,6 +28,33 @@ the rules are in `CLAUDE.md` / `AGENTS.md` §7.
   dropped).
 - `[expression]` A transcript window on the right shows what the avatar heard and what
   it answers.
+- `[memory]` Long-term memory, first part: the avatar keeps short facts about a known
+  person (who they are, how to address them, what they prefer, their personality) and
+  is given them with every turn of that person, so it addresses and answers them
+  accordingly. A guest has no memory. The memory never costs the turn: empty, slow
+  (`MEMORY_TIMEOUT_SEC`, default 1.0) or failing, the avatar answers without it.
+- `[memory]` HTTP routes `/memory/items` (`GET`, `POST`, `PATCH /{id}`, `DELETE /{id}`)
+  to see, add, edit and delete what is remembered about the current user; a guest gets
+  `401`, and one user never sees another's items.
+- `[memory]` A remembered fact is one short sentence: a text longer than
+  `MEMORY_ITEM_MAX_CHARS` is refused with `422` and the reason.
+- `[memory]` A remembered fact is stored on one line: line breaks, tabs and repeated
+  spaces become one space, and control or invisible characters are removed; a text with
+  nothing visible is refused with `422`.
+- `[expression]` A profile page, "Hồ sơ": see, add, edit and delete what the avatar
+  remembers about you.
+- `[shared]` An application database for users and memory, opened from `DATABASE_URL`
+  (default: the SQLite file `backend/data/app.db`; PostgreSQL by changing the URL). Its
+  tables are created at startup; the avatar does not start on a database it cannot
+  open.
+- `[shared]` `AUTH_DEV_USER_ID` names the user every connection and request belongs to
+  until the login exists; empty (the default) means a guest.
+- `[shared]` New config keys: `DATABASE_URL` (`sqlite:///backend/data/app.db`),
+  `AUTH_DEV_USER_ID` (empty), `MEMORY_PROMPT_MAX_ITEMS` (20), `MEMORY_TIMEOUT_SEC`
+  (1.0), `MEMORY_ITEM_MAX_CHARS` (200). The text the facts are given to the LLM in is
+  `MEMORY_PROMPT`.
+- `[shared]` New dependency: SQLAlchemy (`sqlalchemy>=2.0.0`); run
+  `uv pip install -r backend/requirements.txt` after updating.
 - `[expression]` A "Cuộc trò chuyện mới" button ends the conversation.
 - `[shared]` New config keys: `CONVERSATION_ABSENCE_SEC` (30), `CONVERSATION_IDLE_SEC`
   (120), `MEMORY_HISTORY_MAX_TURNS` (10), `KNOWLEDGE_QUERY_HISTORY_TURNS` (1),

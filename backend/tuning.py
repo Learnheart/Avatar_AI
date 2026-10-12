@@ -45,6 +45,16 @@ class Tuning:
     # Turns of the conversation given to the LLM; older ones are dropped.
     MEMORY_HISTORY_MAX_TURNS: int = env_int("MEMORY_HISTORY_MAX_TURNS", 10)
 
+    # ── Memory (what is kept about a logged-in user) ────────────────────
+    # Memory items given to the LLM as the profile of the person; past it the least
+    # recently updated preferences and personality traits are left out.
+    MEMORY_PROMPT_MAX_ITEMS: int = env_int("MEMORY_PROMPT_MAX_ITEMS", 20)
+    # Max wait for the profile in a turn; past it the question is answered without it.
+    MEMORY_TIMEOUT_SEC: float = env_float("MEMORY_TIMEOUT_SEC", 1.0)
+    # Characters of one memory item: a short sentence, since every active item is in
+    # every prompt. A longer text is refused.
+    MEMORY_ITEM_MAX_CHARS: int = env_int("MEMORY_ITEM_MAX_CHARS", 200)
+
     # ── Knowledge (uploaded documents) ──────────────────────────────────
     # Passages given to the LLM with the question.
     KNOWLEDGE_TOP_K: int = env_int("KNOWLEDGE_TOP_K", 4)

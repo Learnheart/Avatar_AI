@@ -975,6 +975,17 @@ async def test_the_history_given_to_the_engine_is_the_one_of_the_turn_s_user(orc
     assert orch._engine.histories == [(), (FIRST_TURN,), ()]
 
 
+async def test_the_engine_is_told_who_the_turn_s_user_is(orch):
+    guest = FakeWebSocket()
+    await orch.handle_connect(guest)
+    await _complete_turn(orch, guest)
+    known = FakeWebSocket()
+    await orch.handle_connect(known, user_id="user-7")
+    await _complete_turn(orch, known)
+
+    assert orch._engine.user_ids == [None, "user-7"]
+
+
 async def test_an_empty_transcript_leaves_the_conversation_open_and_unrecorded(orch, ws):
     orch._engine.events = [TranscriptEvent(""), DoneEvent()]
 
@@ -1149,7 +1160,7 @@ async def test_a_failure_after_the_transcript_records_the_utterance_alone(orch, 
 
 def _speak_three_sentences_then(orch: Orchestrator, ending) -> None:
     """The engine sends three sentences of one second at once, then awaits `ending()`."""
-    async def respond(pcm16, sample_rate, history=()):
+    async def respond(pcm16, sample_rate, history=(), user_id=None):
         for event in _three_sentences()[:-1]:
             yield event
         await ending()

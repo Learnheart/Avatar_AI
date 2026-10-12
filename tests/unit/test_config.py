@@ -35,6 +35,11 @@ def test_defaults_load():
     assert config.MEMORY_HISTORY_MAX_TURNS == 10
     assert config.KNOWLEDGE_QUERY_HISTORY_TURNS == 1
     assert config.STT_NO_SPEECH_MAX_PROB == 1.0
+    assert config.DATABASE_URL == "sqlite:///backend/data/app.db"
+    assert config.AUTH_DEV_USER_ID == ""
+    assert config.MEMORY_PROMPT_MAX_ITEMS == 20
+    assert config.MEMORY_TIMEOUT_SEC == 1.0
+    assert config.MEMORY_ITEM_MAX_CHARS == 200
 
 
 def test_missing_groq_api_key_fails_validation():
@@ -95,6 +100,13 @@ def test_invalid_values_fail_validation(overrides):
         {"KNOWLEDGE_QUERY_HISTORY_TURNS": -1},
         {"STT_NO_SPEECH_MAX_PROB": 1.5},
         {"STT_NO_SPEECH_MAX_PROB": -0.1},
+        {"MEMORY_PROMPT_MAX_ITEMS": 0},
+        {"MEMORY_ITEM_MAX_CHARS": 0},
+        {"MEMORY_TIMEOUT_SEC": 0},
+        {"MEMORY_TIMEOUT_SEC": -1},
+        {"MEMORY_TIMEOUT_SEC": float("nan")},
+        {"MEMORY_TIMEOUT_SEC": float("inf")},
+        {"DATABASE_URL": " "},
     ],
 )
 def test_invalid_conversation_settings_fail_validation(overrides):
@@ -109,7 +121,15 @@ def test_the_edges_of_the_conversation_settings_are_accepted():
         MEMORY_HISTORY_MAX_TURNS=1,
         KNOWLEDGE_QUERY_HISTORY_TURNS=0,
         STT_NO_SPEECH_MAX_PROB=0.0,
+        MEMORY_PROMPT_MAX_ITEMS=1,
+        MEMORY_ITEM_MAX_CHARS=1,
     ).validate()
+
+
+def test_the_database_url_never_appears_in_repr():
+    config = AppConfig(DATABASE_URL="postgresql://avatar:s3cret@db.test/avatar")
+
+    assert "s3cret" not in repr(config)
 
 
 def test_groq_api_key_never_appears_in_repr_or_str():

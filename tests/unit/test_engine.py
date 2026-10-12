@@ -6,9 +6,12 @@ import pytest
 from backend.config import AppConfig
 from backend.core.conversation.engine import ConversationEngine, split_sentences
 from backend.core.contracts import (
-    LLM, STT, TTS, Knowledge, KnowledgeError, LLMError, STTError, TTSError,
+    LLM, STT, TTS, Knowledge, KnowledgeError, LLMError, Memory, MemoryServiceError, STTError,
+    TTSError,
 )
-from backend.models import AudioEvent, ChatTurn, DoneEvent, Passage, Transcript, TranscriptEvent
+from backend.models import (
+    AudioEvent, ChatTurn, DoneEvent, MemoryProfile, Passage, Transcript, TranscriptEvent,
+)
 
 RATE = 48000
 
@@ -101,8 +104,10 @@ def _engine(config: AppConfig, stt: FakeSTT, llm: FakeLLM, tts: FakeTTS) -> Conv
     return ConversationEngine(config, stt=stt, llm=llm, tts=tts)
 
 
-async def _collect(engine: ConversationEngine, history=()) -> list:
-    return [event async for event in engine.respond(b"\x01\x00" * 160, 16000, history)]
+async def _collect(engine: ConversationEngine, history=(), user_id=None) -> list:
+    return [
+        event async for event in engine.respond(b"\x01\x00" * 160, 16000, history, user_id)
+    ]
 
 
 def _texts(events: list) -> list[str]:
@@ -513,3 +518,111 @@ async def test_with_zero_previous_turns_the_current_utterance_is_searched_alone(
     await _collect(engine, HISTORY)
 
     assert engine._knowledge.queries == [QUESTION]
+
+
+# ── Memory: the profile of the user ───────────────────────────────────────
+
+PROFILE = MemoryProfile("Những điều đã biết:\n- Tên là Linh.\n- Gọi là anh.", items=2)
+
+
+class FakeMemory(Memory):
+    def __init__(self, profile: MemoryProfile = PROFILE) -> None:
+        self.result = profile
+        self.error: Exception | None = None
+        self.hang = False
+        self.user_ids: list[str] = []
+
+    async def profile(self, user_id: str) -> MemoryProfile:
+        self.user_ids.append(user_id)
+        if self.hang:
+            await asyncio.Event().wait()
+        if self.error:
+            raise self.error
+        return self.result
+
+
+def _engine_remembering(
+    config: AppConfig, memory: FakeMemory, knowledge: FakeKnowledge | None = None
+) -> tuple[ConversationEngine, FakeLLM]:
+    llm = FakeLLM(["Chào anh Linh."])
+    engine = ConversationEngine(
+        config, stt=FakeSTT(QUESTION), llm=llm, tts=FakeTTS(), knowledge=knowledge, memory=memory
+    )
+    return engine, llm
+
+
+async def test_the_llm_receives_the_profile_of_the_turn_s_user(config):
+    memory = FakeMemory()
+    engine, llm = _engine_remembering(config, memory)
+
+    await _collect(engine, HISTORY, user_id="user-7")
+
+    assert memory.user_ids == ["user-7"]
+    assert llm.profiles == [PROFILE.text]
+    assert llm.calls == [QUESTION]
+    assert llm.histories == [HISTORY]
+
+
+async def test_the_profile_goes_with_the_knowledge_passages(config):
+    knowledge = FakeKnowledge([Passage("Kỳ hạn sáu tháng: 5%.", "lai-suat.pdf", 0.8)])
+    engine, llm = _engine_remembering(config, FakeMemory(), knowledge)
+
+    await _collect(engine, user_id="user-7")
+
+    assert llm.profiles == [PROFILE.text]
+    assert "Kỳ hạn sáu tháng: 5%." in llm.calls[0]
+
+
+async def test_a_guest_makes_no_memory_read(config):
+    memory = FakeMemory()
+    engine, llm = _engine_remembering(config, memory)
+
+    events = await _collect(engine)
+
+    assert memory.user_ids == []
+    assert llm.profiles == [""]
+    assert _texts(events) == ["Chào anh Linh."]
+
+
+async def test_a_user_with_nothing_remembered_is_answered_without_profile(config):
+    engine, llm = _engine_remembering(config, FakeMemory(MemoryProfile()))
+
+    await _collect(engine, user_id="user-7")
+
+    assert llm.profiles == [""]
+
+
+async def test_a_failing_memory_does_not_cost_the_turn(config):
+    memory = FakeMemory()
+    memory.error = MemoryServiceError("store down")
+    engine, llm = _engine_remembering(config, memory)
+
+    events = await _collect(engine, user_id="user-7")
+
+    assert llm.profiles == [""]
+    assert _texts(events) == ["Chào anh Linh."]
+    assert isinstance(events[-1], DoneEvent)
+
+
+async def test_a_slow_memory_is_abandoned_after_its_timeout(config):
+    config.MEMORY_TIMEOUT_SEC = 0.05
+    memory = FakeMemory()
+    memory.hang = True
+    engine, llm = _engine_remembering(config, memory)
+
+    # Bounded here too: without the engine's own timeout the turn would never end.
+    events = await asyncio.wait_for(_collect(engine, user_id="user-7"), timeout=2)
+
+    assert llm.profiles == [""]
+    assert _texts(events) == ["Chào anh Linh."]
+
+
+async def test_an_empty_transcript_makes_no_memory_read(config):
+    memory = FakeMemory()
+    engine = ConversationEngine(
+        config, stt=FakeSTT(text=""), llm=FakeLLM([]), tts=FakeTTS(), memory=memory
+    )
+
+    await _collect(engine, user_id="user-7")
+
+    assert memory.user_ids == []

@@ -1,5 +1,6 @@
 """Domain dataclasses and enums shared across all backend modules."""
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Optional, Union
 
@@ -96,6 +97,64 @@ class KnowledgeDocument:
             "created_at": self.created_at,
             "enabled": self.enabled,
         }
+
+
+@dataclass
+class User:
+    """A person the avatar knows. A guest has no user."""
+    id: str
+    display_name: str
+    created_at: datetime  # UTC
+    last_seen_at: datetime  # UTC
+
+
+# What a memory item is about. `identity`: name, role. `addressing`: how the person and
+# the avatar call each other. `preference`: answer style, topics. `personality`.
+MEMORY_CATEGORIES = ("identity", "addressing", "preference", "personality")
+MEMORY_STATUS_ACTIVE = "active"  # given to the LLM
+MEMORY_SOURCE_MANUAL = "manual"  # typed by the person on the profile page
+
+
+@dataclass
+class MemoryItem:
+    """One short sentence the avatar keeps about a user across conversations."""
+    id: str
+    user_id: str
+    category: str
+    text: str
+    created_at: datetime  # UTC
+    updated_at: datetime  # UTC
+    status: str = MEMORY_STATUS_ACTIVE
+    source: str = MEMORY_SOURCE_MANUAL
+    import_id: Optional[str] = None
+    replaces_id: Optional[str] = None
+    # The quote the item comes from.
+    evidence: Optional[str] = None
+    # How many conversations stated it.
+    seen_count: int = 1
+
+    def to_dict(self) -> dict:
+        """The item as the HTTP API gives it (`/memory/items`)."""
+        return {
+            "id": self.id,
+            "category": self.category,
+            "text": self.text,
+            "status": self.status,
+            "source": self.source,
+            "import_id": self.import_id,
+            "replaces_id": self.replaces_id,
+            "evidence": self.evidence,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
+
+
+@dataclass(frozen=True)
+class MemoryProfile:
+    """What is known about a user, as given to the LLM. `text` is "" when nothing is
+    known; `items` is the number of memory items it was written from."""
+    text: str = ""
+    items: int = 0
 
 
 # ── ConversationEngine events ─────────────────────────────────────────────

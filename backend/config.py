@@ -122,6 +122,14 @@ class AppConfig(Tuning, Prompts):
     # Origins allowed to call the HTTP API from a browser, comma-separated; * = any.
     CORS_ALLOW_ORIGINS: str = env_str("CORS_ALLOW_ORIGINS", "*")
 
+    # ── Application database (users, memory) ────────────────────────────
+    # A SQLAlchemy URL. A SQLite file locally; PostgreSQL at deployment. It may hold a
+    # password, so it stays out of repr(config).
+    DATABASE_URL: str = env_str("DATABASE_URL", "sqlite:///backend/data/app.db", repr=False)
+    # Until the login exists: the id of the user every connection and request belongs
+    # to. Empty = a guest, who has no memory.
+    AUTH_DEV_USER_ID: str = env_str("AUTH_DEV_USER_ID", "")
+
     # ── Camera ──────────────────────────────────────────────────────────
     CAMERA_INDEX: int = env_int("CAMERA_INDEX", 0)
     CAMERA_URL: str = env_str("CAMERA_URL", "")
@@ -178,6 +186,14 @@ class AppConfig(Tuning, Prompts):
                 )
         if self.MEMORY_HISTORY_MAX_TURNS < 1:
             raise ValueError("MEMORY_HISTORY_MAX_TURNS must be at least 1.")
+        if self.MEMORY_PROMPT_MAX_ITEMS < 1:
+            raise ValueError("MEMORY_PROMPT_MAX_ITEMS must be at least 1.")
+        if self.MEMORY_ITEM_MAX_CHARS < 1:
+            raise ValueError("MEMORY_ITEM_MAX_CHARS must be at least 1.")
+        if not (math.isfinite(self.MEMORY_TIMEOUT_SEC) and self.MEMORY_TIMEOUT_SEC > 0):
+            raise ValueError("MEMORY_TIMEOUT_SEC must be positive and finite.")
+        if not self.DATABASE_URL.strip():
+            raise ValueError("DATABASE_URL must not be empty.")
         if not 0.0 <= self.STT_NO_SPEECH_MAX_PROB <= 1.0:
             raise ValueError("STT_NO_SPEECH_MAX_PROB must be between 0 and 1.")
         if self.DEVICE != AUTO and self.DEVICE not in DEVICES:

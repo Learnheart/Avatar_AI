@@ -39,6 +39,7 @@ def config(tmp_path) -> AppConfig:
         GROQ_API_KEY="test-key",
         CAPTURE_DIR=str(tmp_path / "capture"),
         KNOWLEDGE_DB_PATH=str(tmp_path / "knowledge.db"),
+        DATABASE_URL=f"sqlite:///{tmp_path / 'app.db'}",
         PLAYBACK_END_TIMEOUT_SEC=0.05,
         TRACKING_FPS=200,
     )

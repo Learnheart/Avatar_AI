@@ -442,8 +442,11 @@ class Orchestrator:
         span = trace.get_current_span()  # the turn
         answer_pcm = bytearray()  # kept only to be captured
 
-        # The engine keeps no history: it is handed the turns of this user's conversation.
-        answer = self._engine.respond(pcm, MIC_SAMPLE_RATE, conversation.history)
+        # The engine keeps no history: it is handed the turns of this user's conversation,
+        # and who that user is.
+        answer = self._engine.respond(
+            pcm, MIC_SAMPLE_RATE, conversation.history, conversation.user_id
+        )
         async with aclosing(answer) as events:
             async for event in events:
                 if isinstance(event, TranscriptEvent):

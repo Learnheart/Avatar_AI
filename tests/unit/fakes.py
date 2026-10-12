@@ -59,7 +59,8 @@ class FakeEngine:
     """Replays `events` for each turn. `gate` holds the turn before any event (thinking),
     or right after the first event of type `gate_after` when that is set; `error` is
     raised after the first event of type `error_after`; `close_gate` holds the turn while
-    it is being closed. `histories` holds the history each turn was given."""
+    it is being closed. `histories` and `user_ids` hold the history and the user id each
+    turn was given."""
 
     def __init__(self) -> None:
         self.events: list[EngineEvent] = [
@@ -75,6 +76,7 @@ class FakeEngine:
         self.close_gate: Optional[asyncio.Event] = None
         self.utterances: list[bytes] = []
         self.histories: list[tuple] = []
+        self.user_ids: list[Optional[str]] = []
         self.closed = 0
         self.loaded = False
 
@@ -85,10 +87,11 @@ class FakeEngine:
         self.loaded = False
 
     async def respond(
-        self, pcm16: bytes, sample_rate: int, history: tuple = ()
+        self, pcm16: bytes, sample_rate: int, history: tuple = (), user_id: Optional[str] = None
     ) -> AsyncIterator[EngineEvent]:
         self.utterances.append(pcm16)
         self.histories.append(tuple(history))
+        self.user_ids.append(user_id)
         try:
             if self.gate is not None and self.gate_after is None:
                 await self.gate.wait()
