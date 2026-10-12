@@ -7,7 +7,7 @@
 // ── Env-driven ────────────────────────────────────────────────────────────
 
 export const WS_URL = import.meta.env.VITE_WS_URL || `ws://${window.location.hostname}:8000/ws`
-// Backend HTTP API (knowledge base), without a trailing slash.
+// Backend HTTP API (knowledge base, memory), without a trailing slash.
 export const API_URL = (
   import.meta.env.VITE_API_URL || `http://${window.location.hostname}:8000`
 ).replace(/\/+$/, '')
@@ -32,6 +32,12 @@ export const ANALYSER_FFT_SIZE = 256        // Time-domain window read by lip-sy
 // KNOWLEDGE_MAX_FILE_MB).
 export const KNOWLEDGE_EXTENSIONS = ['.txt', '.md', '.csv', '.pdf', '.docx']
 export const KNOWLEDGE_MAX_FILE_MB = 10
+
+// ── Profile page (memory) ─────────────────────────────────────────────────
+
+// The text fields stop at this length; the backend has the last word (its
+// MEMORY_ITEM_MAX_CHARS).
+export const MEMORY_ITEM_MAX_CHARS = 200
 
 // ── Transcript window ─────────────────────────────────────────────────────
 

@@ -8,7 +8,8 @@
  *   4. LipSync → hook into audio + avatar
  *   5. Wire WS message handlers
  *
- * The knowledge panel is set up first: it only needs the backend HTTP API.
+ * The knowledge panel and the profile page are set up first: they only need the
+ * backend HTTP API.
  * The transcript window is filled from the WebSocket messages of the turn.
  */
 
@@ -18,10 +19,13 @@ import { AudioManager } from './audio/audio-manager.js'
 import { LipSync } from './avatar/lip-sync.js'
 import { KnowledgeClient } from './knowledge/knowledge-client.js'
 import { KnowledgePanel } from './knowledge/knowledge-panel.js'
+import { MemoryClient } from './memory/memory-client.js'
+import { ProfilePage } from './memory/profile-page.js'
 import { TranscriptPanel } from './transcript/transcript-panel.js'
 
 async function main() {
   new KnowledgePanel(new KnowledgeClient()).init()
+  new ProfilePage(new MemoryClient()).init()
 
   const container = document.getElementById('canvas-container')
 
