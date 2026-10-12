@@ -8,9 +8,11 @@ Endpoints:
   /knowledge/...   — upload, list and delete the documents of the knowledge base
                      (`backend/features/knowledge/api.py`)
 
-Startup: validate config → open the knowledge base → build modules → start orchestrator
+Startup: validate config → telemetry (+ capture) → open the knowledge base → build modules
+         → start orchestrator
 Shutdown: stop the orchestrator, which releases every module; close the knowledge base
 """
+import asyncio
 import time
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Optional
@@ -31,6 +33,8 @@ from backend.core.orchestrator import Orchestrator
 from backend.core.perception.camera import Camera
 from backend.core.perception.tracking import HeadTracker
 from backend.core.perception.vad import VADModule
+from backend.utils import telemetry
+from backend.utils.capture import CaptureSpans, CaptureStore
 from backend.utils.logging import configure_logging, get_logger
 
 logger = get_logger("main")
@@ -41,7 +45,9 @@ def build_knowledge(config: AppConfig) -> KnowledgeBase:
     return KnowledgeBase(config, create_embedder(config), SqliteVecStore(config.KNOWLEDGE_DB_PATH))
 
 
-def build_orchestrator(config: AppConfig, knowledge: Knowledge) -> Orchestrator:
+def build_orchestrator(
+    config: AppConfig, knowledge: Knowledge, capture: Optional[CaptureStore] = None
+) -> Orchestrator:
     """Wire the real modules together."""
     engine = ConversationEngine(
         config,
@@ -56,6 +62,7 @@ def build_orchestrator(config: AppConfig, knowledge: Knowledge) -> Orchestrator:
         engine=engine,
         camera=Camera(config),
         tracker=HeadTracker(config),
+        capture=capture,
     )
 
 
@@ -75,13 +82,20 @@ def create_app(
             logger.error({"msg": "Config validation failed", "error": str(e)})
             raise
         configure_logging(config.LOG_LEVEL)
+        telemetry.setup(config)
         logger.info({"msg": "Avatar AI starting up"})
+
+        capture: Optional[CaptureStore] = None
+        if config.CAPTURE_ENABLED:
+            capture = CaptureStore(config)
+            capture.start()
+            telemetry.add_span_processor(CaptureSpans(capture))
 
         app.state.knowledge = knowledge or build_knowledge(config)
         await app.state.knowledge.start()
         try:
             app.state.orchestrator = orchestrator or build_orchestrator(
-                config, app.state.knowledge
+                config, app.state.knowledge, capture
             )
             app.state.started_at = time.monotonic()
             await app.state.orchestrator.start()
@@ -93,6 +107,9 @@ def create_app(
             await app.state.orchestrator.stop()
         finally:
             await app.state.knowledge.close()
+            telemetry.flush()
+            if capture:
+                await asyncio.to_thread(capture.stop)
 
     app = FastAPI(title="Magic Mirror AI Avatar", version="0.1.0", lifespan=lifespan)
     # The page is served from another origin (the Vite server) than this API.

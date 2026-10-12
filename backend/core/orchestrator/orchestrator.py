@@ -19,6 +19,7 @@ from contextlib import aclosing
 from typing import Awaitable, Optional
 
 from fastapi import WebSocket
+from opentelemetry import trace
 
 from backend.config import AppConfig
 from backend.core.conversation.engine import ConversationEngine
@@ -46,7 +47,17 @@ from backend.core.perception.camera import Camera
 from backend.core.perception.tracking import HeadTracker
 from backend.core.perception.vad import VADModule
 from backend.utils.errors import summarize_error
+from backend.utils.capture import CaptureStore
 from backend.utils.logging import get_logger
+from backend.utils.telemetry import (
+    audio_chunks_dropped,
+    frames_tracked,
+    perception_duration,
+    speech_events,
+    stage_duration,
+    tracer,
+    turns,
+)
 
 logger = get_logger("orchestrator")
 
@@ -61,7 +72,10 @@ class Orchestrator:
         engine: ConversationEngine,
         camera: Camera,
         tracker: HeadTracker,
+        capture: Optional[CaptureStore] = None,
     ) -> None:
+        """With `capture`, every tracked frame, the audio of each turn and the perception
+        events are stored on disk."""
         self.config = config
         self.ws_manager = WSManager(config)
 
@@ -69,6 +83,7 @@ class Orchestrator:
         self._engine = engine
         self._camera = camera
         self._tracker = tracker
+        self._capture = capture
 
         # Blocking inference never runs on the event loop: one thread per model.
         self._vad_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vad")
@@ -87,10 +102,15 @@ class Orchestrator:
         self._preroll: deque[bytes] = deque()
         self._preroll_bytes = 0
         self._utterance = bytearray()
+        # Wall-clock time (ns) of the speech_start of the utterance being heard: the
+        # start of the turn's trace.
+        self._speech_started_ns = 0
 
         self._last_tracking = TrackingResult()
         self._last_rotation = HeadRotation()
         self._last_face_at: Optional[float] = None
+        self._present = False  # whether a person is in front of the camera
+        self._session_id = ""  # of the connected client; names the turns of one visit
 
     @property
     def state(self) -> AvatarState:
@@ -158,9 +178,9 @@ class Orchestrator:
         therefore reaches no client, so the new one is told the current state itself."""
         await self.ws_manager.detach()
         await self._reset_turn()
-        session_id = await self.ws_manager.connect(websocket)
+        self._session_id = await self.ws_manager.connect(websocket)
         await self.ws_manager.send(state_message(self._state))
-        return session_id
+        return self._session_id
 
     async def handle_disconnect(self, websocket: WebSocket) -> None:
         """Losing the active socket cancels the running turn and resets the state to idle.
@@ -192,6 +212,7 @@ class Orchestrator:
             if pcm and len(pcm) % PCM_SAMPLE_WIDTH == 0:
                 self._audio_queue.put_nowait(pcm)
             else:
+                audio_chunks_dropped.add(1)
                 logger.debug({"msg": "Audio chunk dropped", "bytes": len(pcm)})
         elif msg_type == "playback_ended":
             if self._state == AvatarState.SPEAKING:
@@ -215,9 +236,11 @@ class Orchestrator:
 
     async def _process_chunk(self, pcm: bytes) -> None:
         """VAD off the loop → buffer → state transitions."""
+        started = time.perf_counter()
         events = await asyncio.get_running_loop().run_in_executor(
             self._vad_executor, self._vad.process_chunk, pcm
         )
+        perception_duration.record((time.perf_counter() - started) * 1000, {"stage": "vad"})
         self._buffer_audio(pcm)
         for event in events:
             if event == VADEvent.SPEECH_START:
@@ -243,10 +266,13 @@ class Orchestrator:
             return
 
         # Barge-in: the customer speaks while the avatar is thinking or speaking.
-        if self._state in (AvatarState.THINKING, AvatarState.SPEAKING):
+        barge_in = self._state in (AvatarState.THINKING, AvatarState.SPEAKING)
+        if barge_in:
             logger.info({"msg": "Barge-in detected, cancelling turn", "state": self._state.value})
             await self._cancel_turn()
             await self.ws_manager.send(interrupt_message())
+        self._speech_started_ns = time.time_ns()
+        self._perception_event("speech_start", barge_in=barge_in)
 
         # The utterance starts from the pre-roll, so the first syllable is not clipped.
         self._utterance = bytearray(b"".join(self._preroll))
@@ -259,8 +285,21 @@ class Orchestrator:
 
         pcm = bytes(self._utterance)
         self._utterance.clear()
+        self._perception_event(
+            "speech_end", utterance_ms=round(len(pcm) / _MIC_BYTES_PER_SEC * 1000)
+        )
         await self._transition(AvatarState.THINKING)
-        self._turn_task = asyncio.create_task(self._run_turn(pcm), name="turn")
+        self._turn_task = asyncio.create_task(
+            self._run_turn(pcm, self._speech_started_ns), name="turn"
+        )
+
+    def _perception_event(self, event: str, **data: object) -> None:
+        """A perception event: counted, logged and, with capture on, stored."""
+        if event.startswith("speech_"):
+            speech_events.add(1, {"event": event})
+        logger.info({"msg": "Perception event", "event": event, **data})
+        if self._capture:
+            self._capture.event(event, **data)
 
     def _clear_preroll(self) -> None:
         self._preroll.clear()
@@ -268,29 +307,57 @@ class Orchestrator:
 
     # ── Turn: STT → LLM → TTS → client ────────────────────────────────────
 
-    async def _run_turn(self, pcm: bytes) -> None:
-        """One turn under TURN_TIMEOUT_SEC. Any failure → `error` message + idle."""
-        try:
-            playback_end = await asyncio.wait_for(
-                self._respond(pcm), timeout=self.config.TURN_TIMEOUT_SEC
-            )
-            if playback_end is not None:
-                await self._wait_for_playback(playback_end)
-            await self._transition(AvatarState.IDLE)
-        except asyncio.TimeoutError:
-            logger.error({"msg": "Turn timed out", "timeout_sec": self.config.TURN_TIMEOUT_SEC})
-            await self._fail_turn("turn_timeout", "The turn took too long")
-        except Exception as e:
-            # A provider failure is expected and already summarized; its traceback would
-            # print the chained provider response in full.
-            logger.error(
-                {
-                    "msg": "Turn failed",
-                    "error": summarize_error(e, self.config.ERROR_SUMMARY_MAX_CHARS),
-                },
-                exc_info=not isinstance(e, STTError),
-            )
-            await self._fail_turn("turn_failed", "The turn could not be completed")
+    async def _run_turn(self, pcm: bytes, speech_started_ns: int) -> None:
+        """One turn under TURN_TIMEOUT_SEC. Any failure → `error` message + idle.
+        The turn is one trace, starting when the person started to speak."""
+        utterance_ms = round(len(pcm) / _MIC_BYTES_PER_SEC * 1000)
+        with tracer.start_as_current_span(
+            "turn",
+            start_time=speech_started_ns,
+            attributes={"session.id": self._session_id},
+        ) as span:
+            # The listening phase is over when the turn starts: a span closed at once.
+            tracer.start_span(
+                "listen", start_time=speech_started_ns, attributes={"utterance.ms": utterance_ms}
+            ).end()
+            if self._capture:
+                trace_id = trace.format_trace_id(span.get_span_context().trace_id)
+                self._capture.audio(trace_id, "utterance", pcm, MIC_SAMPLE_RATE)
+
+            outcome = "completed"
+            try:
+                await self._turn(pcm)
+            except asyncio.CancelledError:
+                outcome = "cancelled"  # barge-in, disconnect or shutdown
+                raise
+            except asyncio.TimeoutError:
+                outcome = "timeout"
+                logger.error({"msg": "Turn timed out", "timeout_sec": self.config.TURN_TIMEOUT_SEC})
+                await self._fail_turn("turn_timeout", "The turn took too long")
+            except Exception as e:
+                outcome = "failed"
+                span.set_status(trace.StatusCode.ERROR, f"{type(e).__name__}")
+                # A provider failure is expected and already summarized; its traceback would
+                # print the chained provider response in full.
+                logger.error(
+                    {
+                        "msg": "Turn failed",
+                        "error": summarize_error(e, self.config.ERROR_SUMMARY_MAX_CHARS),
+                    },
+                    exc_info=not isinstance(e, STTError),
+                )
+                await self._fail_turn("turn_failed", "The turn could not be completed")
+            finally:
+                span.set_attribute("turn.outcome", outcome)
+                turns.add(1, {"outcome": outcome})
+
+    async def _turn(self, pcm: bytes) -> None:
+        playback_end = await asyncio.wait_for(
+            self._respond(pcm), timeout=self.config.TURN_TIMEOUT_SEC
+        )
+        if playback_end is not None:
+            await self._wait_for_playback(playback_end)
+        await self._transition(AvatarState.IDLE)
 
     async def _respond(self, pcm: bytes) -> Optional[float]:
         """
@@ -304,6 +371,8 @@ class Orchestrator:
         audio_sec = 0.0
         sample_rate = 0
         replied = False
+        span = trace.get_current_span()  # the turn
+        answer_pcm = bytearray()  # kept only to be captured
 
         async with aclosing(self._engine.respond(pcm, MIC_SAMPLE_RATE)) as events:
             async for event in events:
@@ -316,12 +385,14 @@ class Orchestrator:
                 elif isinstance(event, AudioEvent):
                     replied = True
                     sample_rate = event.sample_rate
+                    if self._capture:
+                        answer_pcm += event.pcm
                     if event.pcm and first_audio_at is None:
                         first_audio_at = loop.time()
-                        logger.info({
-                            "msg": "First audio",
-                            "first_audio_ms": round((first_audio_at - started) * 1000),
-                        })
+                        first_audio_ms = (first_audio_at - started) * 1000
+                        span.set_attribute("turn.first_audio_ms", round(first_audio_ms))
+                        stage_duration.record(first_audio_ms, {"stage": "turn_first_audio"})
+                        logger.info({"msg": "First audio", "first_audio_ms": round(first_audio_ms)})
                         await self._transition(AvatarState.SPEAKING)
                     audio_sec += len(event.pcm) / PCM_SAMPLE_WIDTH / event.sample_rate
                     await self._send_speech(event.text, event.pcm, sample_rate)
@@ -330,6 +401,10 @@ class Orchestrator:
             # Cleared before the final message: only a `playback_ended` answering it counts.
             self._playback_ended.clear()
             await self._send_final(sample_rate)
+        span.set_attribute("turn.audio_sec", round(audio_sec, 2))
+        if self._capture and answer_pcm:
+            trace_id = trace.format_trace_id(span.get_span_context().trace_id)
+            self._capture.audio(trace_id, "answer", bytes(answer_pcm), sample_rate)
         logger.info({
             "msg": "Turn complete",
             "audio_sec": round(audio_sec, 2),
@@ -341,13 +416,16 @@ class Orchestrator:
         """Stay in `speaking` until the client reports the queue drained, or a grace period
         after the estimated end of the audio (TTS synthesizes faster than real time)."""
         remaining = max(playback_end - asyncio.get_running_loop().time(), 0.0)
-        try:
-            await asyncio.wait_for(
-                self._playback_ended.wait(),
-                timeout=remaining + self.config.PLAYBACK_END_TIMEOUT_SEC,
-            )
-        except asyncio.TimeoutError:
-            logger.warning({"msg": "No playback_ended from client, leaving speaking"})
+        with tracer.start_as_current_span("playback") as span:
+            try:
+                await asyncio.wait_for(
+                    self._playback_ended.wait(),
+                    timeout=remaining + self.config.PLAYBACK_END_TIMEOUT_SEC,
+                )
+                span.set_attribute("playback.ended_by", "client")
+            except asyncio.TimeoutError:
+                span.set_attribute("playback.ended_by", "timeout")
+                logger.warning({"msg": "No playback_ended from client, leaving speaking"})
 
     async def _send_speech(self, text: str, pcm: bytes, sample_rate: int) -> None:
         await self.ws_manager.send(speech_message(text, pcm, sample_rate, is_final=False))
@@ -410,12 +488,35 @@ class Orchestrator:
         """Track the newest camera frame off the loop. No camera → no face."""
         frame = self._camera.take_frame()
         if frame is not None:
+            started = time.perf_counter()
             self._last_tracking = await asyncio.get_running_loop().run_in_executor(
                 self._vision_executor, self._tracker.process, frame
             )
+            self._record_frame(frame, (time.perf_counter() - started) * 1000)
         elif not self._camera.connected:
             self._last_tracking = TrackingResult()
+        self._note_presence(self._last_tracking.present)
         return self._last_tracking
+
+    def _record_frame(self, frame: object, process_ms: float) -> None:
+        """Measure one tracked frame and, with capture on, store it with its result."""
+        tracking = self._last_tracking
+        perception_duration.record(process_ms, {"stage": "tracking"})
+        frames_tracked.add(1, {"present": tracking.present})
+        if self._capture:
+            rotation = tracking.head_rotation
+            self._capture.frame(frame, {
+                "present": tracking.present,
+                "head_rotation": rotation.to_dict() if rotation else None,
+                "process_ms": round(process_ms, 1),
+                "state": self._state.value,
+            })
+
+    def _note_presence(self, present: bool) -> None:
+        """A person arriving in front of the camera, or leaving it, is an event."""
+        if present != self._present:
+            self._present = present
+            self._perception_event("person_arrived" if present else "person_left")
 
     def _head_rotation(self, tracking: TrackingResult) -> HeadRotation:
         """Last-known rotation while the face is briefly lost; neutral after
@@ -444,4 +545,6 @@ class Orchestrator:
 
         self._state = new_state
         logger.info({"msg": f"State: {old.value} → {new_state.value}"})
+        if self._capture:
+            self._capture.event("state", old=old.value, new=new_state.value)
         await self.ws_manager.send(state_message(new_state))
