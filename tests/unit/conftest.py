@@ -15,5 +15,6 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def config() -> AppConfig:
-    return AppConfig(GROQ_API_KEY="test-key")
+def config(tmp_path) -> AppConfig:
+    # The knowledge base of a test lives in its own temporary directory.
+    return AppConfig(GROQ_API_KEY="test-key", KNOWLEDGE_DB_PATH=str(tmp_path / "knowledge.db"))
