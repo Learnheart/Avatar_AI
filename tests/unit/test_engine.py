@@ -5,8 +5,10 @@ import pytest
 
 from backend.config import AppConfig
 from backend.core.conversation.engine import ConversationEngine, split_sentences
-from backend.core.contracts import LLM, STT, TTS, LLMError, STTError, TTSError
-from backend.models import AudioEvent, DoneEvent, Transcript, TranscriptEvent
+from backend.core.contracts import (
+    LLM, STT, TTS, Knowledge, KnowledgeError, LLMError, STTError, TTSError,
+)
+from backend.models import AudioEvent, DoneEvent, Passage, Transcript, TranscriptEvent
 
 RATE = 48000
 
@@ -307,3 +309,105 @@ def test_close_closes_the_tts_model(config):
     engine.close()
 
     assert not tts.loaded
+
+
+# ── Knowledge lookup ──────────────────────────────────────────────────────
+
+QUESTION = "Lãi suất tiết kiệm là bao nhiêu?"
+
+
+class FakeKnowledge(Knowledge):
+    def __init__(self, passages: list[Passage]) -> None:
+        self.passages = passages
+        self.error: Exception | None = None
+        self.hang = False
+        self.queries: list[str] = []
+
+    async def search(self, query: str) -> list[Passage]:
+        self.queries.append(query)
+        if self.hang:
+            await asyncio.Event().wait()
+        if self.error:
+            raise self.error
+        return self.passages
+
+
+def _engine_with(config: AppConfig, knowledge: FakeKnowledge) -> tuple[ConversationEngine, FakeLLM]:
+    llm = FakeLLM(["Năm phần trăm."])
+    engine = ConversationEngine(
+        config, stt=FakeSTT(QUESTION), llm=llm, tts=FakeTTS(), knowledge=knowledge
+    )
+    return engine, llm
+
+
+async def test_passages_are_given_to_the_llm_with_the_question(config):
+    knowledge = FakeKnowledge([
+        Passage("Kỳ hạn sáu tháng: 5%.", "lai-suat.pdf", 0.8),
+        Passage("Kỳ hạn mười hai tháng: 6%.", "bieu-phi.docx", 0.6),
+    ])
+    engine, llm = _engine_with(config, knowledge)
+
+    events = await _collect(engine)
+
+    (prompt,) = llm.calls
+    assert knowledge.queries == [QUESTION]
+    assert prompt == config.KNOWLEDGE_PROMPT.format(
+        passages=(
+            "[1] (tài liệu: lai-suat.pdf)\nKỳ hạn sáu tháng: 5%.\n\n"
+            "[2] (tài liệu: bieu-phi.docx)\nKỳ hạn mười hai tháng: 6%."
+        ),
+        question=QUESTION,
+    )
+    assert prompt.endswith(f"Câu hỏi: {QUESTION}")
+    assert events[0] == TranscriptEvent(QUESTION)  # the transcript stays the bare question
+    assert _texts(events) == ["Năm phần trăm."]
+
+
+async def test_a_passage_with_braces_does_not_break_the_prompt(config):
+    engine, llm = _engine_with(config, FakeKnowledge([Passage("{lãi} {0}", "a.txt", 0.9)]))
+
+    await _collect(engine)
+
+    assert "{lãi} {0}" in llm.calls[0]
+
+
+async def test_no_passage_sends_the_bare_question(config):
+    engine, llm = _engine_with(config, FakeKnowledge([]))
+
+    await _collect(engine)
+
+    assert llm.calls == [QUESTION]
+
+
+async def test_a_failing_lookup_sends_the_bare_question(config):
+    knowledge = FakeKnowledge([Passage("x", "a.txt", 0.9)])
+    knowledge.error = KnowledgeError("store is gone")
+    engine, llm = _engine_with(config, knowledge)
+
+    events = await _collect(engine)
+
+    assert llm.calls == [QUESTION]
+    assert isinstance(events[-1], DoneEvent)
+
+
+async def test_a_slow_lookup_is_abandoned_after_its_timeout(config):
+    config.KNOWLEDGE_TIMEOUT_SEC = 0.05
+    knowledge = FakeKnowledge([Passage("x", "a.txt", 0.9)])
+    knowledge.hang = True
+    engine, llm = _engine_with(config, knowledge)
+
+    events = await asyncio.wait_for(_collect(engine), timeout=2)
+
+    assert llm.calls == [QUESTION]
+    assert _texts(events) == ["Năm phần trăm."]
+
+
+async def test_an_empty_transcript_makes_no_lookup(config):
+    knowledge = FakeKnowledge([Passage("x", "a.txt", 0.9)])
+    engine = ConversationEngine(
+        config, stt=FakeSTT("  "), llm=FakeLLM(["x."]), tts=FakeTTS(), knowledge=knowledge
+    )
+
+    await _collect(engine)
+
+    assert knowledge.queries == []

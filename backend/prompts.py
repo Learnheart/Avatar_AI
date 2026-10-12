@@ -23,6 +23,19 @@ class Prompts:
         "gì. Nếu không có lời nói, trả về chuỗi rỗng."
     )
 
+    # The user message when the knowledge base has passages for the question: the
+    # passages (each written with KNOWLEDGE_PASSAGE), then the question.
+    KNOWLEDGE_PROMPT: str = (
+        "Dưới đây là các đoạn trích từ tài liệu nội bộ có thể liên quan đến câu hỏi:\n\n"
+        "{passages}\n\n"
+        "Hãy ưu tiên dùng thông tin trong các đoạn trích trên để trả lời. Nếu chúng không "
+        "liên quan đến câu hỏi, hãy bỏ qua và trả lời như bình thường. Nếu câu hỏi cần "
+        "thông tin nội bộ mà các đoạn trích không có, hãy nói rằng bạn chưa có thông tin "
+        "đó, đừng tự đoán. Không đọc số thứ tự hay tên tài liệu của đoạn trích.\n\n"
+        "Câu hỏi: {question}"
+    )
+    KNOWLEDGE_PASSAGE: str = "[{index}] (tài liệu: {source})\n{text}"
+
     # Spoken when the LLM fails or answers nothing, instead of staying silent.
     LLM_FALLBACK_TEXT: str = (
         "Xin lỗi, tôi chưa thể trả lời ngay lúc này. Bạn vui lòng thử lại sau nhé."

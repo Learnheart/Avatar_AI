@@ -1,17 +1,18 @@
 """
 ConversationEngine — the swappable boundary "audio in → text + audio out".
 
-One turn: STT → LLM (streamed) → TTS (per sentence). The LLM keeps streaming in its own
+One turn: STT → knowledge lookup (optional) → LLM (streamed) → TTS (per sentence). The LLM keeps streaming in its own
 task while finished sentences are synthesized, so the first audio does not wait for the
 whole answer. Every stage runs under its own timeout.
 """
 import asyncio
 import re
+import time
 from contextlib import aclosing
 from typing import AsyncIterator, Callable, Optional, TypeVar
 
 from backend.config import AppConfig
-from backend.core.contracts import LLM, STT, TTS, LLMError, STTError, TTSError
+from backend.core.contracts import LLM, STT, TTS, Knowledge, LLMError, STTError, TTSError
 from backend.models import AudioEvent, DoneEvent, EngineEvent, Transcript, TranscriptEvent
 from backend.utils.errors import summarize_error
 from backend.utils.logging import get_logger
@@ -60,11 +61,20 @@ async def _bounded(
 
 
 class ConversationEngine:
-    def __init__(self, config: AppConfig, stt: STT, llm: LLM, tts: TTS) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        stt: STT,
+        llm: LLM,
+        tts: TTS,
+        knowledge: Optional[Knowledge] = None,
+    ) -> None:
+        """Without `knowledge`, the LLM answers the transcript alone."""
         self.config = config
         self._stt = stt
         self._llm = llm
         self._tts = tts
+        self._knowledge = knowledge
 
     def load(self) -> None:
         """Load local models. Call once at startup, off the event loop (blocking)."""
@@ -82,9 +92,10 @@ class ConversationEngine:
             yield DoneEvent()
             return
 
+        question = await self._with_knowledge(transcript.text)
         sentences: asyncio.Queue[Optional[str]] = asyncio.Queue()
         producer = asyncio.create_task(
-            self._produce_sentences(transcript.text, sentences), name="llm-sentences"
+            self._produce_sentences(question, sentences), name="llm-sentences"
         )
         try:
             while (sentence := await sentences.get()) is not None:
@@ -106,6 +117,42 @@ class ConversationEngine:
             )
         except asyncio.TimeoutError as e:
             raise STTError(f"STT timed out after {self.config.STT_TIMEOUT_SEC}s") from e
+
+    async def _with_knowledge(self, question: str) -> str:
+        """The question, preceded by the passages of the uploaded documents that match
+        it. No passage, a slow or a failing lookup → the question alone: the knowledge
+        base never costs the turn."""
+        if self._knowledge is None:
+            return question
+        started = time.perf_counter()
+        try:
+            passages = await asyncio.wait_for(
+                self._knowledge.search(question), timeout=self.config.KNOWLEDGE_TIMEOUT_SEC
+            )
+        except asyncio.TimeoutError:
+            logger.warning({
+                "msg": "Knowledge lookup timed out, answering without it",
+                "timeout_sec": self.config.KNOWLEDGE_TIMEOUT_SEC,
+            })
+            return question
+        except Exception as e:
+            summary = summarize_error(e, self.config.ERROR_SUMMARY_MAX_CHARS)
+            logger.warning({"msg": "Knowledge lookup failed, answering without it", "error": summary})
+            return question
+
+        logger.info({
+            "msg": "Knowledge lookup",
+            "passages": len(passages),
+            "top_score": round(passages[0].score, 3) if passages else None,
+            "knowledge_ms": round((time.perf_counter() - started) * 1000),
+        })
+        if not passages:
+            return question
+        listed = "\n\n".join(
+            self.config.KNOWLEDGE_PASSAGE.format(index=index, source=p.source, text=p.text)
+            for index, p in enumerate(passages, start=1)
+        )
+        return self.config.KNOWLEDGE_PROMPT.format(passages=listed, question=question)
 
     async def _produce_sentences(
         self, user_text: str, sentences: "asyncio.Queue[Optional[str]]"
