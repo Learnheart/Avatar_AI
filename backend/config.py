@@ -20,7 +20,7 @@ DEVICES = ("metal", "cuda", "cpu")
 AUTO = "auto"
 # Backend name for any OpenAI-compatible endpoint other than Groq (LLM and STT).
 OPENAI_COMPATIBLE = "openai_compatible"
-# Backend name of the Databricks AI Gateway (LLM, OpenAI Responses API).
+# Backend name of the Databricks AI Gateway (LLM and STT).
 DATABRICKS = "databricks"
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
@@ -42,7 +42,7 @@ class AppConfig(Tuning, Prompts):
 
     # ── Models and backends ─────────────────────────────────────────────
     # Backend names are the entries of `backend/providers/catalog.py`.
-    # auto (picked from the device) | groq_whisper | openai_compatible
+    # auto (picked from the device) | groq_whisper | openai_compatible | databricks
     STT_BACKEND: str = env_str("STT_BACKEND", AUTO, normalize=str.lower)
     STT_MODEL: str = env_str("STT_MODEL", "whisper-large-v3-turbo")
     # groq | openai_compatible | databricks
@@ -60,10 +60,20 @@ class AppConfig(Tuning, Prompts):
     STT_BASE_URL: str = env_str("STT_BASE_URL", "")
     STT_API_KEY: str = env_str("STT_API_KEY", repr=False)
 
-    # ── Databricks AI Gateway (LLM_BACKEND=databricks) ──────────────────
-    # The gateway root, `https://<workspace>/ai-gateway/mlflow/v1`; the model is LLM_MODEL.
+    # ── Databricks AI Gateway (LLM_BACKEND / STT_BACKEND = databricks) ──
+    # The gateway root, `https://<workspace>/ai-gateway/mlflow/v1`.
     DATABRICKS_BASE_URL: str = env_str("DATABRICKS_BASE_URL", "")
+    # Credential: a static token, or else the Databricks CLI profile to take one from
+    # (`databricks auth login --profile <name>`).
     DATABRICKS_TOKEN: str = env_str("DATABRICKS_TOKEN", repr=False)
+    DATABRICKS_PROFILE: str = env_str("DATABRICKS_PROFILE", "")
+    # The gateway's own models; LLM_MODEL and STT_MODEL belong to the other backends.
+    DATABRICKS_LLM_MODEL: str = env_str(
+        "DATABRICKS_LLM_MODEL", "nonprod_ai.tsfai.glm-5-3-flash-dev-tai"
+    )
+    DATABRICKS_STT_MODEL: str = env_str(
+        "DATABRICKS_STT_MODEL", "nonprod_ai.tsfai.gemini-3-6-flash-dev-tai"
+    )
 
     # ── Camera ──────────────────────────────────────────────────────────
     CAMERA_INDEX: int = env_int("CAMERA_INDEX", 0)
@@ -79,11 +89,13 @@ class AppConfig(Tuning, Prompts):
             raise ValueError("groq_api_key is required. Set it in .env file.")
         if self.LLM_BACKEND == OPENAI_COMPATIBLE and not self.LLM_BASE_URL:
             raise ValueError("LLM_BASE_URL is required when LLM_BACKEND=openai_compatible.")
-        if self.LLM_BACKEND == DATABRICKS:
+        if DATABRICKS in (self.LLM_BACKEND, self.STT_BACKEND):
             if not self.DATABRICKS_BASE_URL:
-                raise ValueError("DATABRICKS_BASE_URL is required when LLM_BACKEND=databricks.")
-            if not self.DATABRICKS_TOKEN:
-                raise ValueError("DATABRICKS_TOKEN is required when LLM_BACKEND=databricks.")
+                raise ValueError("DATABRICKS_BASE_URL is required by the databricks backends.")
+            if not (self.DATABRICKS_TOKEN or self.DATABRICKS_PROFILE):
+                raise ValueError(
+                    "DATABRICKS_TOKEN or DATABRICKS_PROFILE is required by the databricks backends."
+                )
         if self.STT_BACKEND == OPENAI_COMPATIBLE and not self.STT_BASE_URL:
             raise ValueError("STT_BASE_URL is required when STT_BACKEND=openai_compatible.")
         if self.DEVICE != AUTO and self.DEVICE not in DEVICES:

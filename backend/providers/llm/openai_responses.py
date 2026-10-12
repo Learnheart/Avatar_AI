@@ -2,10 +2,10 @@
 LLM backend for the OpenAI Responses API — streamed response.
 
 Serves the endpoints that expose `/responses` instead of `/chat/completions`, such as the
-Databricks AI Gateway: the endpoint is passed in by `backend/providers/catalog.py`, the
-model comes from `LLM_MODEL`.
+Databricks AI Gateway: the endpoint and the model are passed in by
+`backend/providers/catalog.py`.
 """
-from typing import AsyncIterator
+from typing import AsyncIterator, Awaitable, Callable, Union
 
 from openai import AsyncOpenAI, OpenAIError
 
@@ -23,8 +23,18 @@ def _message(role: str, text: str) -> dict:
 
 
 class OpenAIResponsesLLM(LLM):
-    def __init__(self, config: AppConfig, *, base_url: str, api_key: str) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        *,
+        base_url: str,
+        api_key: Union[str, Callable[[], Awaitable[str]]],
+        model: str,
+        reasoning_effort: str,
+    ) -> None:
         self.config = config
+        self._model = model
+        self._reasoning_effort = reasoning_effort
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
@@ -35,7 +45,7 @@ class OpenAIResponsesLLM(LLM):
     async def stream_answer(self, user_text: str) -> AsyncIterator[str]:
         try:
             stream = await self._client.responses.create(
-                model=self.config.LLM_MODEL,
+                model=self._model,
                 stream=True,
                 # The system prompt travels as a message, not as `instructions`: a gateway
                 # that ignores unknown top-level fields cannot drop it silently.
@@ -44,6 +54,8 @@ class OpenAIResponsesLLM(LLM):
                     _message("user", user_text),
                 ],
                 max_output_tokens=self.config.LLM_MAX_TOKENS,
+                # The model thinks before the first word of the answer: keep it short.
+                reasoning={"effort": self._reasoning_effort},
             )
             try:
                 async for event in stream:

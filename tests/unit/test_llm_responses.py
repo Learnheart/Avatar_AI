@@ -64,7 +64,7 @@ class FakeAsyncOpenAI:
 def config() -> AppConfig:
     return AppConfig(
         LLM_BACKEND="databricks",
-        LLM_MODEL="catalog.schema.model",
+        DATABRICKS_LLM_MODEL="catalog.schema.model",
         DATABRICKS_BASE_URL=BASE_URL,
         DATABRICKS_TOKEN="dapi-token",
     )
@@ -107,6 +107,7 @@ async def test_request_is_built_from_config(llm, config):
         "model": "catalog.schema.model",
         "stream": True,
         "max_output_tokens": config.LLM_MAX_TOKENS,
+        "reasoning": {"effort": config.LLM_REASONING_EFFORT},
         "input": [
             {
                 "role": "system",

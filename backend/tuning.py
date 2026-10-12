@@ -23,6 +23,10 @@ class Tuning:
     STT_LANGUAGE: str = env_str("STT_LANGUAGE", "vi")
     STT_TIMEOUT_SEC: float = env_float("STT_TIMEOUT_SEC", 8.0)
     STT_MAX_UTTERANCE_SEC: float = env_float("STT_MAX_UTTERANCE_SEC", 30.0)
+    # Only for an STT done by a chat model (STT_BACKEND=databricks): how much it may
+    # think before transcribing, and the cap on the transcript length.
+    STT_REASONING_EFFORT: str = env_str("STT_REASONING_EFFORT", "minimal")
+    STT_MAX_TOKENS: int = env_int("STT_MAX_TOKENS", 512)
 
     # ── Answering (LLM) ─────────────────────────────────────────────────
     LLM_REASONING_EFFORT: str = env_str("LLM_REASONING_EFFORT", "low")
@@ -58,6 +62,10 @@ class Tuning:
     # SDK-level retries per Groq request. 0: a failed call goes straight to the engine's
     # own fallback instead of spending the latency budget on retries.
     GROQ_MAX_RETRIES: int = env_int("GROQ_MAX_RETRIES", 0)
+    # A Databricks CLI profile token is renewed this many seconds before it expires.
+    DATABRICKS_TOKEN_REFRESH_MARGIN_SEC: float = env_float(
+        "DATABRICKS_TOKEN_REFRESH_MARGIN_SEC", 120.0
+    )
     # Seconds between attempts to (re)open the camera.
     CAMERA_RETRY_SEC: float = env_float("CAMERA_RETRY_SEC", 2.0)
     # Characters of an underlying error's text kept in domain error messages and logs.

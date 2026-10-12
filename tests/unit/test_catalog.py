@@ -7,7 +7,10 @@ from backend.providers.llm import openai_compatible as llm_module
 from backend.providers.llm import openai_responses as responses_module
 from backend.providers.llm.openai_compatible import OpenAICompatibleLLM
 from backend.providers.llm.openai_responses import OpenAIResponsesLLM
+from backend.providers.databricks import ProfileToken
+from backend.providers.stt import chat_audio as chat_audio_module
 from backend.providers.stt import openai_compatible as stt_module
+from backend.providers.stt.chat_audio import ChatAudioSTT
 from backend.providers.stt.openai_compatible import OpenAICompatibleSTT
 from backend.runtime import device as runtime_device
 from backend.runtime.device import detect_device
@@ -81,6 +84,7 @@ def clients(monkeypatch):
     monkeypatch.setattr(llm_module, "AsyncOpenAI", RecordingClient)
     monkeypatch.setattr(responses_module, "AsyncOpenAI", RecordingClient)
     monkeypatch.setattr(stt_module, "AsyncOpenAI", RecordingClient)
+    monkeypatch.setattr(chat_audio_module, "AsyncOpenAI", RecordingClient)
 
 
 def test_default_llm_is_groq_with_its_reasoning_parameters(clients, config):
@@ -121,6 +125,37 @@ def test_databricks_llm_uses_the_gateway_endpoint_and_token(clients):
     assert isinstance(llm, OpenAIResponsesLLM)
     assert llm._client.kwargs["base_url"] == "https://dbx.local/ai-gateway/mlflow/v1"
     assert llm._client.kwargs["api_key"] == "dapi-token"
+    assert llm._model == "nonprod_ai.tsfai.glm-5-3-flash-dev-tai"
+
+
+def test_databricks_stt_uses_the_gateway_and_its_own_model(clients):
+    stt = create_stt(
+        AppConfig(
+            STT_BACKEND="databricks",
+            DATABRICKS_BASE_URL="https://dbx.local/ai-gateway/mlflow/v1",
+            DATABRICKS_TOKEN="dapi-token",
+            DATABRICKS_STT_MODEL="catalog.schema.hears",
+        )
+    )
+
+    assert isinstance(stt, ChatAudioSTT)
+    assert stt._client.kwargs["base_url"] == "https://dbx.local/ai-gateway/mlflow/v1"
+    assert stt._client.kwargs["api_key"] == "dapi-token"
+    assert stt._model == "catalog.schema.hears"
+
+
+def test_databricks_backends_take_the_profile_token_when_no_static_token(clients):
+    config = AppConfig(
+        LLM_BACKEND="databricks",
+        STT_BACKEND="databricks",
+        DATABRICKS_BASE_URL="https://dbx.local/ai-gateway/mlflow/v1",
+        DATABRICKS_PROFILE="my-profile",
+    )
+
+    for stage in (create_llm(config), create_stt(config)):
+        key = stage._client.kwargs["api_key"]
+        assert isinstance(key, ProfileToken)
+        assert key._profile == "my-profile"
 
 
 def test_openai_compatible_stt_uses_its_own_endpoint(clients):

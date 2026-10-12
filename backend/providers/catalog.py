@@ -13,15 +13,19 @@ drops in by adding it to both STT tables.
 self-hosted server, from `.env` alone: `LLM_BACKEND`, `LLM_BASE_URL`, `LLM_API_KEY`,
 `LLM_MODEL` (and the `STT_*` equivalents).
 
-`databricks` (LLM) calls the Databricks AI Gateway through the OpenAI Responses API:
-`DATABRICKS_BASE_URL`, `DATABRICKS_TOKEN`, `LLM_MODEL`.
+`databricks` (LLM and STT) calls the Databricks AI Gateway: `DATABRICKS_BASE_URL`, a
+credential (`DATABRICKS_TOKEN` or `DATABRICKS_PROFILE`) and the gateway's own models,
+`DATABRICKS_LLM_MODEL` (Responses API) and `DATABRICKS_STT_MODEL` (a chat model that is
+sent the utterance as audio). STT is never routed there by the device: set `STT_BACKEND`.
 """
 from typing import Callable
 
 from backend.config import AUTO, DATABRICKS, OPENAI_COMPATIBLE, AppConfig
 from backend.core.contracts import LLM, STT, TTS
+from backend.providers.databricks import databricks_api_key
 from backend.providers.llm.openai_compatible import OpenAICompatibleLLM
 from backend.providers.llm.openai_responses import OpenAIResponsesLLM
+from backend.providers.stt.chat_audio import ChatAudioSTT
 from backend.providers.stt.openai_compatible import OpenAICompatibleSTT
 from backend.providers.tts.zerotts import ZeroTTSBackend
 from backend.runtime.device import detect_device
@@ -46,6 +50,12 @@ _STT_BACKENDS: dict[str, Callable[[AppConfig], STT]] = {
     ),
     OPENAI_COMPATIBLE: lambda config: OpenAICompatibleSTT(
         config, base_url=config.STT_BASE_URL, api_key=config.STT_API_KEY or _NO_KEY
+    ),
+    DATABRICKS: lambda config: ChatAudioSTT(
+        config,
+        base_url=config.DATABRICKS_BASE_URL,
+        api_key=databricks_api_key(config),
+        model=config.DATABRICKS_STT_MODEL,
     ),
 }
 
@@ -78,7 +88,11 @@ _LLM_BACKENDS: dict[str, Callable[[AppConfig], LLM]] = {
         config, base_url=config.LLM_BASE_URL, api_key=config.LLM_API_KEY or _NO_KEY
     ),
     DATABRICKS: lambda config: OpenAIResponsesLLM(
-        config, base_url=config.DATABRICKS_BASE_URL, api_key=config.DATABRICKS_TOKEN
+        config,
+        base_url=config.DATABRICKS_BASE_URL,
+        api_key=databricks_api_key(config),
+        model=config.DATABRICKS_LLM_MODEL,
+        reasoning_effort=config.LLM_REASONING_EFFORT,
     ),
 }
 

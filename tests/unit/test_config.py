@@ -125,10 +125,21 @@ def test_databricks_llm_needs_no_groq_key_when_stt_is_not_groq():
     ).validate()
 
 
+@pytest.mark.parametrize("stage", ["LLM_BACKEND", "STT_BACKEND"])
 @pytest.mark.parametrize("key", ["DATABRICKS_BASE_URL", "DATABRICKS_TOKEN"])
-def test_databricks_backend_requires_its_url_and_token(key):
+def test_databricks_backend_requires_its_url_and_a_credential(stage, key):
+    settings = {**_DATABRICKS, "LLM_BACKEND": "groq", stage: "databricks", key: ""}
+
     with pytest.raises(ValueError, match=key):
-        AppConfig(GROQ_API_KEY="test-key", **{**_DATABRICKS, key: ""}).validate()
+        AppConfig(GROQ_API_KEY="test-key", **settings).validate()
+
+
+def test_databricks_profile_replaces_the_token_and_no_groq_key_is_needed():
+    AppConfig(
+        **{**_DATABRICKS, "DATABRICKS_TOKEN": ""},
+        STT_BACKEND="databricks",
+        DATABRICKS_PROFILE="my-profile",
+    ).validate()
 
 
 def test_endpoint_keys_never_appear_in_repr():

@@ -17,6 +17,12 @@ class Prompts:
         "Câu trả lời ngắn gọn, rõ ràng, tối đa 2-3 câu mỗi lượt."
     )
 
+    # The instruction sent with the utterance when a chat model does the STT.
+    STT_TRANSCRIBE_PROMPT: str = (
+        "Chép lại nguyên văn lời nói trong đoạn audio. Chỉ trả về lời nói, không thêm "
+        "gì. Nếu không có lời nói, trả về chuỗi rỗng."
+    )
+
     # Spoken when the LLM fails or answers nothing, instead of staying silent.
     LLM_FALLBACK_TEXT: str = (
         "Xin lỗi, tôi chưa thể trả lời ngay lúc này. Bạn vui lòng thử lại sau nhé."
