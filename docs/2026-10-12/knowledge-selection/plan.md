@@ -45,8 +45,17 @@ summary: Let the user choose in the panel which uploaded documents the avatar an
 
 ## To-do
 
-- [ ] Store, knowledge base and `PATCH` route with unit tests
-- [ ] Panel checkbox and summary with unit tests, `npm run build`
-- [ ] `CLAUDE.md` route note, `quality-gates.md`
-- [ ] Real run: a turn with the document unselected, then selected
+- [x] Store, knowledge base and `PATCH` route with unit tests
+- [x] Panel checkbox and summary with unit tests, `npm run build`
+- [x] `CLAUDE.md` route note, `quality-gates.md`
+- [x] Real run (2026-10-12, Databricks STT + LLM + embedding,
+      `tests/e2e/test_real_turn.py::test_turn_answers_from_an_uploaded_document`): with
+      the document unselected the answer is the generic range and no embedding call is
+      made; selected again, the answer gives the document's rate (7,35 %). The latency
+      gate fails on this path as it does without the knowledge base (first audio 9.3 s in
+      this run: STT 3.1 s, lookup 1.1 s, the rest the LLM's first token) — tracked in
+      `../knowledge-base/plan.md`
+- [x] The panel in a real browser (headless Chrome driven over CDP, 2026-10-12): txt,
+      docx and pdf uploaded and listed, a png refused with its reason, a document
+      unticked ("Đang dùng 2/3 tài liệu"), still unticked after a reload, one deleted
 - [ ] Human verification

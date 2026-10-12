@@ -121,5 +121,6 @@ frontend/src/knowledge/                client, panel, pure helpers
       — the gate already fails there without the knowledge base (STT alone takes 2.2 s;
       see `../databricks-stt-and-profile-auth/plan.md`). The lookup adds about 0.5 s.
       The Groq path cannot be measured from this network
-- [ ] The panel opened in a real browser (upload a PDF and a DOCX, list, delete)
+- [x] The panel opened in a real browser (headless Chrome, 2026-10-12: txt, docx and pdf
+      uploaded, listed, deleted) — see `../knowledge-selection/plan.md`
 - [ ] Human verification

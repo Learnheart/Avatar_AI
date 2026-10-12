@@ -101,7 +101,7 @@ cover as much logic as possible with unit tests.
 | 3D avatar | Three.js + @pixiv/three-vrm | Render avatar VRM, head motion, idle |
 | Audio | Web Audio API (AudioWorklet + AnalyserNode) | Thu mic (PCM 16kHz), phát audio, đo loudness cho lip-sync |
 | Lip-sync | logic thuần (RMS → blendshape mồm) | Amplitude-driven, bám audio đang phát |
-| Knowledge panel | DOM thuần + fetch (`VITE_API_URL`) | Upload / liệt kê / xoá tài liệu tri thức |
+| Knowledge panel | DOM thuần + fetch (`VITE_API_URL`) | Upload / liệt kê / xoá tài liệu tri thức; tick chọn tài liệu avatar được dùng để trả lời |
 
 ### External (cloud)
 
@@ -166,7 +166,7 @@ backend/
     device.py                  # metal / cuda / cpu detection
   features/                    # ── built beside the core: knowledge (RAG), memory ──
     knowledge/
-      knowledge_base.py        # KnowledgeBase: add / list / delete documents, search
+      knowledge_base.py        # KnowledgeBase: add / list / select / delete documents, search
       chunking.py              # document text → chunks (pure)
       loaders.py               # txt, md, csv, pdf, docx → text
       store.py                 # sqlite-vec store: documents, chunks, vectors (all the SQL)
@@ -190,7 +190,7 @@ frontend/                      # ── CAPABILITY 3: Expression ──
       audio-manager.js         # mic capture + gapless playback
     knowledge/
       knowledge-client.js      # calls the backend /knowledge API
-      knowledge-panel.js       # upload / list / delete panel
+      knowledge-panel.js       # upload / choose (checkbox) / delete panel
       format.js                # pure helpers (unit-tested)
     avatar/
       avatar-renderer.js       # VRM render, applies head / mouth values

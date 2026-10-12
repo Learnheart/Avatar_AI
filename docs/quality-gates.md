@@ -148,8 +148,8 @@ the most relevant passages out, best first, each with its source and score.
 
 | Type | Gate criteria |
 |---|---|
-| Functional | An uploaded txt / md / csv / pdf / docx is listed with its chunk count; a question about a fact of an uploaded document returns the passage holding it within the top `KNOWLEDGE_TOP_K`; a deleted document is never returned; the index survives a restart |
-| Performance | Lookup in a turn **< 1 s**, and never longer than `KNOWLEDGE_TIMEOUT_SEC`; an empty base costs no embedding call |
+| Functional | An uploaded txt / md / csv / pdf / docx is listed with its chunk count; a question about a fact of an uploaded document returns the passage holding it within the top `KNOWLEDGE_TOP_K`; a deleted document, or one the user has not selected, is never returned; the index and the selection survive a restart |
+| Performance | Lookup in a turn **< 1 s**, and never longer than `KNOWLEDGE_TIMEOUT_SEC`; an empty base, or one with no document selected, costs no embedding call |
 | Resilience | Unsupported, unreadable, empty or oversized file → refused with a reason, nothing stored; embedding failure on upload → nothing stored; lookup failure or timeout in a turn → the question is answered without passages, the turn completes |
 
 > Retrieval quality (recall on a golden set of question → passage pairs) is not gated
