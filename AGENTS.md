@@ -8,6 +8,8 @@ Vietnamese voice while a 3D VRM avatar turns its head and lip-syncs to the audio
 proves one complete turn: presence → listen → understand → answer → speak.
 
 - Architecture (source of truth): `docs/ARCHITECTURE.md`
+- Architecture records (each official architecture, with its context and consequences):
+  `docs/adr/` (§8)
 - Quality gates per module / integration / pipeline: `docs/quality-gates.md`
 - Language: talk to the user in Vietnamese; write code, comments, commit messages and
   docs in English.
@@ -40,12 +42,15 @@ summary: <one line>
   `expression`, `knowledge`.
 - A plan contains: problem statement, requirements, decisions made, implementation
   approach, and ends with a `## To-do` checklist (`- [ ] task`).
+- A plan that changes the overall architecture carries the new architecture record
+  (§8), written before the code.
 - Status: `todo` = not started, `in-progress` = implementation started, `done` =
   finished **and verified by a human**. Agents never set `done` on their own.
 - To implement a plan, follow its design exactly, tick tasks as they finish, and report
   only when every task is checked (or when blocked). Use the `incremental-implementation`
   skill for the work and `pm-orchestrator` when a task is handed off end to end.
-- After every verified code change or fix, commit it with the `git-auto-commit` skill.
+- After every verified code change or fix, commit it with the `git-auto-commit` skill,
+  together with its `CHANGELOG.md` entry (§7).
 - Never push unless the user asks for it.
 
 ## §1. No hardcoded values
@@ -145,13 +150,13 @@ in `core/contracts.py`, and backends are swapped by config, not by editing calle
 backend/
   main.py                      # FastAPI app, /ws, /health, /knowledge; wires core + providers + features
   config.py                    # AppConfig — secrets, per-machine and provider values
-  tuning.py                    # behaviour parameters (VAD, timeouts, head clamps, voice)
+  tuning.py                    # behaviour parameters (VAD, timeouts, conversation, head clamps, voice)
   prompts.py                   # system prompt and other texts
   models.py                    # shared dataclasses and enums
   core/                        # ── one turn; imports no provider, runtime or feature ──
     contracts.py               # STT, LLM, TTS, Embedder, Knowledge interfaces and their errors
     orchestrator/
-      orchestrator.py          # turn state machine + routing (only owner of state)
+      orchestrator.py          # turn state machine + routing (only owner of state); owns the conversation
       state.py                 # allowed state transitions
       ws_manager.py            # the single WebSocket connection + outgoing messages
     perception/                # ── CAPABILITY 1 ──
@@ -159,12 +164,13 @@ backend/
       tracking.py              # MediaPipe presence + head rotation
       vad.py                   # Silero VAD: speech_start / speech_end
     conversation/              # ── CAPABILITY 2 (separated pipeline) ──
-      engine.py                # ConversationEngine: audio in → (knowledge lookup) → text + audio out
+      engine.py                # ConversationEngine: audio + earlier turns in → (knowledge lookup) → text + audio out
+      history.py               # Conversation (one user session, its turns), record of a turn, chat messages (pure)
   providers/                   # ── model backends behind core/contracts.py ──
     catalog.py                 # backend name → builder, for every stage (+ device router)
     llm/openai_compatible.py   # Groq, OpenRouter, vLLM, Ollama, ...
     llm/openai_responses.py    # OpenAI Responses API: Databricks AI Gateway
-    stt/openai_compatible.py   # Groq Whisper or a self-hosted Whisper server
+    stt/openai_compatible.py   # Groq Whisper or a self-hosted Whisper server; confidence, non-speech refused
     stt/chat_audio.py          # a chat model that is sent the audio: Gemini on Databricks
     databricks.py              # Databricks credential: static token or CLI profile
     fallback.py                # primary + backup backend (STT_, LLM_, EMBEDDING_BACKEND_BACKUP)
@@ -203,6 +209,9 @@ frontend/                      # ── CAPABILITY 3: Expression ──
       knowledge-client.js      # calls the backend /knowledge API
       knowledge-panel.js       # upload / choose (checkbox) / delete panel
       format.js                # pure helpers (unit-tested)
+    transcript/
+      transcript.js            # the lines of the conversation on screen (pure, unit-tested)
+      transcript-panel.js      # transcript window + "Cuộc trò chuyện mới" button
     avatar/
       avatar-renderer.js       # VRM render, applies head / mouth values
       lip-sync.js              # reads loudness of the audio being played
@@ -216,7 +225,8 @@ tests/
   e2e/                         # pytest -m e2e, real environment (RUN_E2E=1)
 
 docs/
-  ARCHITECTURE.md
+  ARCHITECTURE.md              # the current shape of the system
+  adr/                         # NNNN-<name>.md architecture records, README.md (index), template.md (§8)
   quality-gates.md
   YYYY-MM-DD/<feature-name>/   # plan.md, design.md, test-plan.md (§0)
 ```
@@ -305,5 +315,69 @@ A change is done when all of these hold:
 4. A change on the speech path was exercised by a real turn (`tests/e2e`) with first
    audio under 3.5 s and end to end under 10 s, and the measured numbers are reported.
 5. No hardcoded keys, URLs, model names or tunables (§1); new keys are in `.env.example`.
-6. It is committed with `git-auto-commit`. The plan status becomes `done` only after a
+6. `CHANGELOG.md` has an entry for it under `[Unreleased]` (§7).
+7. If it changes the overall architecture, there is a new architecture record and
+   `docs/ARCHITECTURE.md` shows the new shape with a Backlog row linking to it (§8).
+8. It is committed with `git-auto-commit`. The plan status becomes `done` only after a
    human has verified it.
+
+## §7. Changelog
+
+`CHANGELOG.md` at the repository root is the one record of what changed for someone
+using or operating the avatar. Plans (`docs/YYYY-MM-DD/`) say why and how; the changelog
+says what.
+
+- Add an entry in the same commit as the change, for every change that alters what the
+  avatar does or how it is run: a feature, a fix, a changed contract (WebSocket message,
+  HTTP route), a new, renamed or removed config key, a changed default or prompt, a new
+  dependency. A commit that only refactors, adds tests or writes a plan needs none.
+- New entries go under `## [Unreleased]`, at the top of the file. A version is cut only
+  when a human asks for a release: `[Unreleased]` then becomes `## [X.Y.Z] - YYYY-MM-DD`
+  and a new empty `[Unreleased]` is opened. Agents never cut a version on their own.
+- Versions follow [Semantic Versioning](https://semver.org/), `MAJOR.MINOR.PATCH`:
+  - **MAJOR**: a breaking change. A WebSocket message or HTTP route changed or removed,
+    a config key renamed or removed, stored data that the new version cannot read, a
+    removed feature.
+  - **MINOR**: a new feature, module, model backend or config key.
+  - **PATCH**: a bug fix, prompt or default tuning, a styling tweak, a documentation
+    update.
+- Group the entries of a version under `### Added`, `### Changed`, `### Fixed`,
+  `### Removed`, in that order, leaving out the empty groups.
+- Start each entry with the module(s) it touches in brackets, using the module IDs of
+  §0: `[vision]`, `[vad]`, `[stt]`, `[llm]`, `[tts]`, `[orchestrator]`, `[expression]`,
+  `[knowledge]`. Use `[shared]` for what belongs to no single module (config,
+  providers, observability, packaging) and `[all]` for a change across the whole turn.
+- One line per entry, written for a reader who has not seen the code: what the avatar
+  now does, not which file changed. Mark a breaking change with `**Breaking:**`.
+
+## §8. Architecture records
+
+`docs/adr/` is the log of the **official architectures** of the system: one record per
+architecture, each showing the whole system, not one decision. `docs/ARCHITECTURE.md`
+is the full detail of the current one. `tests/unit/test_docs.py` checks the rules below.
+
+- Write a record only when a new overall architecture is adopted, typically once per
+  milestone (MVP 1, MVP 2). A feature, a single design choice, a bug fix or a tuning
+  change gets no record: it goes in its plan and, if it shows in the architecture, in
+  `docs/ARCHITECTURE.md` and its Backlog.
+- A record is `docs/adr/NNNN-<kebab-case-name>.md`, numbered in sequence without gaps,
+  copied from `docs/adr/template.md`: front matter (`adr`, `title`, `date`, `status`,
+  `agent`, `modules`) and exactly three sections:
+  - **Context**: what made this architecture necessary (the need, the starting point,
+    the constraints).
+  - **High-level diagram**: the whole system in one Mermaid diagram, what is new marked,
+    followed by the shape in words.
+  - **Consequences**: what it gives, what it costs, what it leaves open.
+- It is written at the altitude of the architecture document: responsibilities and
+  boundaries, no functions or file contents.
+- `status` is `accepted` or `superseded`. Only an architecture a human has approved is
+  logged; agents do not add a record on their own initiative.
+- A record is never rewritten to follow later changes. A new architecture is a new
+  record; the previous one changes its status to `superseded` and gains
+  `superseded_by: NNNN`. Exactly one record is not superseded: the current architecture.
+- Every record is listed in `docs/adr/README.md` with its status.
+- With a new record, update `docs/ARCHITECTURE.md` to the new shape in the same change
+  and add a row to its Backlog linking to the record. The version in that document's
+  header changes with each new record.
+- A milestone is also a git tag, created by a human or on request:
+  `git show <tag>:docs/ARCHITECTURE.md` is the detailed document as it was then.
