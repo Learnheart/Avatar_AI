@@ -62,6 +62,11 @@ class Tuning:
     # SDK-level retries per Groq request. 0: a failed call goes straight to the engine's
     # own fallback instead of spending the latency budget on retries.
     GROQ_MAX_RETRIES: int = env_int("GROQ_MAX_RETRIES", 0)
+    # With a backup backend (STT_BACKEND_BACKUP / LLM_BACKEND_BACKUP): how long the
+    # primary may take to answer (STT) or to send its first delta (LLM) before the backup
+    # is used, and how long the primary is then skipped before it is tried again.
+    FALLBACK_PRIMARY_TIMEOUT_SEC: float = env_float("FALLBACK_PRIMARY_TIMEOUT_SEC", 3.0)
+    FALLBACK_COOLDOWN_SEC: float = env_float("FALLBACK_COOLDOWN_SEC", 300.0)
     # A Databricks CLI profile token is renewed this many seconds before it expires.
     DATABRICKS_TOKEN_REFRESH_MARGIN_SEC: float = env_float(
         "DATABRICKS_TOKEN_REFRESH_MARGIN_SEC", 120.0

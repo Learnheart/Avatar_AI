@@ -162,3 +162,27 @@ def test_prompts_cannot_be_overridden_from_the_environment(monkeypatch):
 
     assert config.SYSTEM_PROMPT == defaults.SYSTEM_PROMPT != "prompt from env"
     assert config.LLM_FALLBACK_TEXT == defaults.LLM_FALLBACK_TEXT != "fallback from env"
+
+
+@pytest.mark.parametrize("stage", ["LLM", "STT"])
+def test_backup_backend_needs_its_settings_like_a_primary(stage):
+    backup = {f"{stage}_BACKEND_BACKUP": "databricks"}
+
+    with pytest.raises(ValueError, match="DATABRICKS_BASE_URL"):
+        AppConfig(GROQ_API_KEY="test-key", **backup).validate()
+
+    AppConfig(
+        GROQ_API_KEY="test-key",
+        DATABRICKS_BASE_URL="https://dbx.local/ai-gateway/mlflow/v1",
+        DATABRICKS_PROFILE="my-profile",
+        **backup,
+    ).validate()
+
+
+def test_groq_as_a_backup_requires_the_groq_key():
+    with pytest.raises(ValueError, match="groq_api_key"):
+        AppConfig(
+            **_DATABRICKS,
+            STT_BACKEND="databricks",
+            LLM_BACKEND_BACKUP="groq",
+        ).validate()

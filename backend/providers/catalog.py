@@ -17,12 +17,16 @@ self-hosted server, from `.env` alone: `LLM_BACKEND`, `LLM_BASE_URL`, `LLM_API_K
 credential (`DATABRICKS_TOKEN` or `DATABRICKS_PROFILE`) and the gateway's own models,
 `DATABRICKS_LLM_MODEL` (Responses API) and `DATABRICKS_STT_MODEL` (a chat model that is
 sent the utterance as audio). STT is never routed there by the device: set `STT_BACKEND`.
+
+`STT_BACKEND_BACKUP` and `LLM_BACKEND_BACKUP` name a second backend of the same tables
+that takes over when the first one fails (`backend/providers/fallback.py`).
 """
 from typing import Callable
 
 from backend.config import AUTO, DATABRICKS, OPENAI_COMPATIBLE, AppConfig
 from backend.core.contracts import LLM, STT, TTS
 from backend.providers.databricks import databricks_api_key
+from backend.providers.fallback import FallbackLLM, FallbackSTT
 from backend.providers.llm.openai_compatible import OpenAICompatibleLLM
 from backend.providers.llm.openai_responses import OpenAIResponsesLLM
 from backend.providers.stt.chat_audio import ChatAudioSTT
@@ -61,14 +65,25 @@ _STT_BACKENDS: dict[str, Callable[[AppConfig], STT]] = {
 
 
 def create_stt(config: AppConfig) -> STT:
-    """Build the STT backend: `STT_BACKEND` if set, else the one mapped to the device."""
+    """Build the STT backend: `STT_BACKEND` if set, else the one mapped to the device;
+    with `STT_BACKEND_BACKUP`, backed by a second one."""
     device = detect_device() if config.DEVICE == AUTO else config.DEVICE
-    name = DEVICE_BACKENDS[device] if config.STT_BACKEND == AUTO else config.STT_BACKEND
-    if name not in _STT_BACKENDS:
-        raise ValueError(f"Unknown STT_BACKEND: {name}")
 
-    logger.info({"msg": "STT backend selected", "device": device, "backend": name})
-    return _STT_BACKENDS[name](config)
+    def resolve(name: str) -> str:
+        name = DEVICE_BACKENDS[device] if name == AUTO else name
+        if name not in _STT_BACKENDS:
+            raise ValueError(f"Unknown STT_BACKEND: {name}")
+        return name
+
+    name = resolve(config.STT_BACKEND)
+    backup = resolve(config.STT_BACKEND_BACKUP) if config.STT_BACKEND_BACKUP else ""
+    logger.info(
+        {"msg": "STT backend selected", "device": device, "backend": name, "backup": backup}
+    )
+    stt = _STT_BACKENDS[name](config)
+    if backup and backup != name:
+        return FallbackSTT(config, stt, _STT_BACKENDS[backup](config))
+    return stt
 
 
 # ── LLM ───────────────────────────────────────────────────────────────────
@@ -98,10 +113,18 @@ _LLM_BACKENDS: dict[str, Callable[[AppConfig], LLM]] = {
 
 
 def create_llm(config: AppConfig) -> LLM:
-    """Build the LLM backend named by `LLM_BACKEND`."""
-    if config.LLM_BACKEND not in _LLM_BACKENDS:
-        raise ValueError(f"Unknown LLM_BACKEND: {config.LLM_BACKEND}")
-    return _LLM_BACKENDS[config.LLM_BACKEND](config)
+    """Build the LLM backend named by `LLM_BACKEND`; with `LLM_BACKEND_BACKUP`, backed by
+    a second one."""
+    name, backup = config.LLM_BACKEND, config.LLM_BACKEND_BACKUP
+    for backend in filter(None, (name, backup)):
+        if backend not in _LLM_BACKENDS:
+            raise ValueError(f"Unknown LLM_BACKEND: {backend}")
+
+    logger.info({"msg": "LLM backend selected", "backend": name, "backup": backup})
+    llm = _LLM_BACKENDS[name](config)
+    if backup and backup != name:
+        return FallbackLLM(config, llm, _LLM_BACKENDS[backup](config))
+    return llm
 
 
 # ── TTS ───────────────────────────────────────────────────────────────────

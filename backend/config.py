@@ -45,9 +45,12 @@ class AppConfig(Tuning, Prompts):
     # auto (picked from the device) | groq_whisper | openai_compatible | databricks
     STT_BACKEND: str = env_str("STT_BACKEND", AUTO, normalize=str.lower)
     STT_MODEL: str = env_str("STT_MODEL", "whisper-large-v3-turbo")
+    # The backend that takes over when the one above fails; empty = no backup.
+    STT_BACKEND_BACKUP: str = env_str("STT_BACKEND_BACKUP", "", normalize=str.lower)
     # groq | openai_compatible | databricks
     LLM_BACKEND: str = env_str("LLM_BACKEND", "groq", normalize=str.lower)
     LLM_MODEL: str = env_str("LLM_MODEL", "openai/gpt-oss-20b")
+    LLM_BACKEND_BACKUP: str = env_str("LLM_BACKEND_BACKUP", "", normalize=str.lower)
     TTS_BACKEND: str = env_str("TTS_BACKEND", "zerotts", normalize=str.lower)
     # A Hugging Face repo id, or a local directory holding the weights.
     ZEROTTS_REPO: str = env_str("ZEROTTS_REPO", "zeroweight-ai/ZeroTTS")
@@ -83,20 +86,23 @@ class AppConfig(Tuning, Prompts):
     CAMERA_HEIGHT: int = env_int("CAMERA_HEIGHT", 720)
 
     def validate(self) -> None:
+        # A backup backend needs its settings as much as the primary does.
+        llm_backends = {self.LLM_BACKEND, self.LLM_BACKEND_BACKUP} - {""}
+        stt_backends = {self.STT_BACKEND, self.STT_BACKEND_BACKUP} - {""}
         # `auto` STT resolves to Groq Whisper on every device (providers/catalog.py).
-        uses_groq = self.LLM_BACKEND == "groq" or self.STT_BACKEND in (AUTO, "groq_whisper")
+        uses_groq = "groq" in llm_backends or stt_backends & {AUTO, "groq_whisper"}
         if uses_groq and not self.GROQ_API_KEY:
             raise ValueError("groq_api_key is required. Set it in .env file.")
-        if self.LLM_BACKEND == OPENAI_COMPATIBLE and not self.LLM_BASE_URL:
+        if OPENAI_COMPATIBLE in llm_backends and not self.LLM_BASE_URL:
             raise ValueError("LLM_BASE_URL is required when LLM_BACKEND=openai_compatible.")
-        if DATABRICKS in (self.LLM_BACKEND, self.STT_BACKEND):
+        if DATABRICKS in llm_backends | stt_backends:
             if not self.DATABRICKS_BASE_URL:
                 raise ValueError("DATABRICKS_BASE_URL is required by the databricks backends.")
             if not (self.DATABRICKS_TOKEN or self.DATABRICKS_PROFILE):
                 raise ValueError(
                     "DATABRICKS_TOKEN or DATABRICKS_PROFILE is required by the databricks backends."
                 )
-        if self.STT_BACKEND == OPENAI_COMPATIBLE and not self.STT_BASE_URL:
+        if OPENAI_COMPATIBLE in stt_backends and not self.STT_BASE_URL:
             raise ValueError("STT_BASE_URL is required when STT_BACKEND=openai_compatible.")
         if self.DEVICE != AUTO and self.DEVICE not in DEVICES:
             raise ValueError(f"Invalid DEVICE: {self.DEVICE}")
