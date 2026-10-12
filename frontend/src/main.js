@@ -7,14 +7,20 @@
  *   3. AudioManager → mic capture + playback context
  *   4. LipSync → hook into audio + avatar
  *   5. Wire WS message handlers
+ *
+ * The knowledge panel is set up first: it only needs the backend HTTP API.
  */
 
 import { AvatarRenderer } from './avatar/avatar-renderer.js'
 import { WSClient } from './ws-client.js'
 import { AudioManager } from './audio/audio-manager.js'
 import { LipSync } from './avatar/lip-sync.js'
+import { KnowledgeClient } from './knowledge/knowledge-client.js'
+import { KnowledgePanel } from './knowledge/knowledge-panel.js'
 
 async function main() {
+  new KnowledgePanel(new KnowledgeClient()).init()
+
   const container = document.getElementById('canvas-container')
 
   // ── 1. Avatar Renderer ────────────────────────────────────────────────

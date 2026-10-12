@@ -1,12 +1,16 @@
 /**
  * Frontend config — the single place for env-driven values and tunable constants.
  *
- * Env (Vite, see frontend/.env.example): VITE_WS_URL, VITE_VRM_PATH.
+ * Env (Vite, see frontend/.env.example): VITE_WS_URL, VITE_API_URL, VITE_VRM_PATH.
  */
 
 // ── Env-driven ────────────────────────────────────────────────────────────
 
 export const WS_URL = import.meta.env.VITE_WS_URL || `ws://${window.location.hostname}:8000/ws`
+// Backend HTTP API (knowledge base), without a trailing slash.
+export const API_URL = (
+  import.meta.env.VITE_API_URL || `http://${window.location.hostname}:8000`
+).replace(/\/+$/, '')
 export const VRM_PATH = import.meta.env.VITE_VRM_PATH || '/models/avatar.vrm'
 
 // ── WebSocket reconnect (exponential backoff) ─────────────────────────────
@@ -21,6 +25,13 @@ export const CAPTURE_SAMPLE_RATE = 16000    // Hz — must match backend VAD/STT
 export const CAPTURE_CHUNK_SAMPLES = 320    // 20ms at 16000 Hz
 export const CAPTURE_WORKLET_URL = '/worklet/audio-processor.js'
 export const ANALYSER_FFT_SIZE = 256        // Time-domain window read by lip-sync
+
+// ── Knowledge base ────────────────────────────────────────────────────────
+
+// Checked before uploading; the backend has the last word (its loaders and
+// KNOWLEDGE_MAX_FILE_MB).
+export const KNOWLEDGE_EXTENSIONS = ['.txt', '.md', '.csv', '.pdf', '.docx']
+export const KNOWLEDGE_MAX_FILE_MB = 10
 
 // ── Head motion ───────────────────────────────────────────────────────────
 

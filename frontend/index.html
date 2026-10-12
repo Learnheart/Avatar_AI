@@ -63,6 +63,113 @@
       border: 1px solid rgba(255, 180, 0, 0.3);
     }
 
+    /* Knowledge panel */
+    #knowledge-toggle {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-family: sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.8);
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.2);
+      cursor: pointer;
+      z-index: 100;
+    }
+
+    #knowledge-toggle:hover { background: rgba(255,255,255,0.16); }
+
+    #knowledge-panel {
+      position: fixed;
+      top: 56px;
+      left: 16px;
+      width: 340px;
+      max-width: calc(100vw - 32px);
+      max-height: calc(100vh - 72px);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 16px;
+      border-radius: 12px;
+      font-family: sans-serif;
+      font-size: 13px;
+      color: rgba(255,255,255,0.85);
+      background: rgba(18, 18, 28, 0.94);
+      border: 1px solid rgba(255,255,255,0.15);
+      z-index: 100;
+    }
+
+    #knowledge-panel[hidden] { display: none; }
+
+    #knowledge-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    #knowledge-close,
+    .knowledge-remove {
+      color: rgba(255,255,255,0.7);
+      background: none;
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 6px;
+      padding: 3px 9px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .knowledge-remove:hover { color: #ff6b6b; border-color: rgba(255, 107, 107, 0.6); }
+
+    #knowledge-drop {
+      padding: 18px 12px;
+      text-align: center;
+      line-height: 1.6;
+      border: 1px dashed rgba(255,255,255,0.3);
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    #knowledge-drop:hover,
+    #knowledge-drop.dragging {
+      border-color: #6c63ff;
+      background: rgba(108, 99, 255, 0.12);
+    }
+
+    #knowledge-hint,
+    #knowledge-empty,
+    .knowledge-doc-detail { font-size: 12px; opacity: 0.6; }
+
+    #knowledge-message { min-height: 16px; white-space: pre-line; color: #00c864; }
+    #knowledge-message.error { color: #ff6b6b; }
+
+    #knowledge-list {
+      list-style: none;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    #knowledge-list li {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .knowledge-doc { min-width: 0; }
+
+    .knowledge-doc-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     /* Loading overlay */
     #loading {
       position: fixed;
@@ -120,6 +227,23 @@
 
   <!-- Connection status -->
   <div id="status" class="disconnected">● OFFLINE</div>
+
+  <!-- Knowledge base: the documents the avatar answers from -->
+  <button id="knowledge-toggle" type="button">Tài liệu</button>
+  <div id="knowledge-panel" hidden>
+    <div id="knowledge-header">
+      <span>Tài liệu tri thức</span>
+      <button id="knowledge-close" type="button">Đóng</button>
+    </div>
+    <div id="knowledge-drop">
+      Chọn hoặc kéo thả tệp vào đây
+      <div id="knowledge-hint"></div>
+    </div>
+    <input id="knowledge-input" type="file" multiple hidden />
+    <div id="knowledge-message"></div>
+    <div id="knowledge-empty">Chưa có tài liệu nào.</div>
+    <ul id="knowledge-list"></ul>
+  </div>
 
   <script type="module" src="/src/main.js"></script>
 </body>
