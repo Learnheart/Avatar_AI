@@ -226,6 +226,30 @@ KNOWLEDGE_DOCUMENT = (
 KNOWLEDGE_FACT = ("7,35", "7.35", "bảy phẩy ba")
 
 
+async def _ask(session: Session, utterance_pcm: bytes) -> tuple[str, float, float]:
+    """One spoken question, up to the avatar being idle again.
+    Returns (answer text, first audio, end to end) of this turn."""
+    turn_start = len(session.messages)
+    speech_end = await session.stream(utterance_pcm)
+    await session.stream_silence(TRAILING_SILENCE_SEC)
+    final_index, final_at, _ = await session.wait_for(
+        lambda m: m["type"] == "speech_output" and m["is_final"], timeout=30, after=turn_start
+    )
+    await session.send({"type": "playback_ended"})
+    await session.wait_for(_is_state("idle"), timeout=10, after=final_index)
+
+    speech = [
+        (at, m) for at, m in session.messages[turn_start:] if m["type"] == "speech_output"
+    ]
+    answer_text = " ".join(m["text_content"] for _, m in speech if m["text_content"])
+    first_audio = next(at for at, m in speech if m["audio_data"]) - speech_end
+    return answer_text, first_audio, final_at - speech_end
+
+
+def _has_fact(answer_text: str) -> bool:
+    return any(fact in answer_text.lower() for fact in KNOWLEDGE_FACT)
+
+
 async def test_turn_answers_from_an_uploaded_document(
     session: Session, ws_url: str, utterance_pcm: bytes
 ):
@@ -238,30 +262,32 @@ async def test_turn_answers_from_an_uploaded_document(
         upload_sec = time.monotonic() - upload_started
         assert uploaded.status_code == 201, uploaded.text
         document = uploaded.json()
+        document_url = f"{documents_url}/{document['id']}"
         try:
             assert (await http.get(documents_url)).json() == {"documents": [document]}
 
-            speech_end = await session.stream(utterance_pcm)
-            await session.stream_silence(TRAILING_SILENCE_SEC)
-            _, final_at, _ = await session.wait_for(
-                lambda m: m["type"] == "speech_output" and m["is_final"], timeout=30
-            )
+            # Not selected: the document is in the base but the avatar does not use it.
+            unselected = await http.patch(document_url, json={"enabled": False})
+            assert unselected.json()["enabled"] is False
+            without_text, _, _ = await _ask(session, utterance_pcm)
+
+            selected = await http.patch(document_url, json={"enabled": True})
+            assert selected.json() == document
+            answer_text, first_audio, end_to_end = await _ask(session, utterance_pcm)
         finally:
-            deleted = await http.delete(f"{documents_url}/{document['id']}")
+            deleted = await http.delete(document_url)
         assert deleted.status_code == 204
         assert (await http.get(documents_url)).json() == {"documents": []}
 
-    speech = session.of_type("speech_output")
-    answer_text = " ".join(m["text_content"] for _, m in speech if m["text_content"])
-    first_audio = next(at for at, m in speech if m["audio_data"]) - speech_end
-    end_to_end = final_at - speech_end
     print(
         f"\n[knowledge] upload {upload_sec:.2f}s  first audio {first_audio:.2f}s"
         f"  end to end {end_to_end:.2f}s"
-        f"\n[knowledge] answer text: {answer_text!r}"
+        f"\n[knowledge] answer, document not selected: {without_text!r}"
+        f"\n[knowledge] answer, document selected: {answer_text!r}"
     )
 
     assert session.of_type("error") == []
-    assert any(fact in answer_text.lower() for fact in KNOWLEDGE_FACT), answer_text
+    assert not _has_fact(without_text), without_text
+    assert _has_fact(answer_text), answer_text
     assert first_audio < FIRST_AUDIO_BUDGET_SEC
     assert end_to_end < END_TO_END_BUDGET_SEC
