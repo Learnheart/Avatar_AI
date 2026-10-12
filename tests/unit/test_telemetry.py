@@ -36,7 +36,7 @@ def test_a_finished_span_is_logged_with_its_duration_and_attributes(spans):
             span.set_attribute("stt.text", "xin chào")
             span.add_event("primary_backend_failed")
 
-    (line,) = [l for l in lines if l["msg"] == "Span"]
+    (line,) = [entry for entry in lines if entry["msg"] == "Span"]
     (finished,) = spans.get_finished_spans()
     assert line["span"] == "stt"
     assert line["stt.text"] == "xin chào"

@@ -66,6 +66,16 @@ def build_orchestrator(
     )
 
 
+def start_capture(config: AppConfig) -> Optional[CaptureStore]:
+    """The capture store, started and fed the finished spans; None when capture is off."""
+    if not config.CAPTURE_ENABLED:
+        return None
+    capture = CaptureStore(config)
+    capture.start()
+    telemetry.add_span_processor(CaptureSpans(capture))
+    return capture
+
+
 def create_app(
     config: AppConfig,
     orchestrator: Optional[Orchestrator] = None,
@@ -85,11 +95,7 @@ def create_app(
         telemetry.setup(config)
         logger.info({"msg": "Avatar AI starting up"})
 
-        capture: Optional[CaptureStore] = None
-        if config.CAPTURE_ENABLED:
-            capture = CaptureStore(config)
-            capture.start()
-            telemetry.add_span_processor(CaptureSpans(capture))
+        capture = start_capture(config)
 
         app.state.knowledge = knowledge or build_knowledge(config)
         await app.state.knowledge.start()

@@ -129,6 +129,11 @@ class AppConfig(Tuning, Prompts):
     CAMERA_HEIGHT: int = env_int("CAMERA_HEIGHT", 720)
 
     def validate(self) -> None:
+        self._validate_model_backends()
+        self._validate_embedding_backends()
+        self._validate_values()
+
+    def _validate_model_backends(self) -> None:
         # A backup backend needs its settings as much as the primary does.
         llm_backends = {self.LLM_BACKEND, self.LLM_BACKEND_BACKUP} - {""}
         stt_backends = {self.STT_BACKEND, self.STT_BACKEND_BACKUP} - {""}
@@ -147,6 +152,8 @@ class AppConfig(Tuning, Prompts):
                 )
         if OPENAI_COMPATIBLE in stt_backends and not self.STT_BASE_URL:
             raise ValueError("STT_BASE_URL is required when STT_BACKEND=openai_compatible.")
+
+    def _validate_embedding_backends(self) -> None:
         embedding_backends = {self.EMBEDDING_BACKEND, self.EMBEDDING_BACKEND_BACKUP} - {""}
         if OPENAI_COMPATIBLE in embedding_backends:
             if not (self.EMBEDDING_BASE_URL and self.EMBEDDING_MODEL):
@@ -163,6 +170,8 @@ class AppConfig(Tuning, Prompts):
                 raise ValueError(
                     "DATABRICKS_TOKEN or DATABRICKS_PROFILE is required by the databricks backends."
                 )
+
+    def _validate_values(self) -> None:
         if self.KNOWLEDGE_CHUNK_OVERLAP_CHARS >= self.KNOWLEDGE_CHUNK_CHARS:
             raise ValueError("KNOWLEDGE_CHUNK_OVERLAP_CHARS must be below KNOWLEDGE_CHUNK_CHARS.")
         if self.DEVICE != AUTO and self.DEVICE not in DEVICES:
