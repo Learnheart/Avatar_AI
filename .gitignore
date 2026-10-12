@@ -63,3 +63,6 @@ Thumbs.db
 
 # Claude Code session memory
 .claude/
+
+# Knowledge base (uploaded documents, indexed per machine)
+backend/data/

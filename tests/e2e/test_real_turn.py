@@ -1,7 +1,7 @@
 """
 One real turn over the WebSocket against the real backend (`python -m backend.main`):
 real VAD, Groq Whisper, Groq LLM and ZeroTTS. No camera is needed — the app keeps
-running without one.
+running without one. The last test uploads a document and asks about it.
 """
 import asyncio
 import base64
@@ -42,12 +42,19 @@ def ws_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
 
-    log_path = tmp_path_factory.mktemp("backend") / "backend.log"
+    work_dir = tmp_path_factory.mktemp("backend")
+    log_path = work_dir / "backend.log"
+    env = {
+        **os.environ,
+        "HOST": "127.0.0.1",
+        "PORT": str(port),
+        # An empty knowledge base of its own, not the developer's documents.
+        "KNOWLEDGE_DB_PATH": str(work_dir / "knowledge.db"),
+    }
     with open(log_path, "w") as log:
         process = subprocess.Popen(
             [sys.executable, "-m", "backend.main"],
-            cwd=REPO_ROOT, env={**os.environ, "HOST": "127.0.0.1", "PORT": str(port)},
-            stdout=log, stderr=subprocess.STDOUT,
+            cwd=REPO_ROOT, env=env, stdout=log, stderr=subprocess.STDOUT,
         )
     try:
         deadline = time.monotonic() + STARTUP_TIMEOUT_SEC
@@ -205,3 +212,56 @@ async def test_barge_in_during_speaking(session: Session, utterance_pcm: bytes):
     )
     await session.wait_for(_is_state("listening"), timeout=5, after=interrupt_index)
     assert session.of_type("error") == []
+
+
+# ── Knowledge base: upload a document, then ask about it ──────────────────
+
+# A made-up rate no model knows; it answers the question of the test utterance.
+KNOWLEDGE_DOCUMENT = (
+    "Biểu lãi suất nội bộ của ngân hàng.\n\n"
+    "Lãi suất tiết kiệm kỳ hạn sáu tháng là 7,35 phần trăm một năm. "
+    "Lãi suất tiết kiệm kỳ hạn mười hai tháng là 8,15 phần trăm một năm.\n\n"
+    "Quy định nghỉ phép: mỗi nhân viên được nghỉ phép năm mười hai ngày."
+)
+KNOWLEDGE_FACT = ("7,35", "7.35", "bảy phẩy ba")
+
+
+async def test_turn_answers_from_an_uploaded_document(
+    session: Session, ws_url: str, utterance_pcm: bytes
+):
+    documents_url = ws_url.replace("ws://", "http://").removesuffix("/ws") + "/knowledge/documents"
+    async with httpx.AsyncClient(timeout=60) as http:
+        upload_started = time.monotonic()
+        uploaded = await http.post(
+            documents_url, files={"file": ("lai-suat.txt", KNOWLEDGE_DOCUMENT.encode("utf-8"))}
+        )
+        upload_sec = time.monotonic() - upload_started
+        assert uploaded.status_code == 201, uploaded.text
+        document = uploaded.json()
+        try:
+            assert (await http.get(documents_url)).json() == {"documents": [document]}
+
+            speech_end = await session.stream(utterance_pcm)
+            await session.stream_silence(TRAILING_SILENCE_SEC)
+            _, final_at, _ = await session.wait_for(
+                lambda m: m["type"] == "speech_output" and m["is_final"], timeout=30
+            )
+        finally:
+            deleted = await http.delete(f"{documents_url}/{document['id']}")
+        assert deleted.status_code == 204
+        assert (await http.get(documents_url)).json() == {"documents": []}
+
+    speech = session.of_type("speech_output")
+    answer_text = " ".join(m["text_content"] for _, m in speech if m["text_content"])
+    first_audio = next(at for at, m in speech if m["audio_data"]) - speech_end
+    end_to_end = final_at - speech_end
+    print(
+        f"\n[knowledge] upload {upload_sec:.2f}s  first audio {first_audio:.2f}s"
+        f"  end to end {end_to_end:.2f}s"
+        f"\n[knowledge] answer text: {answer_text!r}"
+    )
+
+    assert session.of_type("error") == []
+    assert any(fact in answer_text.lower() for fact in KNOWLEDGE_FACT), answer_text
+    assert first_audio < FIRST_AUDIO_BUDGET_SEC
+    assert end_to_end < END_TO_END_BUDGET_SEC
