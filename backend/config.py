@@ -36,6 +36,19 @@ class AppConfig(Tuning, Prompts):
     PORT: int = env_int("PORT", 8000)
     LOG_LEVEL: str = env_str("LOG_LEVEL", "INFO", normalize=str.upper)
 
+    # ── Observability ───────────────────────────────────────────────────
+    SERVICE_NAME: str = env_str("SERVICE_NAME", "avatar-ai")
+    # Root of an OTLP/HTTP backend (`http://host:4318`); traces and metrics are sent to
+    # its /v1/traces and /v1/metrics. Empty = nothing is sent, spans are only logged.
+    OTLP_ENDPOINT: str = env_str("OTLP_ENDPOINT", "")
+    # Headers of the OTLP requests, `key=value,key=value` (an API key of the backend).
+    OTLP_HEADERS: str = env_str("OTLP_HEADERS", repr=False)
+
+    # Full capture of camera frames, utterance and answer audio and turn traces on local
+    # disk (backend/utils/capture.py). 1 = on. It stores faces and voices: off by default.
+    CAPTURE_ENABLED: int = env_int("CAPTURE_ENABLED", 0)
+    CAPTURE_DIR: str = env_str("CAPTURE_DIR", "backend/data/capture")
+
     # ── Groq (STT + LLM) ────────────────────────────────────────────────
     # The env name is lowercase `groq_api_key` (CLAUDE.md §3); the SDK default is not used.
     GROQ_API_KEY: str = env_str("groq_api_key", repr=False)

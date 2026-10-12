@@ -4,6 +4,8 @@ import json
 import sys
 from datetime import datetime, timezone
 
+from opentelemetry import trace
+
 # Every backend logger is a child of this one, so the handler and level live in one place.
 _ROOT_NAME = "avatar"
 
@@ -15,6 +17,10 @@ class JsonFormatter(logging.Formatter):
             "level": record.levelname,
             "module": record.name.removeprefix(_ROOT_NAME + "."),
         }
+        # Inside a span (a turn, an upload): the id that ties the line to its trace.
+        context = trace.get_current_span().get_span_context()
+        if context.is_valid:
+            payload["trace_id"] = trace.format_trace_id(context.trace_id)
 
         # A dict message is flattened into the payload: logger.info({"msg": ..., "key": val}).
         raw = record.msg

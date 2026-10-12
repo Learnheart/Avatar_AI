@@ -11,11 +11,23 @@ import time
 from contextlib import aclosing
 from typing import AsyncIterator, Callable, Optional, TypeVar
 
+from opentelemetry import trace
+from opentelemetry.trace import Span
+
 from backend.config import AppConfig
 from backend.core.contracts import LLM, STT, TTS, Knowledge, LLMError, STTError, TTSError
-from backend.models import AudioEvent, DoneEvent, EngineEvent, Transcript, TranscriptEvent
+from backend.models import (
+    PCM_SAMPLE_WIDTH,
+    AudioEvent,
+    DoneEvent,
+    EngineEvent,
+    Passage,
+    Transcript,
+    TranscriptEvent,
+)
 from backend.utils.errors import summarize_error
 from backend.utils.logging import get_logger
+from backend.utils.telemetry import detached_span, fail, stage_duration, tracer
 
 logger = get_logger("engine")
 
@@ -110,13 +122,17 @@ class ConversationEngine:
     # ── Stages ────────────────────────────────────────────────────────────
 
     async def _transcribe(self, pcm16: bytes, sample_rate: int) -> Transcript:
-        try:
-            return await asyncio.wait_for(
-                self._stt.transcribe(pcm16, sample_rate),
-                timeout=self.config.STT_TIMEOUT_SEC,
-            )
-        except asyncio.TimeoutError as e:
-            raise STTError(f"STT timed out after {self.config.STT_TIMEOUT_SEC}s") from e
+        audio_ms = round(len(pcm16) / PCM_SAMPLE_WIDTH / sample_rate * 1000)
+        with tracer.start_as_current_span("stt", attributes={"stt.audio_ms": audio_ms}) as span:
+            try:
+                transcript = await asyncio.wait_for(
+                    self._stt.transcribe(pcm16, sample_rate),
+                    timeout=self.config.STT_TIMEOUT_SEC,
+                )
+            except asyncio.TimeoutError as e:
+                raise STTError(f"STT timed out after {self.config.STT_TIMEOUT_SEC}s") from e
+            span.set_attributes({"stt.text": transcript.text, "stt.language": transcript.language})
+            return transcript
 
     async def _with_knowledge(self, question: str) -> str:
         """The question, preceded by the passages of the uploaded documents that match
@@ -124,28 +140,18 @@ class ConversationEngine:
         base never costs the turn."""
         if self._knowledge is None:
             return question
-        started = time.perf_counter()
-        try:
-            passages = await asyncio.wait_for(
-                self._knowledge.search(question), timeout=self.config.KNOWLEDGE_TIMEOUT_SEC
-            )
-        except asyncio.TimeoutError:
-            logger.warning({
-                "msg": "Knowledge lookup timed out, answering without it",
-                "timeout_sec": self.config.KNOWLEDGE_TIMEOUT_SEC,
-            })
-            return question
-        except Exception as e:
-            summary = summarize_error(e, self.config.ERROR_SUMMARY_MAX_CHARS)
-            logger.warning({"msg": "Knowledge lookup failed, answering without it", "error": summary})
-            return question
-
-        logger.info({
-            "msg": "Knowledge lookup",
-            "passages": len(passages),
-            "top_score": round(passages[0].score, 3) if passages else None,
-            "knowledge_ms": round((time.perf_counter() - started) * 1000),
-        })
+        with tracer.start_as_current_span(
+            "knowledge", attributes={"knowledge.query": question}
+        ) as span:
+            passages = await self._lookup(question, span)
+            span.set_attribute("knowledge.passages", len(passages))
+            for index, passage in enumerate(passages, start=1):
+                span.add_event("passage", {
+                    "index": index,
+                    "source": passage.source,
+                    "score": round(passage.score, 4),
+                    "text": passage.text,
+                })
         if not passages:
             return question
         listed = "\n\n".join(
@@ -153,6 +159,38 @@ class ConversationEngine:
             for index, p in enumerate(passages, start=1)
         )
         return self.config.KNOWLEDGE_PROMPT.format(passages=listed, question=question)
+
+    async def _lookup(self, question: str, span: Span) -> list[Passage]:
+        """The passages for the question; [] when the lookup is slow or fails, with the
+        reason on the span."""
+        started = time.perf_counter()
+        try:
+            passages = await asyncio.wait_for(
+                self._knowledge.search(question), timeout=self.config.KNOWLEDGE_TIMEOUT_SEC
+            )
+        except asyncio.TimeoutError as e:
+            fail(span, e)
+            span.set_attribute("knowledge.outcome", "timeout")
+            logger.warning({
+                "msg": "Knowledge lookup timed out, answering without it",
+                "timeout_sec": self.config.KNOWLEDGE_TIMEOUT_SEC,
+            })
+            return []
+        except Exception as e:
+            fail(span, e)
+            span.set_attribute("knowledge.outcome", "error")
+            summary = summarize_error(e, self.config.ERROR_SUMMARY_MAX_CHARS)
+            logger.warning({"msg": "Knowledge lookup failed, answering without it", "error": summary})
+            return []
+
+        span.set_attribute("knowledge.outcome", "hit" if passages else "empty")
+        logger.info({
+            "msg": "Knowledge lookup",
+            "passages": len(passages),
+            "top_score": round(passages[0].score, 3) if passages else None,
+            "knowledge_ms": round((time.perf_counter() - started) * 1000),
+        })
+        return passages
 
     async def _produce_sentences(
         self, user_text: str, sentences: "asyncio.Queue[Optional[str]]"
@@ -177,6 +215,7 @@ class ConversationEngine:
 
             if queued == 0:
                 # LLM failure or empty answer → speak the fallback instead of staying silent.
+                trace.get_current_span().add_event("llm_fallback_text_spoken")
                 sentences.put_nowait(self.config.LLM_FALLBACK_TEXT)
         finally:
             sentences.put_nowait(None)
@@ -190,16 +229,31 @@ class ConversationEngine:
             LLMError(f"LLM timed out after {self.config.LLM_TIMEOUT_SEC}s"),
         )
         buffer = ""
-        async with aclosing(deltas):
-            async for delta in deltas:
-                buffer += delta
-                done, buffer = split_sentences(buffer)
-                for sentence in filter(_speakable, done):
-                    yield sentence
+        answer: list[str] = []
+        started = time.perf_counter()
+        with detached_span(
+            "llm",
+            **{"llm.system_prompt": self.config.SYSTEM_PROMPT, "llm.prompt": user_text},
+        ) as span:
+            try:
+                async with aclosing(deltas):
+                    async for delta in deltas:
+                        if not answer:
+                            first_token_ms = (time.perf_counter() - started) * 1000
+                            span.set_attribute("llm.first_token_ms", round(first_token_ms))
+                            stage_duration.record(first_token_ms, {"stage": "llm_first_token"})
+                        answer.append(delta)
+                        buffer += delta
+                        done, buffer = split_sentences(buffer)
+                        for sentence in filter(_speakable, done):
+                            yield sentence
 
-        tail = buffer.strip()
-        if _speakable(tail):
-            yield tail
+                tail = buffer.strip()
+                if _speakable(tail):
+                    yield tail
+            finally:
+                # Whatever was generated, also when the stream fails or is cancelled.
+                span.set_attribute("llm.answer", "".join(answer))
 
     async def _speak(self, sentence: str) -> AsyncIterator[AudioEvent]:
         """Synthesize one sentence. On TTS failure the sentence is emitted as text only."""
@@ -212,12 +266,25 @@ class ConversationEngine:
             TTSError(f"TTS timed out after {self.config.TTS_TIMEOUT_SEC}s"),
         )
         first = True
-        try:
-            async with aclosing(chunks):
-                async for pcm in chunks:
-                    yield AudioEvent(sentence if first else "", pcm, sample_rate)
-                    first = False
-        except TTSError as e:
-            logger.warning({"msg": "TTS failed, sending text only", "error": str(e)})
-            if first:
-                yield AudioEvent(sentence, b"", sample_rate)
+        started = time.perf_counter()
+        audio_bytes = 0
+        with detached_span("tts", **{"tts.text": sentence, "tts.sample_rate": sample_rate}) as span:
+            try:
+                async with aclosing(chunks):
+                    async for pcm in chunks:
+                        if first:
+                            first_chunk_ms = (time.perf_counter() - started) * 1000
+                            span.set_attribute("tts.first_chunk_ms", round(first_chunk_ms))
+                            stage_duration.record(first_chunk_ms, {"stage": "tts_first_chunk"})
+                        audio_bytes += len(pcm)
+                        yield AudioEvent(sentence if first else "", pcm, sample_rate)
+                        first = False
+            except TTSError as e:
+                fail(span, e)
+                logger.warning({"msg": "TTS failed, sending text only", "error": str(e)})
+                if first:
+                    yield AudioEvent(sentence, b"", sample_rate)
+            finally:
+                span.set_attribute(
+                    "tts.audio_ms", round(audio_bytes / PCM_SAMPLE_WIDTH / sample_rate * 1000)
+                )

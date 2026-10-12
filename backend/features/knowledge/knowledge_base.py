@@ -19,6 +19,7 @@ from backend.features.knowledge.loaders import extract_text
 from backend.features.knowledge.store import SqliteVecStore
 from backend.models import KnowledgeDocument, Passage
 from backend.utils.logging import get_logger
+from backend.utils.telemetry import tracer
 
 logger = get_logger("knowledge")
 
@@ -52,6 +53,14 @@ class KnowledgeBase(Knowledge):
         Raises UnsupportedDocument, UnreadableDocument, EmptyDocument (bad file) or
         KnowledgeError (the embedding or the store failed; nothing is stored)."""
         name = PurePath(filename.replace("\\", "/")).name.strip()
+        with tracer.start_as_current_span(
+            "knowledge.ingest", attributes={"document.name": name, "document.bytes": len(data)}
+        ) as span:
+            document = await self._index(name, data)
+            span.set_attribute("document.chunks", document.chunk_count)
+            return document
+
+    async def _index(self, name: str, data: bytes) -> KnowledgeDocument:
         text = await asyncio.to_thread(extract_text, name, data)
         chunks = split_text(
             text, self.config.KNOWLEDGE_CHUNK_CHARS, self.config.KNOWLEDGE_CHUNK_OVERLAP_CHARS

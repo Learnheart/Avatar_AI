@@ -75,6 +75,21 @@ class Tuning:
     # Grace after the estimated end of playback.
     PLAYBACK_END_TIMEOUT_SEC: float = env_float("PLAYBACK_END_TIMEOUT_SEC", 2.0)
 
+    # ── Observability ───────────────────────────────────────────────────
+    # Characters of a text value (transcript, prompt, answer) shown in a `Span` log
+    # line; the span itself keeps the full value.
+    TRACE_LOG_VALUE_MAX_CHARS: int = env_int("TRACE_LOG_VALUE_MAX_CHARS", 200)
+    # Seconds between two pushes of the metrics to the OTLP backend.
+    METRIC_EXPORT_INTERVAL_SEC: int = env_int("METRIC_EXPORT_INTERVAL_SEC", 15)
+
+    # Capture (CAPTURE_ENABLED): camera images kept per second (0 = every tracked frame),
+    # their JPEG quality, the size at which the oldest hours are deleted, and how many
+    # items may wait for the writer before new ones are dropped.
+    CAPTURE_FRAME_FPS: float = env_float("CAPTURE_FRAME_FPS", 0.0)
+    CAPTURE_JPEG_QUALITY: int = env_int("CAPTURE_JPEG_QUALITY", 80)
+    CAPTURE_MAX_GB: float = env_float("CAPTURE_MAX_GB", 20.0)
+    CAPTURE_QUEUE_SIZE: int = env_int("CAPTURE_QUEUE_SIZE", 64)
+
     # ── Failure handling ────────────────────────────────────────────────
     # SDK-level retries per Groq request. 0: a failed call goes straight to the engine's
     # own fallback instead of spending the latency budget on retries.

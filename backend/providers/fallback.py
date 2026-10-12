@@ -13,6 +13,8 @@ import time
 from contextlib import aclosing
 from typing import AsyncIterator
 
+from opentelemetry import trace
+
 from backend.config import AppConfig
 from backend.core.contracts import LLM, STT, Embedder, EmbeddingError, LLMError, STTError
 from backend.models import Transcript
@@ -39,6 +41,10 @@ class _Primary:
     def failed(self, reason: str) -> None:
         cooldown = self._config.FALLBACK_COOLDOWN_SEC
         self._skip_until = time.monotonic() + cooldown
+        # On the span of the step that was running, so the trace shows who answered.
+        trace.get_current_span().add_event(
+            "primary_backend_failed", {"stage": self._stage, "error": reason}
+        )
         logger.warning({
             "msg": "Primary backend failed, using the backup",
             "stage": self._stage,

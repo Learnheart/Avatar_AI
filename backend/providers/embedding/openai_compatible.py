@@ -12,6 +12,7 @@ from openai import AsyncOpenAI, OpenAIError
 from backend.config import AppConfig
 from backend.core.contracts import Embedder, EmbeddingError
 from backend.utils.errors import summarize_error
+from backend.utils.telemetry import tracer
 
 
 class OpenAICompatibleEmbedder(Embedder):
@@ -37,6 +38,12 @@ class OpenAICompatibleEmbedder(Embedder):
         return f"openai_compatible:{self._model}"
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
+        with tracer.start_as_current_span(
+            "embedding", attributes={"embedding.model": self._model, "embedding.texts": len(texts)}
+        ):
+            return await self._embed(texts)
+
+    async def _embed(self, texts: list[str]) -> list[list[float]]:
         vectors: list[list[float]] = []
         size = self.config.EMBEDDING_BATCH_SIZE
         try:
