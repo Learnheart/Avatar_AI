@@ -1,7 +1,7 @@
 ---
 author: linhbk3
 date: 2026-10-12
-status: todo
+status: in-progress
 agent: avatar
 modules: memory
 summary: Conversation memory, the data — one application database for system and user information, identity through current_user_id(), an object store for imported originals, the data model
@@ -38,6 +38,24 @@ data of a user lives and how a user is named; what is stored there and why is in
     deployment that has data to keep.
   - The store tests take the database from `DATABASE_URL`, so the same tests run against
     PostgreSQL the day there is one.
+  - **A synchronous engine.** Stores are plain blocking classes and the services call
+    them through `asyncio.to_thread`, like the knowledge base; there is no async driver.
+  - **`utils/database.py` is the only module that knows engines.** It owns the one
+    `MetaData` every feature declares its tables on, and hands a store a transaction
+    (`Database.begin()`); a failure reaches the caller as `DatabaseError`, so no store
+    or service names SQLAlchemy's errors, an engine or `sqlite3`. For a SQLite file it
+    creates the parent directory and turns foreign keys on for each connection.
+  - **Created inside the lifespan, never at import.** `backend.main` stays importable
+    with no side effect. An unreachable `DATABASE_URL` stops the startup with the
+    reason (the password of the URL left out); a URL that cannot be parsed (no dialect,
+    a port that is no number) takes the same path, with a fixed text that repeats no
+    part of the URL.
+  - Ids are `uuid4().hex`; timestamps are timezone-aware UTC on every engine (SQLite
+    keeps no timezone: a column type of `utils/database.py` restores it).
+  - Slice 2 creates `users` and `memory_items` only, the latter with all its columns
+    at once (there is no migration tool). `replaces_id` is a self foreign key;
+    `import_id` is a plain nullable column until the table `imports` arrives (slice 3).
+    `imports`, `conversations` and `turns` come with their slices.
 - Every per-user table carries `user_id` (a foreign key to `users`) and every store
   method takes it: no query reads across users.
 - **The knowledge base keeps its own sqlite-vec file**: it is a vector index, replaced
@@ -57,6 +75,14 @@ data of a user lives and how a user is named; what is stored there and why is in
   body of that function and nothing else.
 - `main.py` resolves the id and hands it to `Orchestrator.handle_connect`; the core
   never resolves identity itself. `None` means guest.
+- `current_user_id(config, users)` is a plain blocking function: it is given the config
+  and the users store, returns `None` for a guest, and sets `last_seen_at` on each
+  call. Its callers run it in a thread: the `/ws` endpoint before `handle_connect`, and
+  one FastAPI dependency shared by every memory route (a guest → `401`).
+- The display name of the development user is its id.
+- A database failure while resolving the user does not refuse the WebSocket: the
+  person is connected as a guest and the error is logged (the memory never costs the
+  turn). On the memory routes the same failure is a `502`.
 
 ### Object store
 
@@ -132,8 +158,9 @@ the database: `IMPORTS.object_key` points into the object store.
 
 ### Config keys
 
-In `backend/config.py` (per-machine values), listed in `.env.example`: `DATABASE_URL`,
-`AUTH_DEV_USER_ID`, `OBJECT_STORE_DIR`.
+In `backend/config.py` (per-machine values), listed in `.env.example`: `DATABASE_URL`
+(default `sqlite:///backend/data/app.db`; kept out of `repr(config)`, it may hold a
+password), `AUTH_DEV_USER_ID` (default empty = guest), `OBJECT_STORE_DIR`.
 
 ## Implementation approach
 
@@ -149,9 +176,9 @@ backend/
 
 ## To-do
 
-- [ ] Slice 2 — `utils/database.py`, `DATABASE_URL`, tables created at startup;
+- [x] Slice 2 — `utils/database.py`, `DATABASE_URL`, tables created at startup;
       SQLAlchemy in `requirements.txt`
-- [ ] Slice 2 — `features/accounts/` (users, `current_user_id()`), `AUTH_DEV_USER_ID`,
+- [x] Slice 2 — `features/accounts/` (users, `current_user_id()`), `AUTH_DEV_USER_ID`,
       user id through `handle_connect`
 - [ ] Slice 3 — `utils/object_store.py` (`OBJECT_STORE_DIR`)
 - [ ] Unit tests per `test-plan.md`: Database, Identity, Object store, Config

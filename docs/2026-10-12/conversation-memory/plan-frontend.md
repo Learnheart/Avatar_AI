@@ -55,12 +55,48 @@ sees. It consumes two contracts and defines neither: the WebSocket messages
   - the imports: drop a file or paste a text, list, open the original, delete.
   Each item shows where it comes from (typed, imported, heard). A guest sees a note
   that login is required.
+- Decided while building slice 2:
+  - There is no router: the page is an overlay over the avatar, a native `<dialog>`
+    (`#profile-page`) opened with `showModal()`, so the browser makes what is behind
+    it inert, keeps Tab inside it and closes it on Escape. It opens from "Hồ sơ",
+    reads the items each time it opens, and closes with "Đóng" or Escape; the focus
+    goes to "Đóng" on opening and back to "Hồ sơ" on closing.
+  - "Tài liệu" and "Hồ sơ" sit in one `#toolbar`, which holds the position the
+    knowledge button had alone.
+  - `identity` and `addressing` are lists like the two others (a person has several
+    facts: name, job, city), shown side by side as the first block "Bạn là ai";
+    `preference` and `personality` form the second block. Below 820 px the groups
+    stack in one column and the page scrolls as a whole.
+  - Keyboard: Enter saves an edit or an "add" row; Escape cancels the edit in
+    progress, empties a started "add" row, and otherwise closes the page. A field
+    that uses Escape cancels its keydown, which is what keeps the dialog open. A key
+    that belongs to the input method (Telex, VNI composing) saves nothing, cancels
+    nothing and does not close the page.
+  - After a change the keyboard stays near it: on the item after a saved or cancelled
+    edit, on the "add" field of the group after a delete.
+  - One item is edited at a time. An empty text is not sent, an unchanged one sends
+    nothing. Deleting asks no confirmation, as in the knowledge panel.
+  - The lists are read again from the backend after every change, failed or not.
+    What was typed survives a failure: a refused "add" keeps its field, a refused
+    edit stays in edit mode with its draft under the error message. The draft also
+    survives a redraw caused by a change elsewhere on the page.
+  - The text fields stop at `MEMORY_ITEM_MAX_CHARS` characters, the limit of the
+    backend mirrored in `frontend/src/config.js`.
+  - The lists stay hidden until they were read once. `401` on any call, a change
+    included, replaces them by the login note; any other failure shows its message
+    above lists left as they were.
+  - Only `active` items are listed. `groupItems` already separates `pending` ones,
+    for the proposals block of slice 4.
+  - The client's errors carry the HTTP `status` (0 when the request got no answer),
+    which is how the page tells a guest from a failure.
 
 ### Config
 
 `TRANSCRIPT_MAX_LINES` in `frontend/src/config.js`, default 40 (about twenty turns, a
 person line and an avatar line each). Beside it, `TRANSCRIPT_SCROLL_SLACK_PX` (default
-24): how close to its end the list must be for a new line to scroll it. The profile page calls the backend at
+24): how close to its end the list must be for a new line to scroll it.
+`MEMORY_ITEM_MAX_CHARS` (default 200) mirrors the backend limit of the same name, as
+`KNOWLEDGE_MAX_FILE_MB` does; the backend has the last word. The profile page calls the backend at
 `VITE_API_URL`, as the knowledge panel does.
 
 ## Implementation approach
@@ -76,7 +112,7 @@ frontend/tests/                      transcript.test.js, memory.test.js
 
 - [x] Slice 1 — frontend transcript window (`TRANSCRIPT_MAX_LINES`) and
       "Cuộc trò chuyện mới" button
-- [ ] Slice 2 — frontend profile page: fields, lists, add, edit, delete, guest note
+- [x] Slice 2 — frontend profile page: fields, lists, add, edit, delete, guest note
 - [ ] Slice 3 — imports on the profile page: drop a file or paste a text, list, open the
       original, delete
 - [ ] Slice 4 — proposals on the profile page: approve or reject, with the quote

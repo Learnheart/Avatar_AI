@@ -83,8 +83,10 @@ regardless of backend (Metal / CUDA / CPU).
 
 ### 1.4 LLM (text → Vietnamese answer) — golden-dataset gated
 
-**Contract:** user text (+ fixed system prompt) in → streamed Vietnamese answer text
-out. MVP: no memory, no tools, no knowledge retrieval.
+**Contract:** user text (+ fixed system prompt, + the earlier turns of the conversation,
++ the profile of a known person as a second system message) in → streamed Vietnamese
+answer text out. No tools. The passages of the knowledge base and the profile are
+gated in §1.8 and §1.10.
 
 | Type | Gate criteria |
 |---|---|
@@ -164,9 +166,28 @@ turn audio and spans on disk.
 
 | Type | Gate criteria |
 |---|---|
-| Functional | Each turn is one trace rooted at `turn` (from speech start) with `listen`, `stt`, `knowledge` (when wired), `llm`, one `tts` per sentence and `playback`; a failed, timed-out or cancelled turn says so on its root; every log line of the turn carries its `trace_id`; capture writes a playable `utterance.wav` / `answer.wav` and a `trace.json` per turn |
+| Functional | Each turn is one trace rooted at `turn` (from speech start) with `listen`, `stt`, `knowledge` (when wired), `memory` (for a known person), `llm`, one `tts` per sentence and `playback`; a failed, timed-out or cancelled turn says so on its root; every log line of the turn carries its `trace_id`; capture writes a playable `utterance.wav` / `answer.wav` and a `trace.json` per turn |
 | Performance | No measurable cost on a turn: with capture on, local stages (TTS first chunk, tracking time per frame) stay within their run-to-run variation; nothing is written or exported on the event loop |
 | Resilience | No OTLP endpoint, an unreachable one, a full capture queue or a disk error → the turn is unaffected; dropped capture items are counted; the capture directory stays under `CAPTURE_MAX_GB` once an hour has passed |
+
+### 1.10 Memory (what is kept about a known person → the profile given to the LLM)
+
+**Contract:** a user id in → the profile text given to the LLM out, written from that
+user's *active* items (who the person is and how to address them first, then the most
+recently updated, at most `MEMORY_PROMPT_MAX_ITEMS`), or nothing when there is none; an
+item typed on the profile page in → stored for that user and used from the next turn.
+A guest has no profile and stores nothing.
+
+| Type | Gate criteria |
+|---|---|
+| Functional | An item added, edited or deleted over `/memory/items` is listed as it was left and changes the profile of the next turn; only `active` items reach the LLM, each as one line whatever was typed (line breaks, control and invisible characters never reach the prompt); one user never lists, reads, changes or deletes another's items (an item of someone else is a `404`); a guest gets `401` on every route and no row is written for them; items and users survive a restart; the tables are created in an empty database at startup and a second start changes nothing |
+| Performance | The profile read in a turn is answered from RAM after the first read of a user, and never takes longer than `MEMORY_TIMEOUT_SEC`; a guest's turn makes no memory read at all |
+| Resilience | An unknown category, an empty text or one with nothing visible, a text longer than `MEMORY_ITEM_MAX_CHARS` or a field that cannot be changed → refused (`422`) with the reason, nothing stored; a failing store → `502` without the database's text, the detail in the log; an empty, slow or failing profile read in a turn → the turn completes without the profile; a database that cannot be opened → startup stops with the reason |
+
+> Gated here: the items a person types and the profile written from them. Import,
+> facts gathered from conversations and their approval are not built yet and have no
+> gate. Whether the answer actually follows the profile (the way of addressing) is
+> checked by a real turn (`tests/e2e`), not by an automated gate.
 
 ---
 
@@ -191,7 +212,7 @@ The expensive gate — a real turn, run sparingly, before a milestone.
 
 | Type | Gate criteria |
 |---|---|
-| Functional | One full turn works: person present → speaks a Vietnamese utterance → avatar answers in Vietnamese voice with lip-sync. Barge-in works. No memory/tool/knowledge involved (MVP scope) |
+| Functional | One full turn works: person present → speaks a Vietnamese utterance → avatar answers in Vietnamese voice with lip-sync. Barge-in works. No tool involved; the knowledge base and the memory are optional beside the turn and gated on their own (§1.8, §1.10) |
 | Performance | **First audio < ~3.5s** (the committed internal target); **end-to-end < 10s** (SLA); dead-air gap is covered by an immediate acknowledging cue |
 | Resilience | Runs a sustained session without crashing or leaking resources; a mid-turn cloud error (LLM/TTS) degrades gracefully; weak-network behavior is observed and noted (cloud calls are the real latency risk) |
 | Cross-device | The pipeline gate passes on **both** target machines — MacBook M5 (Metal) and Windows + RTX (CUDA) |

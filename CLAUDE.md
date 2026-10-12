@@ -39,7 +39,7 @@ summary: <one line>
   here; it is never listed under `modules:`.
 - `modules:` lists the parts of that agent the change touches. They are components of
   one pipeline, not agents: `vision`, `vad`, `stt`, `llm`, `tts`, `orchestrator`,
-  `expression`, `knowledge`.
+  `expression`, `knowledge`, `memory`.
 - A plan contains: problem statement, requirements, decisions made, implementation
   approach, and ends with a `## To-do` checklist (`- [ ] task`).
 - A plan that changes the overall architecture carries the new architecture record
@@ -104,7 +104,9 @@ cover as much logic as possible with unit tests.
 | **Conversation — LLM** | Groq LLM - openai/gpt-oss-20b | Text → câu trả lời tiếng Việt, streaming |
 | **Conversation — TTS** | **ZeroTTS** (open-source, tiếng Việt) | Text → audio tiếng Việt; chạy local real-time trên CPU, có streaming |
 | **Knowledge base** | sqlite-vec (SQLite extension) + embedding qua `EMBEDDING_BACKEND` (`local_hash` \| `openai_compatible` \| `databricks` \| `ollama`), backup qua `EMBEDDING_BACKEND_BACKUP`; pypdf, python-docx | Upload tài liệu (txt, md, csv, pdf, docx) → chunk → vector; tra cứu đoạn liên quan cho mỗi câu hỏi trước khi gọi LLM |
-| Observability | OpenTelemetry SDK (traces + metrics) + OTLP/HTTP exporter; JSON log trên stdout | Mỗi turn một trace, mỗi bước một span (listen, stt, knowledge, embedding, llm, tts, playback) kèm input/output; số đo vòng lặp perception; `CAPTURE_ENABLED` lưu frame camera + audio + trace ra đĩa |
+| **Application database** | SQLAlchemy Core trên `DATABASE_URL` (file SQLite local; PostgreSQL khi deploy) | Lưu user và memory (những điều avatar nhớ về từng user); bảng được tạo lúc startup, chưa có migration tool |
+| **Memory** | logic nội bộ trên application database; `AUTH_DEV_USER_ID` thay cho login | Hồ sơ của user đã đăng nhập (các memory item `active`) đưa vào LLM mỗi turn; guest không có memory |
+| Observability | OpenTelemetry SDK (traces + metrics) + OTLP/HTTP exporter; JSON log trên stdout | Mỗi turn một trace, mỗi bước một span (listen, stt, knowledge, embedding, memory, llm, tts, playback) kèm input/output; số đo vòng lặp perception; `CAPTURE_ENABLED` lưu frame camera + audio + trace ra đĩa |
 | Device Capability Router | logic nội bộ (phát hiện Metal/CUDA/CPU lúc startup) | Chọn backend inference phù hợp máy; cho phép override qua config |
 
 ### Frontend (browser)
@@ -116,6 +118,7 @@ cover as much logic as possible with unit tests.
 | Audio | Web Audio API (AudioWorklet + AnalyserNode) | Thu mic (PCM 16kHz), phát audio, đo loudness cho lip-sync |
 | Lip-sync | logic thuần (RMS → blendshape mồm) | Amplitude-driven, bám audio đang phát |
 | Knowledge panel | DOM thuần + fetch (`VITE_API_URL`) | Upload / liệt kê / xoá tài liệu tri thức; tick chọn tài liệu avatar được dùng để trả lời |
+| Profile page ("Hồ sơ") | DOM thuần + fetch (`VITE_API_URL`) | Xem / thêm / sửa / xoá những điều avatar nhớ về user |
 
 ### External (cloud)
 
@@ -148,13 +151,13 @@ in `core/contracts.py`, and backends are swapped by config, not by editing calle
 
 ```
 backend/
-  main.py                      # FastAPI app, /ws, /health, /knowledge; wires core + providers + features
+  main.py                      # FastAPI app, /ws, /health, /knowledge, /memory; wires core + providers + features
   config.py                    # AppConfig — secrets, per-machine and provider values
   tuning.py                    # behaviour parameters (VAD, timeouts, conversation, head clamps, voice)
   prompts.py                   # system prompt and other texts
   models.py                    # shared dataclasses and enums
   core/                        # ── one turn; imports no provider, runtime or feature ──
-    contracts.py               # STT, LLM, TTS, Embedder, Knowledge interfaces and their errors
+    contracts.py               # STT, LLM, TTS, Embedder, Knowledge, Memory interfaces and their errors
     orchestrator/
       orchestrator.py          # turn state machine + routing (only owner of state); owns the conversation
       state.py                 # allowed state transitions
@@ -164,7 +167,7 @@ backend/
       tracking.py              # MediaPipe presence + head rotation
       vad.py                   # Silero VAD: speech_start / speech_end
     conversation/              # ── CAPABILITY 2 (separated pipeline) ──
-      engine.py                # ConversationEngine: audio + earlier turns in → (knowledge lookup) → text + audio out
+      engine.py                # ConversationEngine: audio + earlier turns in → (knowledge lookup, profile) → text + audio out
       history.py               # Conversation (one user session, its turns), record of a turn, chat messages (pure)
   providers/                   # ── model backends behind core/contracts.py ──
     catalog.py                 # backend name → builder, for every stage (+ device router)
@@ -186,11 +189,19 @@ backend/
       loaders.py               # txt, md, csv, pdf, docx → text
       store.py                 # sqlite-vec store: documents, chunks, vectors (all the SQL)
       api.py                   # HTTP routes /knowledge/documents
-  data/                        # knowledge.db, capture/ (gitignored, per machine)
+    accounts/
+      identity.py              # current_user_id(): who is behind a connection or a request
+      store.py                 # table users (all the SQL of the accounts)
+    memory/
+      memory.py                # MemoryService: memory items, the profile given to the LLM and its cache
+      store.py                 # table memory_items (all the SQL of the memory)
+      api.py                   # HTTP routes /memory/items
+  data/                        # knowledge.db, app.db, capture/ (gitignored, per machine)
   utils/
     env.py                     # dataclass fields read from the environment
     telemetry.py               # tracer, meter, OTLP export, `Span` log lines
     capture.py                 # CaptureStore: frames, turn audio, spans on local disk
+    database.py                # application database: engine from DATABASE_URL, shared MetaData, tables created at startup
     errors.py
     logging.py
   assets/
@@ -212,6 +223,10 @@ frontend/                      # ── CAPABILITY 3: Expression ──
     transcript/
       transcript.js            # the lines of the conversation on screen (pure, unit-tested)
       transcript-panel.js      # transcript window + "Cuộc trò chuyện mới" button
+    memory/
+      memory-client.js         # calls the backend /memory API
+      profile-page.js          # "Hồ sơ" page: what the avatar remembers, add / edit / delete
+      format.js                # pure helpers (unit-tested)
     avatar/
       avatar-renderer.js       # VRM render, applies head / mouth values
       lip-sync.js              # reads loudness of the audio being played
@@ -256,14 +271,26 @@ Layering rules:
   is `features/knowledge/store.py`, and replacing the DB means replacing that file.
 - The HTTP routes `/knowledge/documents` are a contract between
   `backend/features/knowledge/api.py` and `frontend/src/knowledge/`.
+- The memory reaches the turn through the `Memory` contract only: for a logged-in user
+  the engine asks it for the profile before the LLM and answers without it when it is
+  empty, slow or failing; a guest's turn reads nothing. Who the user is comes from
+  `current_user_id()` (`features/accounts/identity.py`) and nowhere else: `main.py`
+  resolves it and hands it to the orchestrator, the core never does.
+- Users and memory live in the application database (`DATABASE_URL`).
+  `backend/utils/database.py` is the only module that knows engines; a feature declares
+  its tables and keeps all its SQL in its `store.py`, written against SQLAlchemy Core
+  with nothing specific to one engine. Every per-user table carries `user_id` and every
+  store method takes it: no query reads across users.
+- The HTTP routes `/memory` are a contract between `backend/features/memory/api.py` and
+  `frontend/src/memory/`.
 - Every step of a turn is a span of `backend/utils/telemetry.py` carrying its input and
   output; a new step gets one. Inside an async generator use `detached_span`, never
   `start_as_current_span`. Per-frame and per-chunk work (tracking, VAD) is measured with
   metrics, not spans. Texts go on spans whole; only the `Span` log line cuts them.
 - Where traces and metrics go is configuration (`OTLP_ENDPOINT`); the code names no
   backend. `CAPTURE_ENABLED` stores faces and voices and stays off by default.
-- Blocking inference (VAD, TTS, vision) and the knowledge store (SQLite) run in a thread
-  or executor, never on the event loop.
+- Blocking inference (VAD, TTS, vision), the knowledge store (SQLite) and the
+  application database run in a thread or executor, never on the event loop.
 - The WebSocket message shapes are a contract between `backend/core/orchestrator/` and
   `frontend/src/`; change both sides and the design doc together.
 - Frontend motion math goes in `avatar/motion.js` as pure functions; the renderer only
@@ -345,7 +372,7 @@ says what.
   `### Removed`, in that order, leaving out the empty groups.
 - Start each entry with the module(s) it touches in brackets, using the module IDs of
   §0: `[vision]`, `[vad]`, `[stt]`, `[llm]`, `[tts]`, `[orchestrator]`, `[expression]`,
-  `[knowledge]`. Use `[shared]` for what belongs to no single module (config,
+  `[knowledge]`, `[memory]`. Use `[shared]` for what belongs to no single module (config,
   providers, observability, packaging) and `[all]` for a change across the whole turn.
 - One line per entry, written for a reader who has not seen the code: what the avatar
   now does, not which file changed. Mark a breaking change with `**Breaking:**`.

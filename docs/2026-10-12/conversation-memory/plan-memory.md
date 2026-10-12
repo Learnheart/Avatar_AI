@@ -1,7 +1,7 @@
 ---
 author: linhbk3
 date: 2026-10-12
-status: todo
+status: in-progress
 agent: avatar
 modules: memory, llm
 summary: Conversation memory, the long-term part — the Memory contract, memory items and the profile given to the LLM, gathering from conversations, import, the HTTP API
@@ -32,6 +32,13 @@ keeps about a logged-in user across conversations. Its tables and the object sto
 
 - A guest: no profile read, nothing recorded, nothing to do at the close.
 - The memory never costs the turn: empty, slow or failing, the turn runs without it.
+- Slice 2 builds `profile` alone; `record_turn` and `close_conversation` join the
+  contract with slice 4. `profile` returns the text given to the LLM ("" when nothing
+  is known) together with the number of items it was written from, which the engine
+  puts on its `memory` span. The error of the contract is `MemoryServiceError`
+  (`MemoryError` is a Python builtin).
+- The engine does not know who speaks: the orchestrator hands `respond` the user id of
+  the turn's conversation, next to its history.
 
 ### Long-term memory: items
 
@@ -43,6 +50,14 @@ keeps about a logged-in user across conversations. Its tables and the object sto
   - `source`: `manual` | `import` | `conversation`.
   - `status`: `active` (given to the LLM) | `pending` (proposed, not used) | `rejected`
     (a tombstone, see below).
+- **The text of an item is one line of plain characters**, whatever wrote it (the
+  profile page now, an import or the extractor later): the service normalises it on add
+  and on update, before the length check. Every run of whitespace, line breaks and tabs
+  included, becomes one space; control characters and invisible format characters (NUL,
+  zero-width space, ...) are removed; a text with nothing left is refused like an empty
+  one. An item is rendered as one `- …` line of the profile message, so a line break in
+  it could write further lines of that message, or its rules. Letters and accents are
+  stored as given, composed (NFC) or not (NFD).
 - **Only `active` items reach the LLM.** Which source may write which status:
 
   | Source | Status when created | Why |
@@ -72,6 +87,22 @@ keeps about a logged-in user across conversations. Its tables and the object sto
   profile per user and drops the cache on every write, so a turn reads from RAM and an
   edit on the profile page applies to the next turn. A miss is bounded by
   `MEMORY_TIMEOUT_SEC`; on timeout or error the turn runs without the profile.
+  The order is `identity`, then `addressing`, then the other categories, the most
+  recently updated first inside each; an empty profile is cached too. A profile read
+  from the store while one of the user's items was being written is not cached.
+- A category outside the four, a text that is empty once trimmed or one longer than
+  `MEMORY_ITEM_MAX_CHARS` (an item is one short sentence, and every active item is in
+  every prompt) is refused by the service (`InvalidMemoryItem`, a `422` on the routes),
+  on add and on update, whatever the caller; the stored text is trimmed.
+- `MEMORY_PROMPT` is the items between an introduction and three rules. The person
+  types the items in their own voice ("Gọi tôi là chị Linh, xưng em"), so the text says
+  that "tôi" in an item is the person, that the way of addressing they ask for binds
+  every answer (also when they say "bạn" to the avatar), that the facts are theirs and
+  known, and that no profile is mentioned. It names the avatar "trợ lý", never "bạn".
+  The wording was chosen by replaying a recorded request on the real model (counts in
+  the slice 2 report); it is changed only with a new measurement.
+- The cache holds one entry per user seen and is never evicted: enough for the one
+  development user, and to be bounded when the login brings many users.
 - **Storage**: the application database. All the SQL of the memory is in
   `features/memory/store.py`; calls run in a thread.
 
@@ -131,6 +162,15 @@ Scoped to `current_user_id()`; a guest gets `401` on every route.
 - `POST /memory/items` `{category, text}` → `201` + the item
 - `PATCH /memory/items/{id}` `{text?, category?, status?: "active"}` → the item, or `404`
 - `DELETE /memory/items/{id}` → `204`, or `404`
+- An item is `{"id", "category", "text", "status", "source", "import_id",
+  "replaces_id", "evidence", "created_at", "updated_at"}`, `null` where not set, the
+  timestamps in ISO 8601 UTC. An item of another user is a `404`. An unknown category
+  or an empty text → `422`; a store failure → `502` with a generic text, the detail in
+  the log.
+- Slice 2: the `POST` body takes `category` and `text` only and the `PATCH` body `text`
+  and `category` only; any other field, `status` included, or (for `PATCH`) no field at
+  all is a `422`. `status` arrives with the
+  approval of slice 4. A deleted item is deleted for good (all items are `manual`).
 - `GET /memory/imports` → `{"imports": [{id, name, size_bytes, item_count, created_at}]}`
 - `POST /memory/imports` (multipart: field `file`, or field `text`) → `201` +
   `{"import": {...}, "items": [...]}`; `413` too large, `415` unsupported type, `422`
@@ -164,15 +204,17 @@ stateDiagram-v2
 
 ### Tunables
 
-In `backend/tuning.py`, each overridable from `.env`: `MEMORY_PROMPT_MAX_ITEMS`,
-`MEMORY_TIMEOUT_SEC`, `MEMORY_PROMOTE_SEEN_COUNT` (default 2), `MEMORY_MIN_STT_CONFIDENCE`,
+In `backend/tuning.py`, each overridable from `.env`: `MEMORY_PROMPT_MAX_ITEMS`
+(default 20, at least 1), `MEMORY_TIMEOUT_SEC` (default 1.0, positive and finite),
+`MEMORY_ITEM_MAX_CHARS` (default 200, at least 1), `MEMORY_PROMOTE_SEEN_COUNT` (default 2), `MEMORY_MIN_STT_CONFIDENCE`,
 `MEMORY_TRANSCRIPT_TTL_DAYS`, `MEMORY_IMPORT_MAX_FILE_MB`, `MEMORY_IMPORT_MAX_CHARS`. The
-texts `MEMORY_PROMPT`, `MEMORY_EXTRACT_PROMPT` and `MEMORY_IMPORT_PROMPT` are in
-`backend/prompts.py` only.
+texts `MEMORY_PROMPT` (with `MEMORY_PROMPT_ITEM`, the line of one item),
+`MEMORY_EXTRACT_PROMPT` and `MEMORY_IMPORT_PROMPT` are in `backend/prompts.py` only.
 
 ### Observability
 
-- A `memory` span in the engine for the profile read (items, outcome).
+- A `memory` span in the engine for the profile read: `memory.items` and
+  `memory.outcome` (`hit`, `empty`, `timeout`, `error`). A guest's turn has none.
 - Consolidation and import are their own traces (`memory.consolidate`,
   `memory.import`) with the transcript / text in and the operations out.
 
@@ -197,9 +239,14 @@ backend/
 
 ## To-do
 
-- [ ] Slice 2 — `Memory` contract, `features/memory/store.py`, `MemoryService` profile
+- [x] Slice 2 — `Memory` contract, `features/memory/store.py`, `MemoryService` profile
       with its cache, `MEMORY_PROMPT`, engine read with timeout
-- [ ] Slice 2 — memory routes, wiring in `main.py`
+- [x] Slice 2 — memory routes, wiring in `main.py`
+- [ ] Slice 2 — `MEMORY_PROMPT` measured again on the real model: a profile with no
+      addressing item must not make the avatar pick "anh" / "cô" by itself (seen in 3 of
+      8 answers), and the answer keeps the addressing asked for (34 of 40 today)
+- [ ] Slice 2 — decide what happens to active items beyond `MEMORY_PROMPT_MAX_ITEMS`:
+      they are listed on the profile page and not given to the LLM
 - [ ] Slice 3 — loaders moved to `utils/loaders.py` with the knowledge base still passing
       its tests
 - [ ] Slice 3 — `LLM.complete`, `extraction.py`, `MEMORY_IMPORT_PROMPT`, table
