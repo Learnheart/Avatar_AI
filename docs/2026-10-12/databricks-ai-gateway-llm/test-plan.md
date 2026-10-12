@@ -2,7 +2,8 @@
 author: linhbk3
 date: 2026-10-12
 status: in-progress
-agents: llm
+agent: avatar
+modules: llm
 summary: Tests for the Responses API LLM backend and its Databricks catalog entry
 ---
 

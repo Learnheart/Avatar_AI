@@ -2,7 +2,8 @@
 author: linhbk3
 date: 2026-10-12
 status: in-progress
-agents: stt, llm
+agent: avatar
+modules: stt, llm
 summary: Tests for the primary + backup wrappers of the STT and LLM stages
 ---
 

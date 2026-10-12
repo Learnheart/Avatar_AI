@@ -23,12 +23,17 @@ Every doc starts with:
 author: <name or email>
 date: YYYY-MM-DD
 status: todo | in-progress | done
-agents: <comma-separated module IDs affected>
+agent: avatar
+modules: <comma-separated module IDs affected>
 summary: <one line>
 ---
 ```
 
-- Module IDs for `agents:` are `vision`, `vad`, `stt`, `llm`, `tts`, `orchestrator`,
+- `agent:` names the agent the change belongs to. This repository holds one, `avatar`
+  (the kiosk avatar). A second agent, if one is ever added or called, gets its own ID
+  here; it is never listed under `modules:`.
+- `modules:` lists the parts of that agent the change touches. They are components of
+  one pipeline, not agents: `vision`, `vad`, `stt`, `llm`, `tts`, `orchestrator`,
   `expression`, `knowledge`.
 - A plan contains: problem statement, requirements, decisions made, implementation
   approach, and ends with a `## To-do` checklist (`- [ ] task`).

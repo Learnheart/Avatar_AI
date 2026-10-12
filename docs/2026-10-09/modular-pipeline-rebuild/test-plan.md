@@ -2,7 +2,8 @@
 author: linhbk3
 date: 2026-10-09
 status: in-progress
-agents: vision, vad, stt, llm, tts, orchestrator, expression
+agent: avatar
+modules: vision, vad, stt, llm, tts, orchestrator, expression
 summary: Unit and end-to-end tests for the modular pipeline rebuild.
 ---
 

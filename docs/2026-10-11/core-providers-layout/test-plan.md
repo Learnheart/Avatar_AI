@@ -2,7 +2,8 @@
 author: linhbk3
 date: 2026-10-11
 status: in-progress
-agents: stt, llm
+agent: avatar
+modules: stt, llm
 summary: Tests for the backend catalog and the OpenAI-compatible LLM and STT backends
 ---
 

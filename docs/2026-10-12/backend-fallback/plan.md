@@ -2,7 +2,8 @@
 author: linhbk3
 date: 2026-10-12
 status: in-progress
-agents: stt, llm
+agent: avatar
+modules: stt, llm
 summary: Name a backup backend for STT and for the LLM that takes over when the primary fails
 ---
 

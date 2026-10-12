@@ -2,7 +2,8 @@
 author: linhbk3
 date: 2026-10-11
 status: in-progress
-agents: stt, llm, tts, orchestrator
+agent: avatar
+modules: stt, llm, tts, orchestrator
 summary: Give prompts and tunables their own files and gather the scattered backend factories and WebSocket messages, without changing behaviour
 ---
 

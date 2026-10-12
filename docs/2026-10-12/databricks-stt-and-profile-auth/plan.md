@@ -2,7 +2,8 @@
 author: linhbk3
 date: 2026-10-12
 status: in-progress
-agents: stt, llm
+agent: avatar
+modules: stt, llm
 summary: Run STT and LLM through the Databricks AI Gateway, authenticated by a Databricks CLI profile, for networks where Groq is blocked
 ---
 

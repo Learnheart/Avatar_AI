@@ -2,7 +2,8 @@
 author: linhbk3
 date: 2026-10-08
 status: todo
-agents: vision, vad, stt, llm, tts, orchestrator, expression
+agent: avatar
+modules: vision, vad, stt, llm, tts, orchestrator, expression
 summary: Per-module, integration, and pipeline quality gates for the modular Avatar AI pipeline.
 ---
 

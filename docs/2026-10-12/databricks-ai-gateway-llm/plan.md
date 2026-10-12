@@ -2,7 +2,8 @@
 author: linhbk3
 date: 2026-10-12
 status: in-progress
-agents: llm
+agent: avatar
+modules: llm
 summary: Add an LLM backend that calls the Databricks AI Gateway through the OpenAI Responses API
 ---
 

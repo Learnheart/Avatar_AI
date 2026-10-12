@@ -2,7 +2,8 @@
 author: linhbk3
 date: 2026-10-11
 status: in-progress
-agents: vision, vad, stt, llm, tts, orchestrator
+agent: avatar
+modules: vision, vad, stt, llm, tts, orchestrator
 summary: Reorganize the backend into core / providers / runtime / features and make the LLM and STT provider a configuration choice
 ---
 

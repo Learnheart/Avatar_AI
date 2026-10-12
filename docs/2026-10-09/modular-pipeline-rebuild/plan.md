@@ -2,7 +2,8 @@
 author: linhbk3
 date: 2026-10-09
 status: in-progress
-agents: vision, vad, stt, llm, tts, orchestrator, expression
+agent: avatar
+modules: vision, vad, stt, llm, tts, orchestrator, expression
 summary: Rebuild the Gemini Live POC into the modular VAD → STT → LLM → TTS pipeline described in docs/ARCHITECTURE.md.
 ---
 

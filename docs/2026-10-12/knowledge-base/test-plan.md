@@ -2,7 +2,8 @@
 author: linhbk3
 date: 2026-10-12
 status: in-progress
-agents: knowledge, llm, orchestrator, expression
+agent: avatar
+modules: knowledge, llm, orchestrator, expression
 summary: Tests for the knowledge base — embedding stage, indexing, retrieval in the turn, upload API and panel
 ---
 

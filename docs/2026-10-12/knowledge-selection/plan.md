@@ -2,7 +2,8 @@
 author: linhbk3
 date: 2026-10-12
 status: in-progress
-agents: knowledge, expression
+agent: avatar
+modules: knowledge, expression
 summary: Let the user choose in the panel which uploaded documents the avatar answers from
 ---
 

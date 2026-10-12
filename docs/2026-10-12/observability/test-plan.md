@@ -2,7 +2,8 @@
 author: linhbk3
 date: 2026-10-12
 status: in-progress
-agents: vision, vad, stt, llm, tts, orchestrator, knowledge
+agent: avatar
+modules: vision, vad, stt, llm, tts, orchestrator, knowledge
 summary: Tests for the turn traces, the perception measurements and the full capture
 ---
 

@@ -2,7 +2,8 @@
 author: linhbk3
 date: 2026-10-12
 status: in-progress
-agents: vision, vad, stt, llm, tts, orchestrator, knowledge
+agent: avatar
+modules: vision, vad, stt, llm, tts, orchestrator, knowledge
 summary: Step-by-step tracing of a turn, measurements of the perception loops, and a full capture of what the kiosk saw and heard
 ---
 

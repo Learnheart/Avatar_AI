@@ -2,7 +2,8 @@
 author: linhbk3
 date: 2026-10-12
 status: in-progress
-agents: knowledge, llm, orchestrator, expression
+agent: avatar
+modules: knowledge, llm, orchestrator, expression
 summary: Knowledge base for the avatar — upload files in the UI, index them in a lightweight vector DB, answer from them
 ---
 

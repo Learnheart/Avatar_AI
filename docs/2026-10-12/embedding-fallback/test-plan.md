@@ -2,7 +2,8 @@
 author: linhbk3
 date: 2026-10-12
 status: in-progress
-agents: knowledge
+agent: avatar
+modules: knowledge
 summary: Tests for the backup embedding backend
 ---
 
