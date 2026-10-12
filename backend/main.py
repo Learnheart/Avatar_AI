@@ -5,9 +5,11 @@ LOG_LEVEL come from the config).
 Endpoints:
   GET  /health     — health check with the system status
   WS   /ws         — the single WebSocket endpoint for all realtime communication
+  /knowledge/...   — upload, list and delete the documents of the knowledge base
+                     (`backend/features/knowledge/api.py`)
 
-Startup: validate config → build modules → start orchestrator
-Shutdown: stop the orchestrator, which releases every module
+Startup: validate config → open the knowledge base → build modules → start orchestrator
+Shutdown: stop the orchestrator, which releases every module; close the knowledge base
 """
 import time
 from contextlib import asynccontextmanager
@@ -15,11 +17,16 @@ from typing import AsyncIterator, Optional
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.config import AppConfig
+from backend.core.contracts import Knowledge
 from backend.core.conversation.engine import ConversationEngine
-from backend.providers.catalog import create_llm, create_stt, create_tts
+from backend.features.knowledge.api import create_knowledge_router
+from backend.features.knowledge.knowledge_base import KnowledgeBase
+from backend.features.knowledge.store import SqliteVecStore
+from backend.providers.catalog import create_embedder, create_llm, create_stt, create_tts
 from backend.core.orchestrator import Orchestrator
 from backend.core.perception.camera import Camera
 from backend.core.perception.tracking import HeadTracker
@@ -29,10 +36,19 @@ from backend.utils.logging import configure_logging, get_logger
 logger = get_logger("main")
 
 
-def build_orchestrator(config: AppConfig) -> Orchestrator:
+def build_knowledge(config: AppConfig) -> KnowledgeBase:
+    """The knowledge base on its configured embedding and store. Nothing is opened yet."""
+    return KnowledgeBase(config, create_embedder(config), SqliteVecStore(config.KNOWLEDGE_DB_PATH))
+
+
+def build_orchestrator(config: AppConfig, knowledge: Knowledge) -> Orchestrator:
     """Wire the real modules together."""
     engine = ConversationEngine(
-        config, stt=create_stt(config), llm=create_llm(config), tts=create_tts(config)
+        config,
+        stt=create_stt(config),
+        llm=create_llm(config),
+        tts=create_tts(config),
+        knowledge=knowledge,
     )
     return Orchestrator(
         config,
@@ -43,8 +59,13 @@ def build_orchestrator(config: AppConfig) -> Orchestrator:
     )
 
 
-def create_app(config: AppConfig, orchestrator: Optional[Orchestrator] = None) -> FastAPI:
-    """Build the app. Without an orchestrator, the real one is built at startup."""
+def create_app(
+    config: AppConfig,
+    orchestrator: Optional[Orchestrator] = None,
+    knowledge: Optional[KnowledgeBase] = None,
+) -> FastAPI:
+    """Build the app. Without an orchestrator or a knowledge base, the real ones are
+    built at startup."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -56,17 +77,32 @@ def create_app(config: AppConfig, orchestrator: Optional[Orchestrator] = None) -
         configure_logging(config.LOG_LEVEL)
         logger.info({"msg": "Avatar AI starting up"})
 
-        app.state.orchestrator = orchestrator or build_orchestrator(config)
-        app.state.started_at = time.monotonic()
-        await app.state.orchestrator.start()
-        logger.info({"msg": "System ready"})
+        app.state.knowledge = knowledge or build_knowledge(config)
+        await app.state.knowledge.start()
+        try:
+            app.state.orchestrator = orchestrator or build_orchestrator(
+                config, app.state.knowledge
+            )
+            app.state.started_at = time.monotonic()
+            await app.state.orchestrator.start()
+            logger.info({"msg": "System ready"})
 
-        yield
+            yield
 
-        logger.info({"msg": "Avatar AI shutting down"})
-        await app.state.orchestrator.stop()
+            logger.info({"msg": "Avatar AI shutting down"})
+            await app.state.orchestrator.stop()
+        finally:
+            await app.state.knowledge.close()
 
     app = FastAPI(title="Magic Mirror AI Avatar", version="0.1.0", lifespan=lifespan)
+    # The page is served from another origin (the Vite server) than this API.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[o.strip() for o in config.CORS_ALLOW_ORIGINS.split(",") if o.strip()],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.include_router(create_knowledge_router(config))
 
     @app.get("/health")
     async def health() -> JSONResponse:
