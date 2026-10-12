@@ -152,6 +152,7 @@ backend/
   providers/                   # ── model backends behind core/contracts.py ──
     catalog.py                 # backend name → builder, for every stage (+ device router)
     llm/openai_compatible.py   # Groq, OpenRouter, vLLM, Ollama, ...
+    llm/openai_responses.py    # OpenAI Responses API: Databricks AI Gateway
     stt/openai_compatible.py   # Groq Whisper or a self-hosted Whisper server
     tts/zerotts.py             # ZeroTTS backend
   runtime/                     # ── what depends on the machine (macOS / Windows) ──
@@ -201,7 +202,8 @@ Layering rules:
 - A new model backend is one file under `providers/<stage>/` plus one entry in
   `providers/catalog.py`. Another OpenAI-compatible API or a self-hosted server needs no
   code: set `LLM_BACKEND=openai_compatible` with `LLM_BASE_URL`, `LLM_API_KEY` and
-  `LLM_MODEL` (same with `STT_*`).
+  `LLM_MODEL` (same with `STT_*`). The Databricks AI Gateway is `LLM_BACKEND=databricks`
+  with `DATABRICKS_BASE_URL`, `DATABRICKS_TOKEN` and `LLM_MODEL`.
 - Blocking inference (VAD, TTS, vision) runs in a thread or executor, never on the event
   loop.
 - The WebSocket message shapes are a contract between `backend/core/orchestrator/` and
