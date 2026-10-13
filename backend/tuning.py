@@ -85,6 +85,17 @@ class Tuning:
     # still never proposed again.
     MEMORY_EXTRACT_MAX_REJECTED: int = env_int("MEMORY_EXTRACT_MAX_REJECTED", 50)
 
+    # ── Persona (the personality a logged-in user gives the avatar) ─────
+    # Characters of one field of the persona: every field that is set is in every
+    # prompt of that user. A longer text is refused.
+    PERSONA_FIELD_MAX_CHARS: int = env_int("PERSONA_FIELD_MAX_CHARS", 300)
+    # Characters of a pasted description of the avatar read by the LLM into the
+    # fields; a longer one is refused.
+    PERSONA_IMPORT_MAX_CHARS: int = env_int("PERSONA_IMPORT_MAX_CHARS", 8000)
+    # Max wait for the persona in a turn; past it the question is answered with the
+    # character of the system prompt.
+    PERSONA_TIMEOUT_SEC: float = env_float("PERSONA_TIMEOUT_SEC", 1.0)
+
     # ── Knowledge (uploaded documents) ──────────────────────────────────
     # Passages given to the LLM with the question.
     KNOWLEDGE_TOP_K: int = env_int("KNOWLEDGE_TOP_K", 4)

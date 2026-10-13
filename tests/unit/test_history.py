@@ -146,6 +146,23 @@ def test_the_profile_is_a_second_system_message():
     assert messages[:3] == [("system", SYSTEM_PROMPT), ("system", "Tên: Linh"), ("user", "một")]
 
 
+def test_the_persona_is_a_system_message_before_the_profile():
+    messages = _messages((), "hai", profile="Tên: Linh", persona="Tên trợ lý: Mai")
+
+    assert messages == [
+        ("system", SYSTEM_PROMPT),
+        ("system", "Tên trợ lý: Mai"),
+        ("system", "Tên: Linh"),
+        ("user", "hai"),
+    ]
+
+
+def test_the_persona_alone_is_the_second_system_message():
+    messages = _messages((), "hai", persona="Tên trợ lý: Mai")
+
+    assert messages == [("system", SYSTEM_PROMPT), ("system", "Tên trợ lý: Mai"), ("user", "hai")]
+
+
 def test_a_turn_with_an_empty_answer_gives_a_user_message_alone_joined_with_the_next():
     history = (
         ChatTurn("một", ("Một.",)),

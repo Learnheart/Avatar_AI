@@ -9,6 +9,10 @@ the rules are in `CLAUDE.md` / `AGENTS.md` §7.
 
 ### Added
 
+- `[persona]` `[llm]` The turn can carry a personality for the avatar: it is given to
+  the LLM as a system message of its own, after the fixed character and before what is
+  known about the person. Slow or failing, the turn is answered in the default character
+  (`PERSONA_TIMEOUT_SEC`, default 1.0).
 - `[orchestrator]` `[llm]` Short-term memory: inside one conversation the avatar sees
   the earlier turns, so a follow-up question is understood. A conversation opens at the
   first utterance and closes when the person left, stayed silent, changed, or asked for

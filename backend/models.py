@@ -197,6 +197,13 @@ class MemoryImport:
         }
 
 
+# The fields of the personality a user gives the avatar, in the order they are written
+# for the LLM. `name`: what the avatar is called. `role`: who it is to the person.
+# `addressing`: how it calls itself and the person. `personality`: its character and
+# tone. `answer_style`: how it answers. `avoid`: what it must not do or talk about.
+PERSONA_FIELDS = ("name", "role", "addressing", "personality", "answer_style", "avoid")
+
+
 @dataclass(frozen=True)
 class MemoryProfile:
     """What is known about a user, as given to the LLM. `text` is "" when nothing is

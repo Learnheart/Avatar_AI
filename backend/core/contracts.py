@@ -1,6 +1,6 @@
 """
-Contracts of the model stages the core calls: STT, LLM, TTS, and of the knowledge lookup
-and the memory.
+Contracts of the model stages the core calls: STT, LLM, TTS, and of the knowledge lookup,
+the memory and the persona.
 
 The core depends on these interfaces only. Backends live in `backend/providers/` and are
 chosen by configuration (`backend/providers/catalog.py`), never by editing a caller.
@@ -37,13 +37,18 @@ class LLMError(Exception):
 class LLM(ABC):
     @abstractmethod
     def stream_answer(
-        self, user_text: str, history: Sequence[ChatTurn] = (), profile: str = ""
+        self,
+        user_text: str,
+        history: Sequence[ChatTurn] = (),
+        profile: str = "",
+        persona: str = "",
     ) -> AsyncIterator[str]:
         """
         Stream the answer to one user utterance as text deltas (no reasoning text).
-        `history` holds the earlier turns of the conversation, oldest first; `profile`
-        is what is known about the person, given as a second system message after the
-        fixed system prompt. No tools. Provider failures raise LLMError.
+        `history` holds the earlier turns of the conversation, oldest first. `persona`
+        is the personality the person gave the avatar and `profile` what is known
+        about the person: each is a system message of its own after the fixed system
+        prompt, the persona first. No tools. Provider failures raise LLMError.
         """
 
     @abstractmethod
@@ -150,4 +155,19 @@ class Memory(ABC):
         what is worth remembering about the user. It may take as long as a request to
         the LLM and is never awaited by a turn. A conversation without any recorded turn
         is nothing to do. Failures raise MemoryServiceError.
+        """
+
+
+# ── Persona: user id in → the personality that user gave the avatar out ───
+
+class PersonaError(Exception):
+    """The persona failed (its store)."""
+
+
+class Persona(ABC):
+    @abstractmethod
+    async def prompt(self, user_id: str) -> str:
+        """
+        The personality the user gave the avatar, as the text given to the LLM. None
+        given → "". Failures raise PersonaError.
         """

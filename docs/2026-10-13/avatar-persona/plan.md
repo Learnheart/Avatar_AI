@@ -137,7 +137,7 @@ Then the docs: `CLAUDE.md` / `AGENTS.md`, `docs/ARCHITECTURE.md`,
 
 ## To-do
 
-- [ ] Slice 1 — the persona in the turn (contract, messages, backends, engine, texts,
+- [x] Slice 1 — the persona in the turn (contract, messages, backends, engine, texts,
       keys) with unit tests
 - [ ] Slice 2 — store, service and the `GET` / `PUT` / `DELETE /persona` routes with
       unit tests

@@ -105,15 +105,20 @@ class TurnRecord:
 
 
 def chat_messages(
-    history: Sequence[ChatTurn], user_text: str, *, system_prompt: str, profile: str = ""
+    history: Sequence[ChatTurn],
+    user_text: str,
+    *,
+    system_prompt: str,
+    profile: str = "",
+    persona: str = "",
 ) -> list[tuple[str, str]]:
-    """The (role, text) messages of one LLM request: the system prompt, the profile as
-    a second system message when there is one, the history, the current utterance.
+    """The (role, text) messages of one LLM request: the system prompt, the persona
+    then the profile as further system messages when there are any, the history, the
+    current utterance.
     A turn without an answer gives a user message alone, and user messages that follow
     each other (the current utterance included) are joined, so the roles alternate."""
     messages = [(SYSTEM, system_prompt)]
-    if profile:
-        messages.append((SYSTEM, profile))
+    messages.extend((SYSTEM, text) for text in (persona, profile) if text)
     pending: list[str] = []  # utterances of the person not answered yet
     for turn in history:
         pending.append(turn.user_text)

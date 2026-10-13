@@ -38,9 +38,9 @@ class ScriptedLLM(LLM):
             raise self.error
         return "".join(self.deltas)
 
-    async def stream_answer(self, user_text, history=(), profile=""):
+    async def stream_answer(self, user_text, history=(), profile="", persona=""):
         self.calls += 1
-        self.requests.append((user_text, history, profile))
+        self.requests.append((user_text, history, profile, persona))
         try:
             await asyncio.sleep(self.delay)
             for delta in self.deltas:
@@ -146,14 +146,17 @@ async def test_llm_backup_takes_over_before_the_first_delta(config, primary):
     assert primary.closed
 
 
-async def test_llm_history_and_profile_reach_the_backup_unchanged(config):
+async def test_llm_history_profile_and_persona_reach_the_backup_unchanged(config):
     history = (ChatTurn("Lãi suất?", ("Năm phần trăm.",)),)
     primary, backup = ScriptedLLM(error=LLMError("down")), ScriptedLLM(["backup"])
     llm = FallbackLLM(config, primary, backup)
 
-    assert [d async for d in llm.stream_answer("còn gì nữa?", history, "Tên: Linh")] == ["backup"]
+    answer = llm.stream_answer("còn gì nữa?", history, "Tên: Linh", "Tên trợ lý: Mai")
+    assert [d async for d in answer] == ["backup"]
 
-    assert primary.requests == backup.requests == [("còn gì nữa?", history, "Tên: Linh")]
+    assert primary.requests == backup.requests == [
+        ("còn gì nữa?", history, "Tên: Linh", "Tên trợ lý: Mai")
+    ]
 
 
 async def test_llm_failure_after_the_first_delta_is_not_replayed_by_the_backup(config):
@@ -175,7 +178,7 @@ async def test_llm_only_the_first_delta_is_bounded(config):
         async def complete(self, system, user):
             return ""
 
-        async def stream_answer(self, user_text, history=(), profile=""):
+        async def stream_answer(self, user_text, history=(), profile="", persona=""):
             yield "Xin "
             await asyncio.sleep(config.FALLBACK_PRIMARY_TIMEOUT_SEC * 3)
             yield "chào."

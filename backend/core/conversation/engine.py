@@ -1,8 +1,8 @@
 """
 ConversationEngine — the swappable boundary "audio in → text + audio out".
 
-One turn: STT → knowledge lookup (optional) → profile of the user (optional) → LLM
-(streamed) → TTS (per sentence). The LLM keeps streaming in its own
+One turn: STT → knowledge lookup (optional) → persona and profile of the user (optional)
+→ LLM (streamed) → TTS (per sentence). The LLM keeps streaming in its own
 task while finished sentences are synthesized, so the first audio does not wait for the
 whole answer. Every stage runs under its own timeout.
 
@@ -20,7 +20,7 @@ from opentelemetry.trace import Span
 
 from backend.config import AppConfig
 from backend.core.contracts import (
-    LLM, STT, TTS, Knowledge, LLMError, Memory, STTError, TTSError,
+    LLM, STT, TTS, Knowledge, LLMError, Memory, Persona, STTError, TTSError,
 )
 from backend.core.conversation.history import search_query
 from backend.models import (
@@ -93,15 +93,18 @@ class ConversationEngine:
         tts: TTS,
         knowledge: Optional[Knowledge] = None,
         memory: Optional[Memory] = None,
+        persona: Optional[Persona] = None,
     ) -> None:
         """Without `knowledge`, the LLM answers the transcript alone; without `memory`,
-        it is told nothing about the person."""
+        it is told nothing about the person; without `persona`, it keeps the character
+        of the system prompt."""
         self.config = config
         self._stt = stt
         self._llm = llm
         self._tts = tts
         self._knowledge = knowledge
         self._memory = memory
+        self._persona = persona
 
     def load(self) -> None:
         """Load local models. Call once at startup, off the event loop (blocking)."""
@@ -128,10 +131,11 @@ class ConversationEngine:
             return
 
         question = await self._with_knowledge(transcript.text, history)
+        persona = await self._persona_prompt(user_id)
         profile = await self._profile(user_id)
         sentences: asyncio.Queue[Optional[_QueuedSentence]] = asyncio.Queue()
         producer = asyncio.create_task(
-            self._produce_sentences(question, history, profile, sentences),
+            self._produce_sentences(question, history, profile, persona, sentences),
             name="llm-sentences",
         )
         try:
@@ -224,6 +228,44 @@ class ConversationEngine:
         })
         return passages
 
+    async def _persona_prompt(self, user_id: Optional[str]) -> str:
+        """The personality the user gave the avatar, as the text given to the LLM. A
+        guest has none and nothing is read. None given, a slow or a failing read → "":
+        the avatar keeps the character of the system prompt, and the turn is not lost."""
+        if self._persona is None or user_id is None:
+            return ""
+        with tracer.start_as_current_span("persona") as span:
+            started = time.perf_counter()
+            try:
+                persona = await asyncio.wait_for(
+                    self._persona.prompt(user_id), timeout=self.config.PERSONA_TIMEOUT_SEC
+                )
+            except asyncio.TimeoutError as e:
+                fail(span, e)
+                span.set_attribute("persona.outcome", "timeout")
+                logger.warning({
+                    "msg": "Persona read timed out, answering without it",
+                    "timeout_sec": self.config.PERSONA_TIMEOUT_SEC,
+                })
+                return ""
+            except Exception as e:
+                fail(span, e)
+                span.set_attribute("persona.outcome", "error")
+                summary = summarize_error(e, self.config.ERROR_SUMMARY_MAX_CHARS)
+                logger.warning({"msg": "Persona read failed, answering without it", "error": summary})
+                return ""
+
+            span.set_attributes({
+                "persona.text": persona,
+                "persona.outcome": "hit" if persona else "empty",
+            })
+            logger.info({
+                "msg": "Persona read",
+                "set": bool(persona),
+                "persona_ms": round((time.perf_counter() - started) * 1000),
+            })
+            return persona
+
     async def _profile(self, user_id: Optional[str]) -> str:
         """What the avatar remembers about the user, as the text given to the LLM. A
         guest has none and nothing is read. Nothing remembered, a slow or a failing
@@ -267,6 +309,7 @@ class ConversationEngine:
         user_text: str,
         history: Sequence[ChatTurn],
         profile: str,
+        persona: str,
         sentences: "asyncio.Queue[Optional[_QueuedSentence]]",
     ) -> None:
         """Queue each sentence of the LLM answer as soon as it is complete.
@@ -275,7 +318,7 @@ class ConversationEngine:
         try:
             try:
                 async with aclosing(
-                    self._answer_sentences(user_text, history, profile)
+                    self._answer_sentences(user_text, history, profile, persona)
                 ) as answer:
                     async for sentence in answer:
                         sentences.put_nowait((sentence, False))
@@ -297,13 +340,14 @@ class ConversationEngine:
             sentences.put_nowait(None)
 
     async def _answer_sentences(
-        self, user_text: str, history: Sequence[ChatTurn], profile: str
+        self, user_text: str, history: Sequence[ChatTurn], profile: str, persona: str
     ) -> AsyncIterator[str]:
         """Stream the LLM answer as speakable sentences. `profile` is what is known
-        about the person ("" = nothing)."""
+        about the person and `persona` the personality they gave the avatar ("" =
+        nothing)."""
         # LLM_TIMEOUT_SEC bounds the wait for each delta, first token included.
         deltas = _bounded(
-            self._llm.stream_answer(user_text, history, profile),
+            self._llm.stream_answer(user_text, history, profile, persona),
             lambda: self.config.LLM_TIMEOUT_SEC,
             LLMError(f"LLM timed out after {self.config.LLM_TIMEOUT_SEC}s"),
         )
@@ -314,6 +358,7 @@ class ConversationEngine:
             "llm",
             **{
                 "llm.system_prompt": self.config.SYSTEM_PROMPT,
+                "llm.persona": persona,
                 "llm.profile": profile,
                 "llm.history_turns": len(history),
                 "llm.prompt": user_text,

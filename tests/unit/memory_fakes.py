@@ -26,6 +26,6 @@ class CompletingLLM(LLM):
             raise self.error
         return self.answer
 
-    async def stream_answer(self, user_text, history=(), profile=""):
+    async def stream_answer(self, user_text, history=(), profile="", persona=""):
         raise AssertionError("The memory asks for a whole answer, not for a stream")
         yield  # an async generator, like the contract

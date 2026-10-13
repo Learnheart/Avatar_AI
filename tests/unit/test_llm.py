@@ -128,6 +128,17 @@ async def test_profile_is_a_second_system_message_after_the_system_prompt(llm, c
     ]
 
 
+async def test_persona_is_a_system_message_between_the_system_prompt_and_the_profile(llm, config):
+    [d async for d in llm.stream_answer("Xin chào", (), "Tên: Linh", "Tên trợ lý: Mai")]
+
+    assert llm._client.calls[0]["messages"] == [
+        {"role": "system", "content": config.SYSTEM_PROMPT},
+        {"role": "system", "content": "Tên trợ lý: Mai"},
+        {"role": "system", "content": "Tên: Linh"},
+        {"role": "user", "content": "Xin chào"},
+    ]
+
+
 async def test_provider_error_on_request_raises_llm_error(llm):
     llm._client.error = OpenAIError("401 bad key")
 

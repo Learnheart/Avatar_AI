@@ -4,12 +4,13 @@ import asyncio
 import pytest
 
 from backend.config import AppConfig
-from backend.core.contracts import KnowledgeError, LLMError, MemoryServiceError
+from backend.core.contracts import KnowledgeError, LLMError, MemoryServiceError, PersonaError
 from backend.core.conversation.engine import ConversationEngine
 from backend.models import ChatTurn, MemoryProfile, Passage
 from backend.utils.telemetry import tracer
 from tests.unit.test_engine import (
-    PROFILE, FakeKnowledge, FakeLLM, FakeMemory, FakeSTT, FakeTTS, _collect,
+    PERSONA, PROFILE, FakeKnowledge, FakeLLM, FakeMemory, FakePersona, FakeSTT, FakeTTS,
+    _collect,
 )
 
 QUESTION = "Lãi suất tiết kiệm là bao nhiêu?"
@@ -37,6 +38,7 @@ def _engine(config: AppConfig, **parts) -> ConversationEngine:
         tts=parts.get("tts", FakeTTS()),
         knowledge=parts.get("knowledge"),
         memory=parts.get("memory"),
+        persona=parts.get("persona"),
     )
 
 
@@ -212,3 +214,55 @@ async def test_a_guest_or_no_memory_wired_leaves_no_memory_span(config, spans):
     await _turn(_engine(config), user_id="user-7")
 
     assert "memory" not in _by_name(spans)
+
+
+# ── Persona ───────────────────────────────────────────────────────────────
+
+async def test_the_persona_span_carries_the_text_and_the_llm_span_too(config, spans):
+    turn = await _turn(_engine(config, persona=FakePersona()), user_id="user-7")
+
+    steps = _by_name(spans)
+    (read,) = steps["persona"]
+    assert read.parent.span_id == turn.get_span_context().span_id
+    assert read.attributes["persona.text"] == PERSONA
+    assert read.attributes["persona.outcome"] == "hit"
+    assert read.status.is_ok
+    assert steps["llm"][0].attributes["llm.persona"] == PERSONA
+
+
+def _persona_fails(persona: FakePersona) -> None:
+    persona.error = PersonaError("store down")
+
+
+def _persona_hangs(persona: FakePersona) -> None:
+    persona.hang = True
+
+
+def _no_persona_set(persona: FakePersona) -> None:
+    persona.result = ""
+
+
+@pytest.mark.parametrize(
+    ("setup", "outcome", "ok"),
+    [(_no_persona_set, "empty", True), (_persona_fails, "error", False),
+     (_persona_hangs, "timeout", False)],
+)
+async def test_the_persona_span_says_how_the_read_ended(config, spans, setup, outcome, ok):
+    config.PERSONA_TIMEOUT_SEC = 0.05
+    persona = FakePersona()
+    setup(persona)
+
+    # Bounded here too: without the engine's own timeout a hanging read never ends.
+    await asyncio.wait_for(_turn(_engine(config, persona=persona), user_id="user-7"), timeout=2)
+
+    (read,) = _by_name(spans)["persona"]
+    assert read.attributes["persona.outcome"] == outcome
+    assert read.status.is_ok is ok
+    assert _by_name(spans)["llm"][0].attributes["llm.persona"] == ""
+
+
+async def test_a_guest_or_no_persona_wired_leaves_no_persona_span(config, spans):
+    await _turn(_engine(config, persona=FakePersona()))
+    await _turn(_engine(config), user_id="user-7")
+
+    assert "persona" not in _by_name(spans)

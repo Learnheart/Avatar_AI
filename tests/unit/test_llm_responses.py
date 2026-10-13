@@ -156,6 +156,17 @@ async def test_profile_is_a_second_system_message_after_the_system_prompt(llm, c
     ]
 
 
+async def test_persona_is_a_system_message_between_the_system_prompt_and_the_profile(llm, config):
+    [d async for d in llm.stream_answer("Xin chào", (), "Tên: Linh", "Tên trợ lý: Mai")]
+
+    assert llm._client.calls[0]["input"] == [
+        _part("system", config.SYSTEM_PROMPT),
+        _part("system", "Tên trợ lý: Mai"),
+        _part("system", "Tên: Linh"),
+        _part("user", "Xin chào"),
+    ]
+
+
 async def test_provider_error_on_request_raises_llm_error(llm):
     llm._client.error = OpenAIError("401 bad token")
 

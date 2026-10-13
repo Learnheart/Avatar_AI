@@ -193,8 +193,10 @@ class AppConfig(Tuning, Prompts):
             raise ValueError("MEMORY_PROMPT_MAX_ITEMS must be at least 1.")
         if self.MEMORY_ITEM_MAX_CHARS < 1:
             raise ValueError("MEMORY_ITEM_MAX_CHARS must be at least 1.")
-        if not (math.isfinite(self.MEMORY_TIMEOUT_SEC) and self.MEMORY_TIMEOUT_SEC > 0):
-            raise ValueError("MEMORY_TIMEOUT_SEC must be positive and finite.")
+        for key in ("MEMORY_TIMEOUT_SEC", "PERSONA_TIMEOUT_SEC"):
+            value = getattr(self, key)
+            if not (math.isfinite(value) and value > 0):
+                raise ValueError(f"{key} must be positive and finite.")
         if not self.DATABASE_URL.strip():
             raise ValueError("DATABASE_URL must not be empty.")
         if not self.OBJECT_STORE_DIR.strip():
@@ -210,6 +212,8 @@ class AppConfig(Tuning, Prompts):
             "MEMORY_IMPORT_MAX_CHARS",
             "MEMORY_PROMOTE_SEEN_COUNT",
             "MEMORY_CONSOLIDATE_MAX_CHARS",
+            "PERSONA_FIELD_MAX_CHARS",
+            "PERSONA_IMPORT_MAX_CHARS",
         ):
             if getattr(self, key) < 1:
                 raise ValueError(f"{key} must be at least 1.")

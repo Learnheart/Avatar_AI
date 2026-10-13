@@ -51,10 +51,18 @@ class OpenAIResponsesLLM(LLM):
         )
 
     async def stream_answer(
-        self, user_text: str, history: Sequence[ChatTurn] = (), profile: str = ""
+        self,
+        user_text: str,
+        history: Sequence[ChatTurn] = (),
+        profile: str = "",
+        persona: str = "",
     ) -> AsyncIterator[str]:
         messages = chat_messages(
-            history, user_text, system_prompt=self.config.SYSTEM_PROMPT, profile=profile
+            history,
+            user_text,
+            system_prompt=self.config.SYSTEM_PROMPT,
+            profile=profile,
+            persona=persona,
         )
         try:
             stream = await self._client.responses.create(

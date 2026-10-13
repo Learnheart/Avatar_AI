@@ -92,10 +92,15 @@ class FallbackLLM(LLM):
         self._state = _Primary(config, "llm")
 
     async def stream_answer(
-        self, user_text: str, history: Sequence[ChatTurn] = (), profile: str = ""
+        self,
+        user_text: str,
+        history: Sequence[ChatTurn] = (),
+        profile: str = "",
+        persona: str = "",
     ) -> AsyncIterator[str]:
+        request = (user_text, history, profile, persona)
         if self._state.available():
-            async with aclosing(self._primary.stream_answer(user_text, history, profile)) as answer:
+            async with aclosing(self._primary.stream_answer(*request)) as answer:
                 try:
                     # Only the wait for the first delta is bounded: that is where a dead
                     # provider shows.
@@ -114,7 +119,7 @@ class FallbackLLM(LLM):
                         yield delta
                     return
 
-        async with aclosing(self._backup.stream_answer(user_text, history, profile)) as answer:
+        async with aclosing(self._backup.stream_answer(*request)) as answer:
             async for delta in answer:
                 yield delta
 

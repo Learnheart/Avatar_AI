@@ -6,8 +6,8 @@ import pytest
 from backend.config import AppConfig
 from backend.core.conversation.engine import ConversationEngine, split_sentences
 from backend.core.contracts import (
-    LLM, STT, TTS, Knowledge, KnowledgeError, LLMError, Memory, MemoryServiceError, STTError,
-    TTSError,
+    LLM, STT, TTS, Knowledge, KnowledgeError, LLMError, Memory, MemoryServiceError, Persona,
+    PersonaError, STTError, TTSError,
 )
 from backend.models import (
     AudioEvent, ChatTurn, DoneEvent, MemoryProfile, Passage, Transcript, TranscriptEvent,
@@ -46,15 +46,19 @@ class FakeLLM(LLM):
         self.calls: list[str] = []
         self.histories: list[tuple] = []
         self.profiles: list[str] = []
+        self.personas: list[str] = []
         self.closed = False
 
     async def complete(self, system, user) -> str:
         return "".join(self.deltas)
 
-    async def stream_answer(self, user_text, history=(), profile="") -> AsyncIterator[str]:
+    async def stream_answer(
+        self, user_text, history=(), profile="", persona=""
+    ) -> AsyncIterator[str]:
         self.calls.append(user_text)
         self.histories.append(tuple(history))
         self.profiles.append(profile)
+        self.personas.append(persona)
         try:
             for index, delta in enumerate(self.deltas):
                 if index == self.hold_after:
@@ -307,6 +311,7 @@ async def test_the_llm_receives_the_history_and_an_empty_profile(config):
     assert llm.calls == ["còn mười hai tháng?"]
     assert llm.histories == [HISTORY]
     assert llm.profiles == [""]
+    assert llm.personas == [""]
 
 
 async def test_without_history_the_llm_is_asked_as_before(config):
@@ -635,3 +640,112 @@ async def test_an_empty_transcript_makes_no_memory_read(config):
     await _collect(engine, user_id="user-7")
 
     assert memory.user_ids == []
+
+
+# ── Persona: the personality the user gave the avatar ─────────────────────
+
+PERSONA = "Tính cách của trợ lý:\n- Tên của trợ lý: Mai\n- Cách xưng hô: xưng em, gọi anh"
+
+
+class FakePersona(Persona):
+    def __init__(self, text: str = PERSONA) -> None:
+        self.result = text
+        self.error: Exception | None = None
+        self.hang = False
+        self.user_ids: list[str] = []
+
+    async def prompt(self, user_id: str) -> str:
+        self.user_ids.append(user_id)
+        if self.hang:
+            await asyncio.Event().wait()
+        if self.error:
+            raise self.error
+        return self.result
+
+
+def _engine_in_character(
+    config: AppConfig, persona: FakePersona, memory: FakeMemory | None = None
+) -> tuple[ConversationEngine, FakeLLM]:
+    llm = FakeLLM(["Em là Mai ạ."])
+    engine = ConversationEngine(
+        config, stt=FakeSTT(QUESTION), llm=llm, tts=FakeTTS(), memory=memory, persona=persona
+    )
+    return engine, llm
+
+
+async def test_the_llm_receives_the_persona_of_the_turn_s_user(config):
+    persona = FakePersona()
+    engine, llm = _engine_in_character(config, persona)
+
+    await _collect(engine, HISTORY, user_id="user-7")
+
+    assert persona.user_ids == ["user-7"]
+    assert llm.personas == [PERSONA]
+    assert llm.profiles == [""]
+    assert llm.calls == [QUESTION]
+    assert llm.histories == [HISTORY]
+
+
+async def test_the_persona_goes_with_the_profile(config):
+    engine, llm = _engine_in_character(config, FakePersona(), FakeMemory())
+
+    await _collect(engine, user_id="user-7")
+
+    assert llm.personas == [PERSONA]
+    assert llm.profiles == [PROFILE.text]
+
+
+async def test_a_guest_makes_no_persona_read(config):
+    persona = FakePersona()
+    engine, llm = _engine_in_character(config, persona)
+
+    events = await _collect(engine)
+
+    assert persona.user_ids == []
+    assert llm.personas == [""]
+    assert _texts(events) == ["Em là Mai ạ."]
+
+
+async def test_a_user_without_persona_is_answered_in_the_default_character(config):
+    engine, llm = _engine_in_character(config, FakePersona(""))
+
+    await _collect(engine, user_id="user-7")
+
+    assert llm.personas == [""]
+
+
+async def test_a_failing_persona_does_not_cost_the_turn(config):
+    persona = FakePersona()
+    persona.error = PersonaError("store down")
+    engine, llm = _engine_in_character(config, persona, FakeMemory())
+
+    events = await _collect(engine, user_id="user-7")
+
+    assert llm.personas == [""]
+    assert llm.profiles == [PROFILE.text]
+    assert _texts(events) == ["Em là Mai ạ."]
+    assert isinstance(events[-1], DoneEvent)
+
+
+async def test_a_slow_persona_is_abandoned_after_its_timeout(config):
+    config.PERSONA_TIMEOUT_SEC = 0.05
+    persona = FakePersona()
+    persona.hang = True
+    engine, llm = _engine_in_character(config, persona)
+
+    # Bounded here too: without the engine's own timeout the turn would never end.
+    events = await asyncio.wait_for(_collect(engine, user_id="user-7"), timeout=2)
+
+    assert llm.personas == [""]
+    assert _texts(events) == ["Em là Mai ạ."]
+
+
+async def test_an_empty_transcript_makes_no_persona_read(config):
+    persona = FakePersona()
+    engine = ConversationEngine(
+        config, stt=FakeSTT(text=""), llm=FakeLLM([]), tts=FakeTTS(), persona=persona
+    )
+
+    await _collect(engine, user_id="user-7")
+
+    assert persona.user_ids == []
