@@ -196,6 +196,9 @@ the rules are in `CLAUDE.md` / `AGENTS.md` §7.
   transcript window or remembered.
 - `[stt]` Whisper is asked for the detailed response (`verbose_json`) instead of the
   text alone.
+- `[expression]` `[knowledge]` The documents and the conversation are drop-downs: the
+  "Tài liệu" button and the "Hội thoại" header show an arrow, open and close their
+  list, and the page remembers how each was left.
 
 ### Fixed
 

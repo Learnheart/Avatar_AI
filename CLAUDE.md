@@ -255,6 +255,8 @@ frontend/                      # ── CAPABILITY 3: Expression ──
       persona-client.js        # calls the backend /persona API
       persona-panel.js         # "Tính cách của avatar" block of the profile page: read a description, edit the fields, save / delete; shows the default of an empty field
       format.js                # pure helpers (unit-tested)
+    ui/
+      collapsible.js           # a drop-down: a header that opens and closes a body, remembered (unit-tested)
     avatar/
       avatar-renderer.js       # VRM render, applies head / mouth values
       lip-sync.js              # reads loudness of the audio being played

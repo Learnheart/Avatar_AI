@@ -81,7 +81,7 @@ log of that session:
 
 - [x] Invented sentences dropped by the engine, with unit tests, `CHANGELOG.md`
 - [x] The head moving on its own, with unit tests, `CHANGELOG.md`
-- [ ] The two drop-downs, with unit tests, `npm run build`, `CHANGELOG.md`
+- [x] The two drop-downs, with unit tests, `npm run build`, `CHANGELOG.md`
 - [ ] The page in a real browser: both drop-downs opened, closed and remembered across a
       reload
 - [ ] Seen in the same log, to decide: one answer of seven sentences took 28 s to

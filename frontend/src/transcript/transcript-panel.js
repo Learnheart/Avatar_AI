@@ -1,6 +1,7 @@
 /**
  * Transcript window — what the person and the avatar said in the conversation in
- * progress, and the "Cuộc trò chuyện mới" button.
+ * progress, and the "Cuộc trò chuyện mới" button. A drop-down: pressing its header
+ * folds the lines away and brings them back.
  *
  * The markup is in index.html (#transcript-panel). The lines are kept by
  * transcript.js; this class only draws them. The texts come from speech-to-text and
@@ -8,6 +9,7 @@
  */
 
 import { TRANSCRIPT_MAX_LINES, TRANSCRIPT_SCROLL_SLACK_PX } from '../config.js'
+import { Collapsible } from '../ui/collapsible.js'
 import {
   PERSON,
   addPersonLine,
@@ -35,6 +37,15 @@ export class TranscriptPanel {
    */
   init(onReset) {
     this._reset.addEventListener('click', () => onReset())
+    // A drop-down: its header stays, the lines fold away. Opened again, it shows the
+    // newest line.
+    new Collapsible({
+      header: document.getElementById('transcript-toggle'),
+      body: this._list,
+      key: 'avatar.panel.transcript',
+      open: true,
+      onChange: (open) => { if (open) this._list.scrollTop = this._list.scrollHeight },
+    })
     this._render()
   }
 

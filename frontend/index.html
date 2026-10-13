@@ -246,6 +246,28 @@
       font-weight: 600;
     }
 
+    /* The header of a drop-down: its arrow points down while the body is open */
+    .drop-down::after {
+      content: "▸";
+      display: inline-block;
+      margin-left: 6px;
+      font-size: 11px;
+      opacity: 0.7;
+      transition: transform 0.15s;
+    }
+    .drop-down[aria-expanded="true"]::after { transform: rotate(90deg); }
+
+    #transcript-toggle {
+      padding: 0;
+      font: inherit;
+      color: inherit;
+      background: none;
+      border: none;
+      cursor: pointer;
+    }
+    #transcript-toggle:focus-visible { outline: 2px solid #6c63ff; outline-offset: 3px; }
+    #transcript-list[hidden] { display: none; }
+
     #transcript-reset {
       color: rgba(255,255,255,0.7);
       background: none;
@@ -609,7 +631,7 @@
 
   <!-- Buttons of the knowledge panel and of the profile page -->
   <div id="toolbar">
-    <button id="knowledge-toggle" type="button">Tài liệu</button>
+    <button id="knowledge-toggle" class="drop-down" type="button" aria-expanded="false">Tài liệu</button>
     <button id="profile-toggle" type="button">Hồ sơ</button>
     <!-- Who is signed in on this page (src/auth/auth-panel.js) -->
     <div id="session-chip">
@@ -637,7 +659,7 @@
   <!-- Transcript: the conversation in progress, both sides -->
   <div id="transcript-panel">
     <div id="transcript-header">
-      <span>Hội thoại</span>
+      <button id="transcript-toggle" class="drop-down" type="button" aria-expanded="true">Hội thoại</button>
       <button id="transcript-reset" type="button">Cuộc trò chuyện mới</button>
     </div>
     <ul id="transcript-list" role="log" aria-live="polite"></ul>
