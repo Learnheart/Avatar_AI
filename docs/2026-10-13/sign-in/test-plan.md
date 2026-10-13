@@ -32,10 +32,10 @@ summary: Tests for sign-in — the two modes, sessions, accounts, the WebSocket 
 ## End-to-end tests (real environment, `RUN_E2E=1`)
 
 - `tests/e2e/test_real_sign_in.py` (a backend of its own on a temporary database,
-  `AUTH_DEV_USER_ID` empty): register over HTTP, present the token on the WebSocket, add
-  a memory item naming the person, ask the avatar for the person's name → the answer
-  holds it; sign out, ask again → it does not. First audio and end-to-end times are
-  reported against the gate (3.5 s / 10 s).
+  `AUTH_DEV_USER_ID` empty): register over HTTP and name the avatar in the persona; on
+  one WebSocket connection ask the avatar its name as a guest, after presenting the
+  token, and after signing out → only the signed-in answer holds the name. First audio
+  and end-to-end times are reported against the gate (3.5 s / 10 s).
 - Manual, at the kiosk, with `AUTH_SESSION_IDLE_MINUTES=2`: sign in, talk, wait three
   minutes → the page shows a guest and the avatar does not know the person. With
   `AUTH_LOGOUT_ON_LEAVE=1`: walk out of the camera's view for
