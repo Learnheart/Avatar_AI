@@ -177,8 +177,20 @@ Then the docs: `CLAUDE.md` / `AGENTS.md`, `docs/ARCHITECTURE.md`,
       kept; saved, and still there after a reload; a value over the limit refused with
       its reason and the stored persona unchanged; deleted
 - [x] The persona written into `SYSTEM_PROMPT` with `PERSONA_DEFAULT`, with unit tests
-- [ ] Real run of the rewritten `SYSTEM_PROMPT` (the measurements above are those of the
-      first version): the default character, a persona, a persona with one field set,
-      the person's own `addressing` winning, no emoji. Blocked on 2026-10-13: Groq
-      answers 503 and the Databricks profile needs a new sign-in
+- [x] Real run of the rewritten `SYSTEM_PROMPT` (2026-10-13, Databricks LLM, asked
+      directly of the model, two rounds). First wording: the default character invented
+      a name for itself ("mình là Mimi") and, under a playful persona, 2 answers of 14
+      held an emoji followed by a spoken apology for it ("À nhầm, không dùng biểu tượng
+      được"). The rules were tightened (no name of its own without one above; nothing
+      but words and ordinary punctuation; never mention the rules) and 31 answers
+      measured: the default character says it is "trợ lý ảo" three times out of three
+      and no longer names the model or its maker; a persona with the name alone answers
+      "mình là Bông, trợ lý ảo của bạn" (the other fields keep their defaults); a full
+      persona is followed in 20 playful answers, none with an emoji or a word about the
+      rules; with a profile holding "Gọi tôi là chị, xưng em" three answers of three say
+      "chị Linh". One of the 31 answers held a run of garbled words from the model
+- [x] Real turn with it (`tests/e2e/test_real_persona.py`, Groq answering 503, the
+      Databricks backup taking over): passed, first audio 3.4 s, end to end 4.7 s.
+      The earlier runs of the same path gave 4.0 to 4.2 s for the first audio, so the
+      3.5 s gate is not held with a margin
 - [ ] Human verification
