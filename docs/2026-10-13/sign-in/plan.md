@@ -89,6 +89,26 @@ why, what and the order of the work.
   phone by a code shown on the kiosk, so that no Google or Facebook password is typed
   on a public screen, is the better form for a shared kiosk; it is named in the design
   and not designed.
+- **A local account is an email address, proved by a code** (changed on 2026-10-13,
+  after the first manual test, where the "user name" of the form refused what the
+  person typed and nothing told who was behind an account). The name a person signs in
+  with is their email. Creating an account takes two steps: the email and a password
+  are given, a six-digit code is sent to that address, and the account exists only once
+  the code is given back, within `AUTH_OTP_TTL_MINUTES` (10) and
+  `AUTH_OTP_MAX_ATTEMPTS` (5) tries; a new code can be asked for every
+  `AUTH_OTP_RESEND_SEC` (60). What waits for its code is held in RAM, the password
+  already hashed and the code hashed too.
+  - **One email, one account.** The email is the key of the local account. A sign-in
+    with Google whose email Google says is verified, and which is the email of a local
+    account, signs in that account and links Google to it: the address was proved on
+    both sides. Nothing else is merged by email: Facebook does not say whether an email
+    is verified, so a Facebook identity stays an account of its own even with the same
+    address. That gap is open.
+  - **Sending the code** goes through one small boundary (`backend/utils/mailer.py`):
+    `MAIL_BACKEND=smtp` sends it (standard library, `SMTP_*` keys), `MAIL_BACKEND=log`,
+    the default, writes the mail to the backend log instead, so that a dev machine
+    without a mail server can still create accounts. The `log` backend proves nothing
+    about who owns the address and says so at startup: a deployment sets `smtp`.
 - **`current_user_id()` stays the single seam** and gains the token: `AUTH_DEV_USER_ID`
   set → that user, as today; otherwise the token → its session → its user; otherwise a
   guest. One FastAPI dependency in `features/accounts/` replaces the copies in the
@@ -184,6 +204,10 @@ planned), `docs/quality-gates.md`, `CHANGELOG.md`, `.env.example`.
       signed out and the browser's kept session gone; signed in again with Google as the
       same user; a wrong password refused with its message. In the backend log the
       connection changes to the user and back to a guest
+- [ ] Accounts by email with a code sent to the address, one account per email, with
+      unit tests; the form in two steps on the page
+- [ ] By a human: an SMTP account for `MAIL_BACKEND=smtp`, and one real code received
+      by email
 - [ ] Seen while writing, to decide: the knowledge routes are still open to guests;
       there is no way to change a password or to delete an account
 - [ ] Human verification
