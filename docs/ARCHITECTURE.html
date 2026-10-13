@@ -1,0 +1,1197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture — Magic Mirror AI Avatar</title>
+<!--
+  One self-contained page: open it in a browser, edit it by hand. No build step.
+  - Sections: <section id="..."> with an <h2>; list each one in <nav id="toc">.
+  - Diagrams: Mermaid source as text inside <figure class="diagram"><pre class="mermaid">.
+    Write the "less than" sign as &lt; and the ampersand as &amp; there; the "greater
+    than" sign can stay as it is, so an arrow is typed the usual way.
+    Without network the page shows the source text of a diagram instead of the drawing.
+  - Tables: <div class="table-wrap"><table>.
+  - A part that exists gets <span class="tag built">built</span>, a planned one
+    <span class="tag planned">planned</span>.
+-->
+<style>
+  :root {
+    --bg: #ffffff; --panel: #f6f7f9; --text: #1d2330; --muted: #5d6677;
+    --line: #dfe3ea; --accent: #4b45d6; --accent-soft: #ecebfd;
+    --built: #0f7b4f; --built-soft: #e2f5ec; --planned: #96610a; --planned-soft: #fbf0d9;
+    --code: #eef0f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161c; --panel: #1b1e26; --text: #e4e7ee; --muted: #9aa3b5;
+      --line: #2c313d; --accent: #9d98ff; --accent-soft: #25244a;
+      --built: #5fd6a2; --built-soft: #143427; --planned: #e8b65a; --planned-soft: #3a2c10;
+      --code: #232732;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 16px; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .layout { display: grid; grid-template-columns: 260px minmax(0, 1fr); max-width: 1320px; margin: 0 auto; }
+  #toc {
+    position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+    padding: 28px 16px 28px 24px; border-right: 1px solid var(--line); font-size: 13.5px;
+  }
+  #toc .toc-title { font-weight: 700; margin-bottom: 12px; }
+  #toc ol { list-style: none; margin: 0; padding: 0; }
+  #toc ol ol { margin: 2px 0 8px 12px; border-left: 1px solid var(--line); padding-left: 10px; }
+  #toc a { display: block; padding: 3px 0; color: var(--muted); text-decoration: none; }
+  #toc > ol > li > a { color: var(--text); font-weight: 600; }
+  #toc a:hover { color: var(--accent); }
+  main { padding: 36px 40px 80px; min-width: 0; }
+  h1 { font-size: 28px; line-height: 1.25; margin: 0 0 16px; }
+  h2 { font-size: 22px; margin: 56px 0 14px; padding-top: 20px; border-top: 1px solid var(--line); }
+  h3 { font-size: 17px; margin: 34px 0 10px; }
+  p, ul, ol { margin: 0 0 14px; }
+  ul, ol { padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  a { color: var(--accent); }
+  code { background: var(--code); padding: 1px 5px; border-radius: 4px; font-size: 0.9em; }
+  .meta { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0 0 8px;
+    padding: 16px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  .meta dt { font-weight: 600; color: var(--muted); }
+  .meta dd { margin: 0; }
+  .table-wrap { overflow-x: auto; margin: 0 0 18px; border: 1px solid var(--line); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+  th { background: var(--panel); font-weight: 600; white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+  td:first-child { font-weight: 600; }
+  .tag { display: inline-block; padding: 0 7px; border-radius: 10px; font-size: 11.5px; font-weight: 600;
+    font-style: normal; line-height: 1.6; vertical-align: 1px; white-space: nowrap; }
+  .tag.built { color: var(--built); background: var(--built-soft); }
+  .tag.planned { color: var(--planned); background: var(--planned-soft); }
+  figure.diagram { margin: 0 0 20px; padding: 16px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; overflow-x: auto; cursor: zoom-in; }
+  figure.diagram pre { margin: 0; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
+  figure.diagram pre[data-processed] { text-align: center; }
+  figure.diagram.zoom { position: fixed; inset: 0; z-index: 10; margin: 0; border-radius: 0; overflow: auto;
+    background: var(--bg); cursor: zoom-out; }
+  @media (max-width: 1000px) {
+    .layout { display: block; }
+    #toc { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 20px 16px; }
+    main { padding: 24px 16px 60px; }
+  }
+  @media print {
+    #toc { display: none; } .layout { display: block; } main { padding: 0; }
+    figure.diagram, .table-wrap { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+<nav id="toc">
+<div class="toc-title">Magic Mirror AI Avatar</div>
+<ol>
+<li><a href="#objectives">1. Objectives</a></li>
+<li><a href="#techstacks">2. Techstacks</a></li>
+<li><a href="#architecture">3. Architecture</a>
+<ol>
+<li><a href="#s3-1">3.1 System overview</a></li>
+<li><a href="#s3-2">3.2 The turn, as the Orchestrator sees it</a></li>
+<li><a href="#s3-3">3.3 Model backends: one contract, many providers</a></li>
+<li><a href="#s3-4">3.4 Memory beside the turn</a></li>
+<li><a href="#s3-5">3.5 Why these boundaries</a></li>
+</ol>
+</li>
+<li><a href="#dataflow">4. Dataflow</a>
+<ol>
+<li><a href="#s4-1">4.1 One complete turn</a></li>
+<li><a href="#s4-2">4.2 The response branch (text → voice → avatar motion)</a></li>
+<li><a href="#s4-3">4.3 Knowledge: from an uploaded file to an answer</a></li>
+<li><a href="#s4-4">4.4 Memory: how a spoken fact becomes (or does not become) a memory</a></li>
+<li><a href="#s4-5">4.5 When something fails</a></li>
+</ol>
+</li>
+<li><a href="#deployment">5. Deployment</a></li>
+<li><a href="#backlog">Backlog</a></li>
+</ol>
+</nav>
+<main>
+<h1>Architecture — Magic Mirror AI Avatar</h1>
+<dl class="meta">
+<dt>Altitude</dt><dd>High-level, PM-reviewable. Describes capabilities, boundaries and data — not functions, classes or code.</dd>
+<dt>Version</dt><dd>v2 (MVP 1 and MVP 2 as built)</dd>
+<dt>Status</dt><dd>Draft — waiting for human review</dd>
+<dt>Architecture records</dt><dd>Each official architecture is logged in <code>docs/adr/</code> with its context, high-level diagram and consequences. This document is the full detail of the current one, <a href="adr/0002-mvp-2-architecture.md">ADR 0002</a>.</dd>
+<dt>Reading the document</dt><dd>Everything drawn exists today. A part marked <span class="tag built">built</span> was added by MVP 2: the short-term conversation memory, the application database, the users, the memory of typed, imported and gathered facts with its profile page, the object store, the personality a person gives the avatar, and sign-in. Click a diagram to see it full screen.</dd>
+</dl>
+
+<section id="objectives">
+<h2>1. Objectives</h2>
+<p><strong>Target.</strong> A kiosk avatar that notices a person standing in front of it, listens to
+what they say, and answers back in a natural Vietnamese voice, while an on-screen 3D
+avatar turns its head toward the person and moves its mouth in time with the spoken
+audio. It answers as a personal work assistant, from its own general knowledge and from
+documents the user has uploaded.</p>
+<p><strong>Inputs.</strong></p>
+<ul>
+<li>Live camera feed: is a person there, and where is their head.</li>
+<li>Live microphone audio: what the person says.</li>
+<li>Documents uploaded in the browser (text, Markdown, CSV, PDF, Word): the internal
+  knowledge the avatar may answer from.</li>
+<li>What a known person types on the profile page to describe themselves, and what they
+  import there for the same purpose: a file (text, Markdown, CSV, PDF, Word) or a
+  pasted text.</li>
+<li>Who the person is: a user name and a password, or a Google or Facebook account, given
+  on the page to sign in; and what they say about themselves in conversation.</li>
+</ul>
+<p><strong>Outputs.</strong></p>
+<ul>
+<li>A spoken Vietnamese answer played through the speaker, starting on the first sentence
+  rather than after the whole answer is ready.</li>
+<li>A 3D avatar that follows the person with its head and lip-syncs to the audio.</li>
+<li>For the operator: a step-by-step record of every turn (what was heard, looked up,
+  answered, and how long each step took).</li>
+</ul>
+<p><strong>Scope by milestone.</strong></p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Milestone</th>
+<th>Status</th>
+<th>What it delivers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>MVP 1</strong></td>
+<td>Built, demo-ready</td>
+<td>One complete spoken turn end to end (presence → listen → understand → answer → speak), interruption by speaking over the avatar, answers from uploaded documents, a backup provider per cloud step, turn tracing</td>
+</tr>
+<tr>
+<td><strong>MVP 2</strong></td>
+<td>Built: sign-in, the short-term part, the application database, the users, the memory of typed and imported facts with its profile page, the object store, and the facts gathered from conversations with their approval</td>
+<td>Memory: the avatar follows the conversation in progress and remembers a signed-in person across visits; a profile page where the person corrects what is remembered; an application database for users; a personality for the avatar, set by the person on the same page (built)</td>
+</tr>
+<tr>
+<td>Later</td>
+<td>Not planned</td>
+<td>Company single sign-on and sign-in approved on one's own phone, several people talking at the same time, recognising a person by face or voice, tool/function calling, accurate mouth shapes, body gestures and emotion</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Constraints.</strong></p>
+<ul>
+<li><strong>Latency SLA:</strong> end-to-end answer under <strong>10s</strong>; internal target <strong>first audio
+  under ~3.5s</strong> (the number the user actually feels).</li>
+<li><strong>Language:</strong> Vietnamese voice quality is a first-class requirement.</li>
+<li><strong>Hardware (cross-device):</strong> one codebase for an <strong>Apple Silicon MacBook</strong> (the
+  development machine) and a <strong>Windows PC + NVIDIA RTX</strong> (not set up yet).</li>
+<li><strong>Network:</strong> must work on a restricted company network where some cloud providers
+  are blocked — every cloud step can be pointed at another provider by configuration.</li>
+<li><strong>A turn never dies because an optional part failed.</strong> Knowledge lookup, memory, the
+  camera and a primary provider can each fail without stopping the answer.</li>
+<li><strong>Privacy:</strong> recordings of faces and voices are off by default; a guest is never
+  remembered.</li>
+<li><strong>Architecture principle:</strong> each capability is a cleanly bounded module that <em>could</em>
+  become its own service later; the product ships as a modular monolith, not a
+  distributed system.</li>
+</ul>
+</section>
+
+<section id="techstacks">
+<h2>2. Techstacks</h2>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Description</th>
+<th>Config / Ability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Python + async runtime</td>
+<td>Backend host process</td>
+<td>Runs all backend modules in one process; heavy local work (voice detection, vision, speech synthesis, database) runs beside the main loop so it never stalls it</td>
+</tr>
+<tr>
+<td>FastAPI + WebSocket + HTTP</td>
+<td>The two channels to the frontend</td>
+<td>One WebSocket for everything real-time (audio in, speech and head motion out); plain HTTP for managing documents, the profile and signing in</td>
+</tr>
+<tr>
+<td>Camera capture (OpenCV)</td>
+<td>Perception — vision input</td>
+<td>Reads the webcam; reconnects by itself when the camera drops</td>
+</tr>
+<tr>
+<td>Face landmarks (MediaPipe)</td>
+<td>Perception — vision</td>
+<td>Presence of a person and head rotation of the nearest face, about 30 times a second</td>
+</tr>
+<tr>
+<td>Voice Activity Detection (Silero)</td>
+<td>Perception — voice</td>
+<td>Marks when the person starts and stops speaking; runs on CPU; keeps the first syllable</td>
+</tr>
+<tr>
+<td>Speech-to-Text (Whisper, cloud)</td>
+<td>Conversation — understand</td>
+<td>Vietnamese speech to text. Default provider Groq; alternatives by configuration: any OpenAI-compatible server (including self-hosted), or a chat model that is sent the audio through the Databricks gateway</td>
+</tr>
+<tr>
+<td>LLM (cloud)</td>
+<td>Conversation — think</td>
+<td>Produces the Vietnamese answer as a stream. Default provider Groq; alternatives by configuration: any OpenAI-compatible API or the Databricks AI Gateway</td>
+</tr>
+<tr>
+<td>Text-to-Speech (ZeroTTS, local)</td>
+<td>Conversation — voice out</td>
+<td>Vietnamese speech synthesised on the machine's CPU, sentence by sentence, faster than real time; no cloud call</td>
+</tr>
+<tr>
+<td>Backup backends</td>
+<td>Resilience of the cloud steps</td>
+<td>Speech-to-text, LLM and embedding can each name a backup that takes over when the primary fails or is too slow, and stays in charge for a cool-down period</td>
+</tr>
+<tr>
+<td>Knowledge base (sqlite-vec)</td>
+<td>Answers from uploaded documents</td>
+<td>Documents are split into passages and indexed in one embedded vector database file; the user ticks which documents are in use</td>
+</tr>
+<tr>
+<td>Embedding model</td>
+<td>Turns text into vectors for the knowledge base</td>
+<td>Chosen by configuration: a no-model local method that works anywhere, any embeddings API, Databricks, or a local Ollama model</td>
+</tr>
+<tr>
+<td>Observability (OpenTelemetry)</td>
+<td>Seeing what a turn did</td>
+<td>One trace per turn with a step for each stage and its input and output; counters for the vision and voice loops; sent to any standard backend chosen by configuration</td>
+</tr>
+<tr>
+<td>Capture (optional)</td>
+<td>Evidence for tuning</td>
+<td>Stores camera frames, the audio of each turn and its trace on local disk; off by default because it holds faces and voices</td>
+</tr>
+<tr>
+<td>Device Capability Router</td>
+<td>Picks the local-inference backend at startup</td>
+<td>Detects Apple Metal / NVIDIA CUDA / CPU. Today every machine uses the cloud for speech-to-text, so the router matters only when a self-hosted speech model is added</td>
+</tr>
+<tr>
+<td>3D avatar renderer (Three.js + VRM)</td>
+<td>Expression — frontend</td>
+<td>Renders the avatar, applies head motion, drives the mouth from audio loudness</td>
+</tr>
+<tr>
+<td>Web Audio API</td>
+<td>Expression — frontend</td>
+<td>Captures the microphone, plays the answer without gaps, measures loudness for lip-sync</td>
+</tr>
+<tr>
+<td>Document panel</td>
+<td>Frontend — knowledge</td>
+<td>Upload, list, delete documents and tick the ones the avatar may use</td>
+</tr>
+<tr>
+<td>Conversation memory, short-term <span class="tag built">MVP 2 · built</span></td>
+<td>The earlier turns of the conversation in progress</td>
+<td>Kept in working memory only; bounded by a budget of estimated tokens, the oldest turns leaving first, so the size of a request does not depend on how long the turns are; gone when the conversation ends. Each turn is kept as it happened: what was heard, and the sentences that had actually started to play</td>
+</tr>
+<tr>
+<td>Application database <span class="tag built">MVP 2 · built</span></td>
+<td>System and user information: the users, and what the avatar remembers about each of them</td>
+<td>Short remembered facts, each <em>active</em> (used in answers), <em>pending</em> (proposed after a conversation, awaiting approval) or <em>rejected</em> (kept only so that it is never proposed again); and the turns of a signed-in person's conversation, kept until that conversation has been read. Written through one database toolkit (SQLAlchemy Core), so the engine is a configuration choice: a local SQLite file first, PostgreSQL when deployed for many users. Tables are created at startup; there is no migration tool yet</td>
+</tr>
+<tr>
+<td>Sign-in <span class="tag built">MVP 2 · built</span></td>
+<td>Who is a guest and who is a signed-in user</td>
+<td>A person is a guest by default and signs in on the page with an account kept here (a user name and a password, stored hashed) or with a Google or Facebook account, which can be linked to the same user. Signing in opens a session that is kept across restarts of the browser and ends when it was not used for a set time or is too old; optionally also when the person leaves the kiosk. Only who the person is is read from an external account</td>
+</tr>
+<tr>
+<td>Avatar personality <span class="tag built">MVP 2 · built</span></td>
+<td>The character the avatar plays for a signed-in person</td>
+<td>A handful of named settings (its name, its role, how it addresses the person, its character, how it answers, what it avoids), each a short text and each optional; kept per person in the application database; written into the instructions the language model gets with every turn of that person, each setting taking the place of its default. A guest gets the default settings</td>
+</tr>
+<tr>
+<td>Object store <span class="tag built">MVP 2 · built</span></td>
+<td>The original files a person imports to describe themselves</td>
+<td>One store for all users, holding the files unchanged; who owns a file is recorded in the application database, and a file is only ever read through that record; a local folder first, replaceable by a cloud bucket</td>
+</tr>
+<tr>
+<td>Profile page <span class="tag built">MVP 2 · built</span></td>
+<td>Frontend — the person's configuration</td>
+<td>Shows what the avatar remembers about the person as editable settings: add, edit, delete, import a description and manage the imports; approve or reject what the avatar gathered from conversations, each proposal shown with the words it comes from; give the avatar a personality, by pasting a description that is read into the settings or by typing them</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<section id="architecture">
+<h2>3. Architecture</h2>
+<p>Three capability blocks on a stable spine. <strong>Perception</strong> feeds the <strong>Orchestrator</strong>,
+which drives the <strong>Conversation</strong> engine, whose output flows to <strong>Expression</strong> in the
+browser. Three features sit <em>beside</em> the turn and are consulted by it: the <strong>knowledge
+base</strong>, <strong>memory</strong> (typed and imported facts, and facts gathered from
+conversations as proposals) and the <strong>persona</strong> (the personality a person gives the
+avatar). Every model the system calls sits behind a
+fixed boundary and is chosen by configuration.</p>
+<h3 id="s3-1">3.1 System overview</h3>
+<figure class="diagram"><pre class="mermaid">
+flowchart TB
+    subgraph KIOSK["Kiosk (physical)"]
+        camera["Camera"]
+        micspk["Microphone and speaker"]
+        screen["Screen"]
+    end
+
+    subgraph FE["Frontend (browser)"]
+        audioio["Audio: mic capture, gapless playback"]
+        avatar["3D avatar (EXPRESSION): head motion, lip-sync from loudness, idle"]
+        docpanel["Document panel"]
+        profile["Profile page"]
+        signin["Sign-in: guest or user, sign-in form, linked accounts"]
+    end
+
+    subgraph BE["Backend (one process)"]
+        orch["ORCHESTRATOR: owns the state of the turn, routes data, timing"]
+
+        subgraph PERC["PERCEPTION (runs continuously)"]
+            vision["Vision: presence, head rotation"]
+            vad["Voice: speech start and stop"]
+        end
+
+        subgraph CONV["CONVERSATION ENGINE (swappable boundary)"]
+            stt["Understand (speech to text)"]
+            lookup["Look up (knowledge, persona, memory)"]
+            llm["Think (LLM, streamed)"]
+            tts["Speak (text to speech, per sentence)"]
+            stt --> lookup --> llm --> tts
+        end
+
+        subgraph BESIDE["BESIDE THE TURN"]
+            kb["Knowledge base: documents, passages"]
+            memory["Memory: facts per user"]
+            persona["Persona: the avatar's personality per user"]
+            accounts["Users and sign-in: who is speaking, a guest or a signed-in user"]
+        end
+
+        backends["MODEL BACKENDS: one contract per step, provider chosen by configuration, primary + backup"]
+        obs["OBSERVABILITY: trace per turn, loop measurements, optional capture"]
+    end
+
+    subgraph DATA["Data on the machine"]
+        kdb[("Vector database: passages of the documents")]
+        appdb[("Application database: users, their facts, their avatar's personality")]
+        objects[("Object store: imported originals")]
+        capture[("Capture folder (off by default)")]
+    end
+
+    subgraph CLOUD["External services"]
+        sttcloud["Speech-to-text provider"]
+        llmcloud["LLM provider"]
+        embcloud["Embedding provider (optional)"]
+        otlp["Trace and metric backend (optional)"]
+        idp["Google / Facebook: who the person is (optional)"]
+    end
+
+    camera --> vision
+    micspk &lt;--> audioio
+    screen --- avatar
+
+    audioio &lt;-->|"one WebSocket: audio in, speech and state out"| orch
+    orch -->|"head rotation, turn state"| avatar
+    docpanel -->|"HTTP"| kb
+    profile -->|"HTTP"| memory
+    profile -->|"HTTP"| persona
+    signin -->|"HTTP"| accounts
+    accounts --> idp
+
+    vision --> orch
+    vad --> orch
+    orch -->|"one utterance"| CONV
+    CONV -->|"text + audio, streamed"| orch
+    lookup -.-> kb
+    lookup -.-> memory
+    lookup -.-> persona
+    accounts -.-> orch
+    accounts -.-> memory
+    accounts -.-> persona
+
+    stt --> backends
+    llm --> backends
+    tts --> backends
+    kb --> backends
+    backends --> sttcloud
+    backends --> llmcloud
+    backends --> embcloud
+
+    kb --> kdb
+    memory --> appdb
+    memory --> objects
+    persona --> appdb
+    accounts --> appdb
+    obs --> capture
+    obs --> otlp
+    orch -.-> obs
+    CONV -.-> obs
+</pre></figure>
+<h3 id="s3-2">3.2 The turn, as the Orchestrator sees it</h3>
+<p>Only the Orchestrator changes this state; every other module returns values or events.</p>
+<figure class="diagram"><pre class="mermaid">
+stateDiagram-v2
+    [*] --> idle
+    idle --> listening: the person starts speaking
+    listening --> thinking: the person stops speaking
+    thinking --> speaking: first audio of the answer is ready
+    speaking --> idle: the audio has finished playing
+    thinking --> listening: the person speaks again (interruption)
+    speaking --> listening: the person speaks over the avatar (interruption)
+    thinking --> idle: nothing was said, the turn failed or timed out, or a new conversation was asked for
+    listening --> idle: the connection was lost, or a new conversation was asked for
+    speaking --> idle: the connection was lost, or a new conversation was asked for
+</pre></figure>
+<p><strong>The conversation.</strong> Around the turns the Orchestrator also owns the <em>conversation</em>:
+the session of one person (a signed-in user, or a guest), which is the unit of
+short-term memory.</p>
+<ul>
+<li>It <strong>opens</strong> at the first utterance when none is open.</li>
+<li>Each turn that ends is <strong>recorded</strong> in it, however it ended (completed, interrupted,
+  failed, timed out), as long as something was understood: the text heard, and the
+  sentences of the answer that had started to play. The apology spoken when the LLM
+  fails and a sentence that got no audio are left out.</li>
+<li>Each new utterance is handed to the Conversation engine <strong>with the earlier turns</strong>;
+  the engine itself keeps nothing between turns.</li>
+<li>It <strong>closes</strong> when no face was seen for a while (only while the camera works), when
+  nobody spoke for a longer while, when another user connects, or when the person
+  presses "Cuộc trò chuyện mới". Only that last one may arrive during a turn: the
+  answer is then cut as by an interruption. A page reload by the same person does not
+  close it.</li>
+</ul>
+<p>The WebSocket carries three messages for it, beside the audio, speech and state ones:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Direction</th>
+<th>Message</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>browser → backend</td>
+<td><code>conversation_reset</code></td>
+<td>The person asks for a new conversation</td>
+</tr>
+<tr>
+<td>backend → browser</td>
+<td><code>conversation</code> (an id, or none)</td>
+<td>A conversation opened, or the open one closed; also sent right after connecting, with the conversation still open if there is one</td>
+</tr>
+<tr>
+<td>backend → browser</td>
+<td><code>transcript</code> (the text)</td>
+<td>What the avatar heard for this turn; not sent when nothing was understood</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>What the avatar answers needs no message of its own: each sentence already travels with
+its speech.</p>
+<p>Two more messages say whose connection it is <span class="tag built">built</span>:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Direction</th>
+<th>Message</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>browser → backend</td>
+<td><code>auth</code> (the session of the page, or none)</td>
+<td>Who the page is: the first message of a page, and sent again when the person signs in or out. A page that sends none is a guest's</td>
+</tr>
+<tr>
+<td>backend → browser</td>
+<td><code>session</code> (the user, or none)</td>
+<td>Whether the connection is a signed-in user's or a guest's: the answer to every <code>auth</code>, and sent unasked when the backend ends the session</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>A change of user on an open connection closes the conversation in progress.</p>
+<h3 id="s3-3">3.3 Model backends: one contract, many providers</h3>
+<p>Each step that calls a model depends on a contract ("audio in → text out", "text in →
+streamed answer out"), never on a provider. Which provider answers is configuration.</p>
+<figure class="diagram"><pre class="mermaid">
+flowchart LR
+    subgraph CONTRACTS["Contracts the turn depends on"]
+        cstt["Speech to text"]
+        cllm["LLM"]
+        ctts["Text to speech"]
+        cemb["Embedding"]
+    end
+
+    subgraph ROUTE["Chosen at startup by configuration"]
+        fb["Primary, with an optional backup that takes over on failure or slowness"]
+    end
+
+    subgraph PROVIDERS["Providers"]
+        groq["Groq (Whisper, LLM)"]
+        compat["Any OpenAI-compatible API or self-hosted server"]
+        dbx["Databricks AI Gateway (LLM, audio-capable chat model, embeddings)"]
+        zero["ZeroTTS (local, CPU)"]
+        hash["Local hashing (no model, no network)"]
+        ollama["Ollama (local embeddings)"]
+    end
+
+    cstt --> fb
+    cllm --> fb
+    cemb --> fb
+    fb --> groq
+    fb --> compat
+    fb --> dbx
+    cemb --> hash
+    cemb --> ollama
+    ctts --> zero
+</pre></figure>
+<h3 id="s3-4">3.4 Memory beside the turn <span class="tag built">MVP 2 · built</span></h3>
+<p>Built so far: the Orchestrator's conversation and the earlier turns given to the
+Conversation engine (§3.2); the application database and the users; the Memory holding
+the facts a person types on the profile page, and the person's active facts given to
+the Conversation engine with each turn; import — a file or a pasted text is kept
+unchanged in the object store, and one request to the language model, made outside any
+turn, reads it into facts that are used at once; gathering — the Orchestrator hands the
+Memory each turn of a signed-in person as it ends and tells it when the conversation
+closes, without waiting for it, and one request to the language model, again outside
+any turn, reads the closed conversation into proposed facts that the person approves or
+rejects on the profile page. Sign-in decides whose memory this is: the page presents
+the session it was given, on its requests and on the connection the conversation runs
+on, and a person who presents none is a guest.</p>
+<p>Also built, beside the memory: the persona. A signed-in person gives the avatar a
+personality as a few named settings, typed on the profile page or read from a
+description they paste by one request to the language model, outside any turn; what is
+read only fills the page, and nothing is kept until the person saves. The saved
+settings are given to the Conversation engine with each turn of that person.</p>
+<figure class="diagram"><pre class="mermaid">
+flowchart TB
+    signin["Sign-in: a session of the page, or a guest"] -->|"a user, or a guest"| orch
+    signin --> appdb
+
+    subgraph FE["Frontend (browser)"]
+        profile["Profile page: add, edit, approve, reject, delete, import; the avatar's personality"]
+    end
+
+    subgraph BE["Backend"]
+        orch["Orchestrator: opens and closes the conversation (presence + silence)"]
+        engine["Conversation engine: with the earlier turns (short-term)"]
+        memory["Memory: facts per user, active, pending or rejected"]
+        persona["Persona: the avatar's personality per user"]
+    end
+
+    subgraph DATA["Data"]
+        appdb[("Application database: users, their facts, their avatar's personality")]
+        objects[("Object store: imported originals, shared by all users")]
+    end
+
+    orch -->|"every turn"| engine
+    memory -->|"the person's active facts"| engine
+    persona -->|"the personality the person chose"| engine
+    orch -->|"each turn as it ends, then the close: in the background"| memory
+    memory -->|"reads the closed conversation, proposes facts"| memory
+    profile &lt;-->|"what the avatar remembers"| memory
+    profile -->|"an imported description"| memory
+    profile &lt;-->|"the avatar's personality, a pasted description to read"| persona
+    memory --> appdb
+    persona --> appdb
+    memory --> objects
+</pre></figure>
+<h3 id="s3-5">3.5 Why these boundaries</h3>
+<ul>
+<li><strong>Capability, not model.</strong> Blocks are drawn by <em>what they do</em> (perceive / converse
+  / express), so the choice of model lives <em>inside</em> a block and can change without
+  reshaping the system.</li>
+<li><strong>Swappable Conversation engine.</strong> Understand → look up → think → speak sits behind
+  one boundary with a single contract — "audio in, text + audio out." A unified realtime
+  model could replace the whole box later; the Orchestrator and Expression don't care.</li>
+<li><strong>One owner of the turn.</strong> Only the Orchestrator knows whether the avatar is idle,
+  listening, thinking or speaking. That is what makes interruption safe: there is one
+  place that cancels an answer.</li>
+<li><strong>Providers are configuration.</strong> A provider being blocked, slow or replaced is solved
+  by a setting, and a backup can stand behind any cloud step. This is what lets the same
+  build run on an open network and on a restricted company network.</li>
+<li><strong>Optional parts stand beside the turn.</strong> The knowledge base, memory and the persona
+  are asked for help and given a short time to answer; if they are empty, slow or
+  failing, the avatar answers without them.</li>
+<li><strong>Lip-sync lives in the frontend, bound to the audio actually playing.</strong> Mouth
+  movement is derived from the loudness of the audio coming out of the speaker, not
+  from when a network packet arrived — so it stays in sync regardless of network
+  jitter or buffering.</li>
+<li><strong>Perception is a parallel plane.</strong> Head tracking runs continuously and
+  independently of the listen→answer turn; it is not on the critical path to speech.</li>
+<li><strong>Every step is observable.</strong> Each stage of a turn records what it received, what it
+  produced and how long it took, so a slow or wrong answer can be traced to one step.</li>
+<li><strong>Two memories, two lifetimes.</strong> <em>Short-term</em> (built) is the conversation in
+  progress: it lets a follow-up question make sense, and it disappears when the
+  conversation ends. <em>Long-term</em> (built) is a small profile of one
+  signed-in person that survives across visits.</li>
+<li><strong>A conversation is defined by the person, not by the connection.</strong> It starts when
+  someone speaks and ends when they have walked away, stayed silent long enough, or
+  asked for a new one. A page reload does not end it. The Orchestrator owns this
+  boundary.</li>
+<li><strong>The history holds what was heard, not what was generated.</strong> An answer cut by an
+  interruption is remembered up to the sentence that had started to play, so the next
+  answer does not build on words the person never heard.</li>
+<li><strong>Identity comes from sign-in, and guests leave no trace</strong> <span class="tag built">built</span>. Long-term
+  memory is keyed by the signed-in user, and one user never reads another's. A guest
+  gets the short-term memory only. Being a guest is the default and never an error:
+  a session that is missing, unknown or over simply means a guest.</li>
+<li><strong>A session is kept on the server and can be ended at once</strong> <span class="tag built">built</span>. The page
+  holds a random token and the system holds only its fingerprint, so the session can be
+  ended the moment it should be (sign-out, expiry, the person leaving) and a copy of
+  the database signs nobody in. On a shared kiosk a kept session means the next person
+  is taken for the previous one until it expires: its two time limits, and the option
+  to end it when the person walks away, are the controls for that.</li>
+<li><strong>Only the wiring knows about sessions</strong> <span class="tag built">built</span>. The Orchestrator is told a user
+  or a guest and nothing more; signing in or out on an open connection starts a new
+  conversation, so nothing a guest said follows the user who signs in afterwards.</li>
+<li><strong>An external account only says who the person is</strong> <span class="tag built">built</span>. Google and Facebook
+  are asked once for the person's identity and nothing of theirs is kept. An identity
+  is linked to an account only by a signed-in person, never because two emails match.</li>
+<li><strong>Three ways into long-term memory, with different trust</strong> <span class="tag built">built</span>. What a person
+  types, and what is extracted from a description they import, is used at once. What
+  the avatar <em>heard</em> in a conversation is only a proposal until the person approves it,
+  or says it again on a later visit — because speech recognition mishears, and a wrong
+  fact would otherwise stay wrong forever.</li>
+<li><strong>The profile page is the correction point</strong> <span class="tag built">built</span>. Everything the avatar
+  remembers is visible and editable there, and what the page shows is exactly what the
+  language model is given.</li>
+<li><strong>The avatar's personality is a setting of the person, not of the kiosk</strong> <span class="tag built">built</span>.
+  It is a few named, optional settings rather than one free text, so each can be
+  shown, corrected and limited on its own; the default character is the same settings
+  with default values, so a setting left empty falls back to its default. Where the person asked
+  to be addressed in a certain way in their own facts, that wins over the personality.
+  A pasted description is only read into the settings: the person sees and saves them,
+  and the description itself is not kept.</li>
+<li><strong>Imported originals are the source of truth</strong> <span class="tag built">built</span>. The file a person imports
+  is kept unchanged in one object store shared by all users; the remembered facts point
+  back to it, and its text is re-derived from it rather than stored twice. An import
+  that cannot be read into facts is not kept at all. The person can download the
+  original again, and delete an import with or without the facts read from it.</li>
+</ul>
+</section>
+
+<section id="dataflow">
+<h2>4. Dataflow</h2>
+<h3 id="s4-1">4.1 One complete turn</h3>
+<figure class="diagram"><pre class="mermaid">
+sequenceDiagram
+    autonumber
+    actor P as Person
+    participant F as Browser
+    participant O as Orchestrator
+    participant V as Voice detection
+    participant E as Conversation engine
+    participant K as Knowledge base
+    participant C as Cloud (speech-to-text, LLM)
+    participant T as Speech synthesis (local)
+
+    P->>F: speaks
+    F->>O: microphone audio, continuously
+    O->>V: each piece of audio
+    V-->>O: speech started
+    O-->>F: state: listening
+    V-->>O: speech ended
+    O-->>F: conversation (its id), only when this utterance opened it
+    O-->>F: state: thinking
+    O->>E: the whole utterance, with the earlier turns of the conversation
+    E->>C: speech to text
+    C-->>E: the Vietnamese text, and how sure it is
+    E-->>O: the text heard
+    O-->>F: transcript
+    E->>K: passages for this question and the one before it
+    K-->>E: matching passages (or none, or too slow)
+    Note over E: for a known person: also the avatar's personality and their remembered facts (a guest has none)
+    E->>C: earlier turns + question + passages, to the LLM
+    loop each sentence, as soon as it is complete
+        C-->>E: a sentence of the answer
+        E->>T: synthesise the sentence
+        T-->>E: audio
+        E-->>O: sentence + audio
+        O-->>F: speech (state: speaking on the first one)
+    end
+    F->>P: plays the audio, mouth follows its loudness
+    F-->>O: playback finished
+    O-->>F: state: idle
+    Note over O: the turn joins the conversation: what was heard, what was spoken
+</pre></figure>
+<p>Vision is not in this sequence on purpose: head tracking runs all the time, beside it.</p>
+<h3 id="s4-2">4.2 The response branch (text → voice → avatar motion)</h3>
+<p>The flow that carries the sync and latency requirements.</p>
+<figure class="diagram"><pre class="mermaid">
+flowchart LR
+    llm["LLM streams the answer"] --> split["Cut into sentences as they complete"]
+    split --> tts["Each sentence is synthesised at once"]
+    tts --> send["Orchestrator forwards each piece of audio"]
+    send --> queue["Browser queues and plays it without gaps"]
+    queue --> loud["Reads the loudness of the audio AS IT PLAYS"]
+    loud --> mouth["Loudness becomes mouth-open amount"]
+    queue --> done["Audio ends: mouth closes, back to idle"]
+</pre></figure>
+<ul>
+<li><strong>Streaming, not wait-for-whole.</strong> Speech starts on the first sentence the LLM
+  produces, so the person hears a reply around the first-audio target (~3.5s) instead
+  of waiting for the full answer.</li>
+<li><strong>Amplitude-driven lip-sync.</strong> The mouth opens in proportion to how loud the audio
+  is. Simple and cheap; it does not form exact vowel shapes.</li>
+<li><strong>Dead-air is the real risk, not raw latency.</strong> Because the SLA (10s) is generous,
+  the design priority is covering the 2–4s "thinking" gap rather than shaving
+  milliseconds.</li>
+</ul>
+<h3 id="s4-3">4.3 Knowledge: from an uploaded file to an answer</h3>
+<figure class="diagram"><pre class="mermaid">
+flowchart TB
+    subgraph INGEST["When a document is uploaded"]
+        up["File uploaded in the document panel"] --> text["Text extracted (only the text is kept)"]
+        text --> chunk["Split into overlapping passages"]
+        chunk --> embed1["Each passage turned into a vector"]
+        embed1 --> store[("Vector database")]
+    end
+
+    subgraph ASK["During a turn"]
+        q["The question, as text"] --> embed2["Turned into a vector"]
+        embed2 --> search["Nearest passages, among the documents ticked as in use"]
+        search --> prompt["Passages + question given to the LLM"]
+        prompt --> ans["Answer prefers the passages; says so when the documents do not cover it"]
+    end
+
+    store --> search
+</pre></figure>
+<ul>
+<li>Changing the embedding model re-indexes the stored text at the next start; nobody has
+  to upload again.</li>
+<li>No match, a slow lookup or a failure → the question goes to the LLM alone.</li>
+</ul>
+<h3 id="s4-4">4.4 Memory: how a spoken fact becomes (or does not become) a memory <span class="tag built">built</span></h3>
+<figure class="diagram"><pre class="mermaid">
+flowchart TD
+    speak["The person speaks"] --> stt["Speech-to-text: the text, and how sure it is"]
+    stt --> answer["The LLM answers, seeing the earlier turns and the person's ACTIVE facts"]
+    answer --> keep["After the audio: the turn joins the conversation (what the avatar actually said aloud)"]
+    keep --> ends{"The conversation ends: who was it?"}
+    ends -->|"a guest"| drop["Everything is dropped"]
+    ends -->|"a signed-in user"| extract["One background LLM pass reads the conversation (unsure transcripts left out) and proposes facts"]
+    extract --> pending["PENDING: remembered as a proposal, not used in answers"]
+    pending -->|"approved on the profile page"| active["ACTIVE: used in answers"]
+    pending -->|"a preference or a trait said again on a later visit"| active
+    pending -->|"rejected on the profile page"| never["Never proposed again"]
+    typed["Typed on the profile page"] --> active
+    imported["Extracted from an imported description"] --> active
+</pre></figure>
+<ul>
+<li><strong>Hearing is not remembering.</strong> A fact reaches the answers only after a human
+  approval or a repetition; a single misheard sentence cannot. A name or a way of
+  addressing needs the approval however often it is heard: speech recognition mishears
+  a name the same way every time.</li>
+<li><strong>A rejected proposal stays rejected.</strong> It is kept, unused and unseen, so that the
+  same fact is not proposed again after the next conversation. The same holds for a
+  gathered fact the person deletes later.</li>
+<li><strong>A conversation never overwrites what is already remembered.</strong> A contradiction
+  becomes a proposal to replace, decided by the person.</li>
+<li><strong>Recordings of the conversation are not kept.</strong> Once the proposals are made, the
+  stored turns are deleted; only the short quote behind each fact remains. A
+  conversation that could not be read (the language model failed, the system was
+  stopped) keeps its turns and is read at the next start, and turns older than a set
+  number of days are deleted either way.</li>
+<li><strong>Memory never costs the turn.</strong> Reading the profile is instant; saving turns and
+  extracting facts happen after the audio has been sent.</li>
+</ul>
+<h3 id="s4-5">4.5 When something fails</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>What fails</th>
+<th>What the person experiences</th>
+<th>What the system does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Speech-to-text</td>
+<td>No answer to that sentence</td>
+<td>The turn ends with an error and the avatar returns to idle, ready for the next sentence</td>
+</tr>
+<tr>
+<td>LLM</td>
+<td>A short spoken apology</td>
+<td>A fixed fallback sentence is spoken instead of silence</td>
+</tr>
+<tr>
+<td>Speech synthesis, for one sentence</td>
+<td>That sentence is silent</td>
+<td>The sentence is still sent as text; the rest of the answer continues</td>
+</tr>
+<tr>
+<td>A primary cloud provider</td>
+<td>A slightly slower answer, once</td>
+<td>The backup takes over and the primary is skipped for a cool-down period</td>
+</tr>
+<tr>
+<td>Knowledge lookup (empty, slow, failing)</td>
+<td>A general answer</td>
+<td>The question is answered without the documents</td>
+</tr>
+<tr>
+<td>Memory (empty, slow, failing)</td>
+<td>An answer that does not know them</td>
+<td>The turn runs without the profile</td>
+</tr>
+<tr>
+<td>Persona (none set, slow, failing)</td>
+<td>An answer in the default character</td>
+<td>The turn runs without the personality</td>
+</tr>
+<tr>
+<td>Sign-in (the session is unknown, over, or the database fails while it is checked)</td>
+<td>The avatar answers them as a guest</td>
+<td>The connection is kept; the page is told it is a guest's</td>
+</tr>
+<tr>
+<td>An external sign-in provider (unreachable, refuses)</td>
+<td>A message on the page, still a guest</td>
+<td>Nothing is created; the other ways to sign in are unaffected</td>
+</tr>
+<tr>
+<td>Application database, at startup</td>
+<td>The avatar does not start</td>
+<td>Startup stops with the reason: nothing runs on a database it cannot open</td>
+</tr>
+<tr>
+<td>Camera</td>
+<td>The avatar looks straight ahead</td>
+<td>The head returns to neutral; the camera is retried; listening and answering are unaffected</td>
+</tr>
+<tr>
+<td>The person speaks over the avatar</td>
+<td>The avatar stops and listens</td>
+<td>The running answer is cancelled and a new turn starts</td>
+</tr>
+<tr>
+<td>The browser connection</td>
+<td>A pause, then reconnection</td>
+<td>The running turn is cancelled; the browser reconnects by itself</td>
+</tr>
+<tr>
+<td>A turn that takes too long</td>
+<td>An error instead of a late answer</td>
+<td>The turn is cut at a fixed limit</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<section id="deployment">
+<h2>5. Deployment</h2>
+<p><strong>Today: one machine, run locally.</strong> The development MacBook runs both the backend
+process and the browser. Windows + RTX and container packaging are not set up yet.</p>
+<figure class="diagram"><pre class="mermaid">
+flowchart TB
+    subgraph MACHINE["One machine (kiosk or development laptop)"]
+        subgraph BROWSER["Browser"]
+            page["Avatar page, document panel, profile page, sign-in"]
+        end
+        subgraph PROC["Backend process"]
+            app["Perception, Orchestrator, Conversation engine, knowledge, memory, persona, sign-in"]
+            local["Local models: voice detection, face landmarks, speech synthesis"]
+        end
+        subgraph DISK["Local disk (not part of the application package)"]
+            cfg["Configuration file: provider keys and addresses"]
+            weights["Downloaded speech model (about 910 MB, first start only)"]
+            kdb[("Vector database of the documents")]
+            appdb[("Application database")]
+            objects[("Imported originals")]
+            cap[("Capture folder (off by default)")]
+        end
+        cam["Camera, microphone, speaker"]
+    end
+
+    subgraph NET["Must be reachable"]
+        providers["Speech-to-text and LLM provider (Groq, or the Databricks gateway)"]
+        emb["Embedding provider (only if a cloud embedding is configured)"]
+        otlp["Trace backend (optional)"]
+        idp["Google / Facebook (only if external sign-in is configured)"]
+    end
+
+    page &lt;-->|"WebSocket + HTTP, same machine"| app
+    cam --- page
+    cam --- app
+    app --> local
+    app --> DISK
+    app --> providers
+    app --> emb
+    app --> otlp
+    app --> idp
+    page -->|"the person is sent there and back"| idp
+</pre></figure>
+<p><strong>What runs where.</strong></p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Part</th>
+<th>Where</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Avatar rendering, microphone capture, audio playback, lip-sync</td>
+<td>Browser</td>
+<td>Needs microphone permission and one click before audio can play</td>
+</tr>
+<tr>
+<td>Camera reading, presence and head tracking</td>
+<td>Backend process</td>
+<td>The camera is attached to the machine running the backend</td>
+</tr>
+<tr>
+<td>Voice detection, speech synthesis</td>
+<td>Backend process, on CPU</td>
+<td>No GPU needed; the speech model is downloaded once at first start</td>
+</tr>
+<tr>
+<td>Speech-to-text, LLM</td>
+<td>Cloud</td>
+<td>The two calls that dominate latency</td>
+</tr>
+<tr>
+<td>Knowledge base, embeddings</td>
+<td>Backend process + local file</td>
+<td>Embeddings may be local or a cloud call, by configuration</td>
+</tr>
+<tr>
+<td>Users, sessions, memory, persona</td>
+<td>Backend process + the application database (a local file)</td>
+<td>Reading and proposing facts are extra LLM calls made outside the turn</td>
+</tr>
+<tr>
+<td>Imported originals</td>
+<td>Backend process + a local folder</td>
+<td>One folder for all users; replaceable by a cloud bucket</td>
+</tr>
+<tr>
+<td>Sign-in with a user name and a password</td>
+<td>Backend process</td>
+<td>Nothing leaves the machine; passwords are stored hashed</td>
+</tr>
+<tr>
+<td>Sign-in with Google / Facebook</td>
+<td>Cloud, optional</td>
+<td>Off unless configured. The system must be registered at the provider under an address the provider can send the browser back to. Built, not yet run against the real providers</td>
+</tr>
+<tr>
+<td>Tracing</td>
+<td>Backend process</td>
+<td>Sent out only when a trace backend is configured</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Cross-device.</strong> The application code is the same on Apple Silicon and on
+Windows + NVIDIA. Since speech-to-text moved to the cloud, nothing in the turn depends
+on a GPU today; the Device Capability Router is kept for the day a self-hosted speech
+model is added, and the Windows path still has to be installed and verified on its own
+hardware.</p>
+<p><strong>Restricted networks.</strong> On the company network Groq, the speech-model download site
+and the frontend package registry are blocked. The system runs there by pointing
+speech-to-text, the LLM and the embedding at the Databricks gateway, which is reachable.
+The speech model must already be on the machine.</p>
+<p><strong>Known gaps (measured, not assumed).</strong></p>
+<ul>
+<li>On the Databricks path, first audio was measured at about 5 s and the whole turn at
+  about 7–10 s: the first-audio target (~3.5s) is <strong>not met</strong> there, mostly because
+  speech-to-text alone takes about 2 s. The Groq path could not be measured from the
+  company network.</li>
+<li>The avatar file is supplied per machine; without it the page runs with audio only.</li>
+</ul>
+<p><strong>Path to a multi-user deployment (planned, cheapest step first).</strong></p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Step</th>
+<th>Database</th>
+<th>Files</th>
+<th>When it is needed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Local SQLite file</td>
+<td>Local folder</td>
+<td>One kiosk, or a few people taking turns</td>
+</tr>
+<tr>
+<td>2</td>
+<td>PostgreSQL on the same machine</td>
+<td>Local folder</td>
+<td>Several writers at the same time</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Managed PostgreSQL</td>
+<td>Cloud bucket</td>
+<td>More than one backend instance</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Each step is a configuration change for the features that store data. Two things do
+<strong>not</strong> follow from the database choice and need their own work before many people can
+use the system at once: the backend serves a single connection, and it reads a camera
+attached to its own machine.</p>
+<p><strong>Microservice / multi-machine path (not planned).</strong> Each capability block already has a
+clean boundary. To scale out later, a block's boundary is exposed over the network
+and the block moves to its own service — without redrawing the architecture above.</p>
+</section>
+
+<section id="backlog">
+<h2>Backlog</h2>
+<p>Change trail. The five parts above describe the <em>current</em> intended shape; each change
+is one row here. A change of the overall architecture also has a record in <code>docs/adr/</code>.</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Date</th>
+<th>Version</th>
+<th>What changed in this document</th>
+<th>Architecture record</th>
+<th>Plan</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2026-10-08</td>
+<td>v1</td>
+<td>Initial modular-pipeline architecture: capability blocks, a separated STT → LLM → TTS pipeline behind a swappable boundary, amplitude-driven lip-sync</td>
+<td><a href="adr/0001-mvp-1-architecture.md">0001</a></td>
+<td><code>docs/2026-10-09/modular-pipeline-rebuild/</code></td>
+</tr>
+<tr>
+<td>2026-10-12</td>
+<td>v1</td>
+<td>Knowledge base (first version): uploaded documents indexed in an embedded vector store and looked up between speech-to-text and the LLM</td>
+<td><a href="adr/0001-mvp-1-architecture.md">0001</a></td>
+<td><code>docs/2026-10-12/knowledge-base/</code></td>
+</tr>
+<tr>
+<td>2026-10-12</td>
+<td>v2</td>
+<td>Document brought in line with the system as built (cloud speech-to-text, Groq / Databricks LLM, local text-to-speech, backup backends, knowledge base, observability, failure behaviour, deployment); diagrams moved to Mermaid</td>
+<td><a href="adr/0001-mvp-1-architecture.md">0001</a></td>
+<td>—</td>
+</tr>
+<tr>
+<td>2026-10-12</td>
+<td>v2</td>
+<td>MVP 2 architecture (designed, not built): short-term and long-term memory, users, profile page, application database, object store for imports</td>
+<td><a href="adr/0002-mvp-2-architecture.md">0002</a></td>
+<td><code>docs/2026-10-12/conversation-memory/</code></td>
+</tr>
+<tr>
+<td>2026-10-12</td>
+<td>v2</td>
+<td>Short-term conversation memory built (first slice of MVP 2): the conversation owned by the Orchestrator, the earlier turns given to the engine, the <code>conversation_reset</code>, <code>conversation</code> and <code>transcript</code> messages</td>
+<td><a href="adr/0002-mvp-2-architecture.md">0002</a></td>
+<td><code>docs/2026-10-12/conversation-memory/</code></td>
+</tr>
+<tr>
+<td>2026-10-12</td>
+<td>v2</td>
+<td>Application database, users and long-term memory of typed facts built (second slice of MVP 2): one database for users and memory items, a configured user standing in for sign-in, the person's active facts given to the LLM with each turn, the profile page and its HTTP routes. Import, the object store, facts gathered from conversations and their approval stay planned</td>
+<td><a href="adr/0002-mvp-2-architecture.md">0002</a></td>
+<td><code>docs/2026-10-12/conversation-memory/</code></td>
+</tr>
+<tr>
+<td>2026-10-12</td>
+<td>v2</td>
+<td>Import and the object store built (third slice of MVP 2): a person describes themselves with a file or a pasted text, the original is kept unchanged in one object store for all users with its owner recorded in the application database, and one request to the language model outside the turn reads it into facts used at once. Facts gathered from conversations and their approval stay planned</td>
+<td><a href="adr/0002-mvp-2-architecture.md">0002</a></td>
+<td><code>docs/2026-10-12/conversation-memory/</code></td>
+</tr>
+<tr>
+<td>2026-10-13</td>
+<td>v2</td>
+<td>Gathering from conversations built (fourth slice of MVP 2): the Orchestrator hands the Memory the turns of a signed-in person and the close of the conversation, in the background; one request to the language model outside the turn reads the closed conversation into proposed facts, which the person approves or rejects on the profile page; a preference or a trait said again on a later visit becomes active by itself, a name never does; a rejected fact is never proposed again; the stored turns are deleted once read. Sign-in stays planned</td>
+<td><a href="adr/0002-mvp-2-architecture.md">0002</a></td>
+<td><code>docs/2026-10-12/conversation-memory/</code></td>
+</tr>
+<tr>
+<td>2026-10-13</td>
+<td>v2</td>
+<td>Avatar personality built (the character customisation of MVP 2): a signed-in person gives the avatar a few named settings (name, role, way of addressing, character, answer style, what to avoid), typed on the profile page or read from a pasted description by one request to the language model outside the turn; the saved settings are given to the language model with each turn of that person, on top of the default character; a guest gets the default character</td>
+<td><a href="adr/0002-mvp-2-architecture.md">0002</a></td>
+<td><code>docs/2026-10-13/avatar-persona/</code></td>
+</tr>
+<tr>
+<td>2026-10-13</td>
+<td>v2</td>
+<td>Sign-in built (the last part of MVP 2): a person is a guest or a signed-in user; accounts by user name and password or by Google / Facebook, which can be linked to one user; a session kept on the server, presented by the page on its requests and on its connection, ended by sign-out, by two time limits, and optionally when the person leaves the kiosk. The configured stand-in user remains for development</td>
+<td><a href="adr/0002-mvp-2-architecture.md">0002</a></td>
+<td><code>docs/2026-10-13/sign-in/</code></td>
+</tr>
+<tr>
+<td>2026-10-13</td>
+<td>v2</td>
+<td>Document brought in line with the system as built: sign-in in the overview and in the deployment (the sign-in on the page, the external providers, what runs where), the <code>auth</code> and <code>session</code> messages, the persona in the deployment; the document moved from Markdown to one HTML page</td>
+<td><a href="adr/0002-mvp-2-architecture.md">0002</a></td>
+<td><code>docs/2026-10-13/architecture-doc-html/</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Still deferred:</strong> company single sign-on, sign-in approved on one's own phone, roles (who may manage the documents), several people at the same time, recognising a person by
+face or voice, tool/function calling, accurate mouth shapes, body gestures and emotion,
+OCR of scanned documents, hybrid search and re-ranking, summarising very long
+conversations, a cloud object store.</p>
+</section>
+</main>
+</div>
+<script type="module">
+  // Diagrams: drawn by Mermaid when it can be loaded, left as their source text otherwise.
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches
+  try {
+    const { default: mermaid } = await import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs')
+    // Diagrams keep their own size: a large one scrolls sideways instead of shrinking until it is unreadable.
+    const size = { useMaxWidth: false }
+    mermaid.initialize({
+      startOnLoad: false, theme: dark ? 'dark' : 'neutral', securityLevel: 'strict',
+      flowchart: size, sequence: size, state: size,
+    })
+    await mermaid.run({ querySelector: 'pre.mermaid' })
+  } catch (error) {
+    console.warn('Diagrams are shown as text: Mermaid could not be loaded or a diagram is invalid.', error)
+  }
+  // A click on a diagram shows it full screen; a second click or Escape closes it.
+  const figures = document.querySelectorAll('figure.diagram')
+  figures.forEach((figure) => figure.addEventListener('click', () => figure.classList.toggle('zoom')))
+  addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') figures.forEach((figure) => figure.classList.remove('zoom'))
+  })
+</script>
+</body>
+</html>

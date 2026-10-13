@@ -10,7 +10,7 @@ The rules are in `CLAUDE.md` / `AGENTS.md` §8.
 | Document | Answers | Edited afterwards |
 |---|---|---|
 | `docs/adr/NNNN-<name>.md` | Which architectures were adopted, **why**, and what each one cost | No: a new architecture is a new record that supersedes the last |
-| `docs/ARCHITECTURE.md` | The **current** architecture in full detail (tech stack, dataflows, deployment) | Yes, it always shows the current shape |
+| `docs/ARCHITECTURE.html` | The **current** architecture in full detail (tech stack, dataflows, deployment) | Yes, it always shows the current shape |
 | `docs/YYYY-MM-DD/<feature>/plan.md` | **How** a change is built, and how far it is | Yes, while the work runs |
 | `CHANGELOG.md` | **What** changed for the user | Entries are only added |
 

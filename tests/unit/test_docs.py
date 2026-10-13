@@ -101,9 +101,9 @@ def test_the_index_lists_every_architecture_record_with_its_status():
 
 
 def test_the_architecture_backlog_links_to_existing_architecture_records():
-    architecture = (REPO_ROOT / "docs" / "ARCHITECTURE.md").read_text()
-    linked = re.findall(r"\]\(adr/([^)]+)\)", architecture)
+    architecture = (REPO_ROOT / "docs" / "ARCHITECTURE.html").read_text()
+    linked = re.findall(r'href="adr/([^"]+)"', architecture)
 
-    assert linked, "docs/ARCHITECTURE.md links to no architecture record"
+    assert linked, "docs/ARCHITECTURE.html links to no architecture record"
     for name in linked:
-        assert (ADR_DIR / name).is_file(), f"docs/ARCHITECTURE.md links to a missing {name}"
+        assert (ADR_DIR / name).is_file(), f"docs/ARCHITECTURE.html links to a missing {name}"

@@ -4,7 +4,7 @@ A kiosk avatar: camera presence + head tracking, and a separated speech pipeline
 (Silero VAD → Groq Whisper STT → Groq LLM → ZeroTTS) driving a VRM avatar in the browser.
 
 - Install, run and check commands: **`CLAUDE.md` §5** (the single source — not repeated here).
-- Architecture: `docs/ARCHITECTURE.md`. Source layout: `CLAUDE.md` §4.
+- Architecture: `docs/ARCHITECTURE.html`. Source layout: `CLAUDE.md` §4.
 
 ## What you need
 

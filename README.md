@@ -71,6 +71,6 @@ Hai phần đang trong kế hoạch, chưa có trong bản này:
 
 ## Tài liệu
 
-- Kiến trúc: `docs/ARCHITECTURE.md`
+- Kiến trúc: `docs/ARCHITECTURE.html`
 - Ngưỡng chất lượng: `docs/quality-gates.md`
 - Quy tắc dự án và cấu trúc mã nguồn: `CLAUDE.md`

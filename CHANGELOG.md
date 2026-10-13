@@ -187,6 +187,10 @@ the rules are in `CLAUDE.md` / `AGENTS.md` §7.
 
 ### Changed
 
+- `[shared]` The architecture document is now one HTML page, `docs/ARCHITECTURE.html`
+  (open it in a browser: navigation, rendered diagrams), in place of
+  `docs/ARCHITECTURE.md`; it now also shows the sign-in on the page, the external
+  sign-in providers and the `auth` / `session` messages.
 - `[llm]` The system prompt is rewritten around the persona: the default character is
   now its default role, personality and answer style, followed by rules that hold for
   every persona (Vietnamese, words only, the person's own way of being addressed).

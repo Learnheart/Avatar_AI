@@ -7,7 +7,7 @@ A kiosk avatar that notices a person in front of it, listens, and answers in a n
 Vietnamese voice while a 3D VRM avatar turns its head and lip-syncs to the audio. The MVP
 proves one complete turn: presence → listen → understand → answer → speak.
 
-- Architecture (source of truth): `docs/ARCHITECTURE.md`
+- Architecture (source of truth): `docs/ARCHITECTURE.html`
 - Architecture records (each official architecture, with its context and consequences):
   `docs/adr/` (§8)
 - Quality gates per module / integration / pipeline: `docs/quality-gates.md`
@@ -86,7 +86,7 @@ cover as much logic as possible with unit tests.
 ## §3. Techstack
 
 > Pipeline tách rời (STT → LLM → TTS), cross-device (MacBook M5 + Windows/RTX). Nguồn
-> chân lý về kiến trúc: `docs/ARCHITECTURE.md`. Mọi API key / URL / model name load từ
+> chân lý về kiến trúc: `docs/ARCHITECTURE.html`. Mọi API key / URL / model name load từ
 > `.env` (§1), không hardcode.
 
 ### Backend (Python)
@@ -148,7 +148,7 @@ cover as much logic as possible with unit tests.
 ## §4. Source code structure
 
 All source stays under `backend/`, `frontend/` and `tests/`. The backend has four parts:
-`core/` (one turn, following the capability blocks of `docs/ARCHITECTURE.md`),
+`core/` (one turn, following the capability blocks of `docs/ARCHITECTURE.html`),
 `providers/` (model backends, API and self-hosted), `runtime/` (what depends on the
 machine) and `features/` (built beside the core). The contracts of the model stages live
 in `core/contracts.py`, and backends are swapped by config, not by editing callers.
@@ -270,7 +270,7 @@ tests/
   e2e/                         # pytest -m e2e, real environment (RUN_E2E=1)
 
 docs/
-  ARCHITECTURE.md              # the current shape of the system
+  ARCHITECTURE.html            # the current shape of the system: one HTML page, edited by hand (open it in a browser)
   adr/                         # NNNN-<name>.md architecture records, README.md (index), template.md (§8)
   quality-gates.md
   YYYY-MM-DD/<feature-name>/   # plan.md, design.md, test-plan.md (§0)
@@ -432,7 +432,7 @@ A change is done when all of these hold:
 5. No hardcoded keys, URLs, model names or tunables (§1); new keys are in `.env.example`.
 6. `CHANGELOG.md` has an entry for it under `[Unreleased]` (§7).
 7. If it changes the overall architecture, there is a new architecture record and
-   `docs/ARCHITECTURE.md` shows the new shape with a Backlog row linking to it (§8).
+   `docs/ARCHITECTURE.html` shows the new shape with a Backlog row linking to it (§8).
 8. It is committed with `git-auto-commit`. The plan status becomes `done` only after a
    human has verified it.
 
@@ -468,13 +468,13 @@ says what.
 ## §8. Architecture records
 
 `docs/adr/` is the log of the **official architectures** of the system: one record per
-architecture, each showing the whole system, not one decision. `docs/ARCHITECTURE.md`
+architecture, each showing the whole system, not one decision. `docs/ARCHITECTURE.html`
 is the full detail of the current one. `tests/unit/test_docs.py` checks the rules below.
 
 - Write a record only when a new overall architecture is adopted, typically once per
   milestone (MVP 1, MVP 2). A feature, a single design choice, a bug fix or a tuning
   change gets no record: it goes in its plan and, if it shows in the architecture, in
-  `docs/ARCHITECTURE.md` and its Backlog.
+  `docs/ARCHITECTURE.html` and its Backlog.
 - A record is `docs/adr/NNNN-<kebab-case-name>.md`, numbered in sequence without gaps,
   copied from `docs/adr/template.md`: front matter (`adr`, `title`, `date`, `status`,
   `agent`, `modules`) and exactly three sections:
@@ -491,8 +491,12 @@ is the full detail of the current one. `tests/unit/test_docs.py` checks the rule
   record; the previous one changes its status to `superseded` and gains
   `superseded_by: NNNN`. Exactly one record is not superseded: the current architecture.
 - Every record is listed in `docs/adr/README.md` with its status.
-- With a new record, update `docs/ARCHITECTURE.md` to the new shape in the same change
+- With a new record, update `docs/ARCHITECTURE.html` to the new shape in the same change
   and add a row to its Backlog linking to the record. The version in that document's
   header changes with each new record.
 - A milestone is also a git tag, created by a human or on request:
-  `git show <tag>:docs/ARCHITECTURE.md` is the detailed document as it was then.
+  `git show <tag>:docs/ARCHITECTURE.html` is the detailed document as it was then.
+- `docs/ARCHITECTURE.html` is one self-contained HTML page, written and edited by
+  hand with the `architecture-doc` skill: plain HTML, Mermaid diagrams as text, no
+  Markdown copy and no build step. After an edit, open it in a browser and check that
+  every diagram is drawn.

@@ -36,7 +36,7 @@ Three levels of verification (per AGENTS.md §2 — unit in sandbox, e2e costs m
 works alone." Most pipeline breakage is a format mismatch at a boundary (STT returns a
 shape the LLM step didn't expect; TTS returns audio the frontend can't play).
 
-Latency budget referenced below comes from `ARCHITECTURE.md`: **end-to-end < 10s**,
+Latency budget referenced below comes from `ARCHITECTURE.html`: **end-to-end < 10s**,
 **first audio < ~3.5s**.
 
 ---
