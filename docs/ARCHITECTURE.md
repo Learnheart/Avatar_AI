@@ -10,8 +10,7 @@
 > **Reading the diagrams:** solid boxes exist today (MVP 1, and of MVP 2 the short-term
 > conversation memory, the application database, the users, the memory of typed,
 > imported and gathered facts with its profile page, the object store, and the
-> personality a person gives the avatar). What is still planned (sign-in) is marked in
-> the text.
+> personality a person gives the avatar, and sign-in).
 
 ---
 
@@ -31,8 +30,8 @@ documents the user has uploaded.
 - What a known person types on the profile page to describe themselves, and what they
   import there for the same purpose: a file (text, Markdown, CSV, PDF, Word) or a
   pasted text.
-- *Planned (MVP 2):* who the person is (sign-in; today one configured user stands in
-  for it), and what they say about themselves in conversation.
+- Who the person is: a user name and a password, or a Google or Facebook account, given
+  on the page to sign in; and what they say about themselves in conversation.
 
 **Outputs.**
 - A spoken Vietnamese answer played through the speaker, starting on the first sentence
@@ -46,8 +45,8 @@ documents the user has uploaded.
 | Milestone | Status | What it delivers |
 |---|---|---|
 | **MVP 1** | Built, demo-ready | One complete spoken turn end to end (presence → listen → understand → answer → speak), interruption by speaking over the avatar, answers from uploaded documents, a backup provider per cloud step, turn tracing |
-| **MVP 2** | Built, except sign-in: the short-term part, the application database, the users, the memory of typed and imported facts with its profile page, the object store, and the facts gathered from conversations with their approval | Memory: the avatar follows the conversation in progress and remembers a signed-in person across visits; a profile page where the person corrects what is remembered; an application database for users; a personality for the avatar, set by the person on the same page (built) |
-| Later | Not planned | Sign-in itself, several people talking at the same time, recognising a person by face or voice, tool/function calling, accurate mouth shapes, body gestures and emotion |
+| **MVP 2** | Built: sign-in, the short-term part, the application database, the users, the memory of typed and imported facts with its profile page, the object store, and the facts gathered from conversations with their approval | Memory: the avatar follows the conversation in progress and remembers a signed-in person across visits; a profile page where the person corrects what is remembered; an application database for users; a personality for the avatar, set by the person on the same page (built) |
+| Later | Not planned | Company single sign-on and sign-in approved on one's own phone, several people talking at the same time, recognising a person by face or voice, tool/function calling, accurate mouth shapes, body gestures and emotion |
 
 **Constraints.**
 - **Latency SLA:** end-to-end answer under **10s**; internal target **first audio
@@ -90,6 +89,7 @@ documents the user has uploaded.
 | Document panel | Frontend — knowledge | Upload, list, delete documents and tick the ones the avatar may use |
 | Conversation memory, short-term *(MVP 2, built)* | The earlier turns of the conversation in progress | Kept in working memory only; bounded by a budget of estimated tokens, the oldest turns leaving first, so the size of a request does not depend on how long the turns are; gone when the conversation ends. Each turn is kept as it happened: what was heard, and the sentences that had actually started to play |
 | Application database *(MVP 2, built)* | System and user information: the users, and what the avatar remembers about each of them | Short remembered facts, each *active* (used in answers), *pending* (proposed after a conversation, awaiting approval) or *rejected* (kept only so that it is never proposed again); and the turns of a signed-in person's conversation, kept until that conversation has been read. Written through one database toolkit (SQLAlchemy Core), so the engine is a configuration choice: a local SQLite file first, PostgreSQL when deployed for many users. Tables are created at startup; there is no migration tool yet |
+| Sign-in *(MVP 2, built)* | Who is a guest and who is a signed-in user | A person is a guest by default and signs in on the page with an account kept here (a user name and a password, stored hashed) or with a Google or Facebook account, which can be linked to the same user. Signing in opens a session that is kept across restarts of the browser and ends when it was not used for a set time or is too old; optionally also when the person leaves the kiosk. Only who the person is is read from an external account |
 | Avatar personality *(MVP 2, built)* | The character the avatar plays for a signed-in person | A handful of named settings (its name, its role, how it addresses the person, its character, how it answers, what it avoids), each a short text and each optional; kept per person in the application database; written into the instructions the language model gets with every turn of that person, each setting taking the place of its default. A guest gets the default settings |
 | Object store *(MVP 2, built)* | The original files a person imports to describe themselves | One store for all users, holding the files unchanged; who owns a file is recorded in the application database, and a file is only ever read through that record; a local folder first, replaceable by a cloud bucket |
 | Profile page *(MVP 2, built)* | Frontend — the person's configuration | Shows what the avatar remembers about the person as editable settings: add, edit, delete, import a description and manage the imports; approve or reject what the avatar gathered from conversations, each proposal shown with the words it comes from; give the avatar a personality, by pasting a description that is read into the settings or by typing them |
@@ -146,7 +146,7 @@ flowchart TB
             kb["Knowledge base: documents, passages"]
             memory["Memory: facts per user"]
             persona["Persona: the avatar's personality per user"]
-            accounts["Users: who is speaking"]
+            accounts["Users and sign-in: who is speaking, a guest or a signed-in user"]
         end
 
         backends["MODEL BACKENDS: one contract per step, provider chosen by configuration, primary + backup"]
@@ -291,7 +291,7 @@ flowchart LR
     ctts --> zero
 ```
 
-### 3.4 Memory beside the turn *(MVP 2, built; sign-in planned)*
+### 3.4 Memory beside the turn *(MVP 2, built)*
 
 Built so far: the Orchestrator's conversation and the earlier turns given to the
 Conversation engine (§3.2); the application database and the users; the Memory holding
@@ -302,8 +302,9 @@ turn, reads it into facts that are used at once; gathering — the Orchestrator 
 Memory each turn of a signed-in person as it ends and tells it when the conversation
 closes, without waiting for it, and one request to the language model, again outside
 any turn, reads the closed conversation into proposed facts that the person approves or
-rejects on the profile page. Until sign-in exists, one configured user stands in for it
-and everyone else is a guest. Planned: sign-in.
+rejects on the profile page. Sign-in decides whose memory this is: the page presents
+the session it was given, on its requests and on the connection the conversation runs
+on, and a person who presents none is a guest.
 
 Also built, beside the memory: the persona. A signed-in person gives the avatar a
 personality as a few named settings, typed on the profile page or read from a
@@ -313,7 +314,8 @@ settings are given to the Conversation engine with each turn of that person.
 
 ```mermaid
 flowchart TB
-    signin["Sign-in (planned separately)"] -->|"a user, or a guest"| orch
+    signin["Sign-in: a session of the page, or a guest"] -->|"a user, or a guest"| orch
+    signin --> appdb
 
     subgraph FE["Frontend (browser)"]
         profile["Profile page: add, edit, approve, reject, delete, import; the avatar's personality"]
@@ -380,9 +382,22 @@ flowchart TB
 - **The history holds what was heard, not what was generated.** An answer cut by an
   interruption is remembered up to the sentence that had started to play, so the next
   answer does not build on words the person never heard.
-- **Identity comes from sign-in, and guests leave no trace** *(built, with one
-  configured user standing in for sign-in)*. Long-term memory is keyed by the signed-in
-  user, and one user never reads another's. A guest gets the short-term memory only.
+- **Identity comes from sign-in, and guests leave no trace** *(built)*. Long-term
+  memory is keyed by the signed-in user, and one user never reads another's. A guest
+  gets the short-term memory only. Being a guest is the default and never an error:
+  a session that is missing, unknown or over simply means a guest.
+- **A session is kept on the server and can be ended at once** *(built)*. The page
+  holds a random token and the system holds only its fingerprint, so the session can be
+  ended the moment it should be (sign-out, expiry, the person leaving) and a copy of
+  the database signs nobody in. On a shared kiosk a kept session means the next person
+  is taken for the previous one until it expires: its two time limits, and the option
+  to end it when the person walks away, are the controls for that.
+- **Only the wiring knows about sessions** *(built)*. The Orchestrator is told a user
+  or a guest and nothing more; signing in or out on an open connection starts a new
+  conversation, so nothing a guest said follows the user who signs in afterwards.
+- **An external account only says who the person is** *(built)*. Google and Facebook
+  are asked once for the person's identity and nothing of theirs is kept. An identity
+  is linked to an account only by a signed-in person, never because two emails match.
 - **Three ways into long-term memory, with different trust** *(built)*. What a person
   types, and what is extracted from a description they import, is used at once. What
   the avatar *heard* in a conversation is only a proposal until the person approves it,
@@ -549,6 +564,8 @@ flowchart TD
 | Knowledge lookup (empty, slow, failing) | A general answer | The question is answered without the documents |
 | Memory (empty, slow, failing) | An answer that does not know them | The turn runs without the profile |
 | Persona (none set, slow, failing) | An answer in the default character | The turn runs without the personality |
+| Sign-in (the session is unknown, over, or the database fails while it is checked) | The avatar answers them as a guest | The connection is kept; the page is told it is a guest's |
+| An external sign-in provider (unreachable, refuses) | A message on the page, still a guest | Nothing is created; the other ways to sign in are unaffected |
 | Application database, at startup | The avatar does not start | Startup stops with the reason: nothing runs on a database it cannot open |
 | Camera | The avatar looks straight ahead | The head returns to neutral; the camera is retried; listening and answering are unaffected |
 | The person speaks over the avatar | The avatar stops and listens | The running answer is cancelled and a new turn starts |
@@ -663,8 +680,9 @@ and the block moves to its own service — without redrawing the architecture ab
 | 2026-10-12 | v2 | Import and the object store built (third slice of MVP 2): a person describes themselves with a file or a pasted text, the original is kept unchanged in one object store for all users with its owner recorded in the application database, and one request to the language model outside the turn reads it into facts used at once. Facts gathered from conversations and their approval stay planned | [0002](adr/0002-mvp-2-architecture.md) | `docs/2026-10-12/conversation-memory/` |
 | 2026-10-13 | v2 | Gathering from conversations built (fourth slice of MVP 2): the Orchestrator hands the Memory the turns of a signed-in person and the close of the conversation, in the background; one request to the language model outside the turn reads the closed conversation into proposed facts, which the person approves or rejects on the profile page; a preference or a trait said again on a later visit becomes active by itself, a name never does; a rejected fact is never proposed again; the stored turns are deleted once read. Sign-in stays planned | [0002](adr/0002-mvp-2-architecture.md) | `docs/2026-10-12/conversation-memory/` |
 | 2026-10-13 | v2 | Avatar personality built (the character customisation of MVP 2): a signed-in person gives the avatar a few named settings (name, role, way of addressing, character, answer style, what to avoid), typed on the profile page or read from a pasted description by one request to the language model outside the turn; the saved settings are given to the language model with each turn of that person, on top of the default character; a guest gets the default character | [0002](adr/0002-mvp-2-architecture.md) | `docs/2026-10-13/avatar-persona/` |
+| 2026-10-13 | v2 | Sign-in built (the last part of MVP 2): a person is a guest or a signed-in user; accounts by user name and password or by Google / Facebook, which can be linked to one user; a session kept on the server, presented by the page on its requests and on its connection, ended by sign-out, by two time limits, and optionally when the person leaves the kiosk. The configured stand-in user remains for development | [0002](adr/0002-mvp-2-architecture.md) | `docs/2026-10-13/sign-in/` |
 
-**Still deferred:** sign-in, several people at the same time, recognising a person by
+**Still deferred:** company single sign-on, sign-in approved on one's own phone, roles (who may manage the documents), several people at the same time, recognising a person by
 face or voice, tool/function calling, accurate mouth shapes, body gestures and emotion,
 OCR of scanned documents, hybrid search and re-ranking, summarising very long
 conversations, a cloud object store.

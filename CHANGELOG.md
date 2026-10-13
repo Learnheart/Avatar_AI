@@ -32,6 +32,11 @@ the rules are in `CLAUDE.md` / `AGENTS.md` §7.
   sends; `session` (server → client) tells the mode the connection is in, in answer and
   whenever the server ends the session. Signing in or out starts a new conversation;
   a reload keeps the conversation of the signed-in user.
+- `[accounts]` `[expression]` The page shows who is signed in beside the "Hồ sơ" button
+  ("Khách" or the name, with "Đăng nhập" / "Đăng xuất"). A guest finds a sign-in form
+  on the profile page, with "Tạo tài khoản" and one button per configured provider; a
+  signed-in user finds a block "Tài khoản liên kết" to link or remove Google and
+  Facebook. The session is kept by the browser across restarts.
 - `[orchestrator]` `[llm]` The earlier turns given to the LLM are bounded by an
   estimated number of tokens (`MEMORY_HISTORY_MAX_TOKENS`, default 2000) instead of a
   number of turns: when a new turn does not fit, the oldest ones are dropped whole, so

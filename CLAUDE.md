@@ -39,7 +39,7 @@ summary: <one line>
   here; it is never listed under `modules:`.
 - `modules:` lists the parts of that agent the change touches. They are components of
   one pipeline, not agents: `vision`, `vad`, `stt`, `llm`, `tts`, `orchestrator`,
-  `expression`, `knowledge`, `memory`, `persona`.
+  `expression`, `knowledge`, `memory`, `persona`, `accounts`.
 - A plan contains: problem statement, requirements, decisions made, implementation
   approach, and ends with a `## To-do` checklist (`- [ ] task`).
 - A plan that changes the overall architecture carries the new architecture record
@@ -105,7 +105,8 @@ cover as much logic as possible with unit tests.
 | **Conversation — TTS** | **ZeroTTS** (open-source, tiếng Việt) | Text → audio tiếng Việt; chạy local real-time trên CPU, có streaming |
 | **Knowledge base** | sqlite-vec (SQLite extension) + embedding qua `EMBEDDING_BACKEND` (`local_hash` \| `openai_compatible` \| `databricks` \| `ollama`), backup qua `EMBEDDING_BACKEND_BACKUP`; pypdf, python-docx | Upload tài liệu (txt, md, csv, pdf, docx) → chunk → vector; tra cứu đoạn liên quan cho mỗi câu hỏi trước khi gọi LLM |
 | **Application database** | SQLAlchemy Core trên `DATABASE_URL` (file SQLite local; PostgreSQL khi deploy) | Lưu user, memory (những điều avatar nhớ về từng user) và các turn của cuộc trò chuyện chưa được đọc; bảng được tạo lúc startup, chưa có migration tool |
-| **Memory** | logic nội bộ trên application database; `AUTH_DEV_USER_ID` thay cho login; import và cuộc trò chuyện đã đóng được đọc bằng một lần gọi LLM ngoài turn (`LLM.complete`) | Hồ sơ của user đã đăng nhập (các memory item `active`) đưa vào LLM mỗi turn; import file / đoạn văn tự giới thiệu → memory item; cuộc trò chuyện đã đóng → memory item `pending` (đề xuất) chờ user duyệt hoặc từ chối, sở thích / tính cách được nhắc lại ở cuộc trò chuyện sau thì tự `active`; turn đã lưu bị xoá sau khi đọc; guest không có memory |
+| **Sign-in (accounts)** | logic nội bộ trên application database; scrypt (thư viện chuẩn) cho mật khẩu; OAuth 2 + PKCE qua httpx cho Google / Facebook | Hai chế độ: guest (mặc định) và user đã đăng nhập. Tài khoản local (username + password) hoặc Google / Facebook, liên kết được về cùng một user. Đăng nhập mở một session: token ngẫu nhiên, database chỉ giữ hash; session được giữ và hết hạn theo `AUTH_SESSION_IDLE_MINUTES` / `AUTH_SESSION_MAX_HOURS` (tuỳ chọn `AUTH_LOGOUT_ON_LEAVE`). `AUTH_DEV_USER_ID` vẫn dùng cho dev / test |
+| **Memory** | logic nội bộ trên application database; import và cuộc trò chuyện đã đóng được đọc bằng một lần gọi LLM ngoài turn (`LLM.complete`) | Hồ sơ của user đã đăng nhập (các memory item `active`) đưa vào LLM mỗi turn; import file / đoạn văn tự giới thiệu → memory item; cuộc trò chuyện đã đóng → memory item `pending` (đề xuất) chờ user duyệt hoặc từ chối, sở thích / tính cách được nhắc lại ở cuộc trò chuyện sau thì tự `active`; turn đã lưu bị xoá sau khi đọc; guest không có memory |
 | **Persona** | logic nội bộ trên application database; đoạn mô tả dán vào được đọc bằng một lần gọi LLM ngoài turn (`LLM.complete`) | Tính cách user đã đăng nhập đặt cho avatar: một dict các trường định nghĩa trước (`name`, `role`, `addressing`, `personality`, `answer_style`, `avoid`), được ghi vào chỗ `{persona}` của `SYSTEM_PROMPT` mỗi turn: trường nào user khai báo thì thay giá trị mặc định (`PERSONA_DEFAULT`) của trường đó, trường còn lại giữ mặc định; không bắt buộc, guest dùng persona mặc định |
 | **Object store** | thư mục local `OBJECT_STORE_DIR` (thay được bằng S3-compatible) | Giữ nguyên bản gốc của file user import; chủ sở hữu chỉ ghi trong application database |
 | Observability | OpenTelemetry SDK (traces + metrics) + OTLP/HTTP exporter; JSON log trên stdout | Mỗi turn một trace, mỗi bước một span (listen, stt, knowledge, embedding, persona, memory, llm, tts, playback) kèm input/output; số đo vòng lặp perception; `CAPTURE_ENABLED` lưu frame camera + audio + trace ra đĩa |
@@ -120,6 +121,7 @@ cover as much logic as possible with unit tests.
 | Audio | Web Audio API (AudioWorklet + AnalyserNode) | Thu mic (PCM 16kHz), phát audio, đo loudness cho lip-sync |
 | Lip-sync | logic thuần (RMS → blendshape mồm) | Amplitude-driven, bám audio đang phát |
 | Knowledge panel | DOM thuần + fetch (`VITE_API_URL`) | Upload / liệt kê / xoá tài liệu tri thức; tick chọn tài liệu avatar được dùng để trả lời |
+| Sign-in | DOM thuần + fetch (`VITE_API_URL`), `localStorage` | Hiển thị chế độ (Khách / tên user) cạnh nút "Hồ sơ"; form đăng nhập / tạo tài khoản và nút đăng nhập với Google / Facebook cho guest; khối "Tài khoản liên kết"; giữ token của session và gửi kèm mọi request và trên WebSocket |
 | Profile page ("Hồ sơ") | DOM thuần + fetch (`VITE_API_URL`) | Xem / thêm / sửa / xoá những điều avatar nhớ về user; duyệt / từ chối những điều avatar thu thập được từ cuộc trò chuyện; khối "Tính cách của avatar": dán mô tả để LLM tách thành các trường, sửa từng trường, lưu / xoá |
 
 ### External (cloud)
@@ -153,7 +155,7 @@ in `core/contracts.py`, and backends are swapped by config, not by editing calle
 
 ```
 backend/
-  main.py                      # FastAPI app, /ws, /health, /knowledge, /memory, /persona; wires core + providers + features
+  main.py                      # FastAPI app, /ws, /health, /knowledge, /memory, /persona, /auth; wires core + providers + features; resolves who is behind a connection
   config.py                    # AppConfig — secrets, per-machine and provider values
   tuning.py                    # behaviour parameters (VAD, timeouts, conversation, head clamps, voice)
   prompts.py                   # system prompt and other texts
@@ -191,8 +193,13 @@ backend/
       store.py                 # sqlite-vec store: documents, chunks, vectors (all the SQL)
       api.py                   # HTTP routes /knowledge/documents
     accounts/
-      identity.py              # current_user_id(): who is behind a connection or a request
-      store.py                 # table users (all the SQL of the accounts)
+      identity.py              # current_user_id(): who is behind a connection or a request (a session token, or AUTH_DEV_USER_ID)
+      sessions.py              # SessionService: open, resolve, revoke; a session ends by idle time or age
+      accounts.py              # AccountService: local accounts (user name + password), the attempt limit
+      passwords.py             # scrypt hash / verify (pure)
+      providers.py             # ExternalSignIn: Google, Facebook (OAuth 2 + PKCE), linking and unlinking
+      store.py                 # tables users, credentials, identities, sessions (all the SQL of the accounts)
+      api.py                   # HTTP routes /auth
     memory/
       memory.py                # MemoryService: memory items, the profile given to the LLM and its cache
       imports.py               # MemoryImports: a file or a pasted text → original kept + memory items (one LLM call)
@@ -225,7 +232,7 @@ frontend/                      # ── CAPABILITY 3: Expression ──
   src/
     main.js                    # wiring
     config.js                  # tunables + VITE_* values
-    ws-client.js               # WebSocket client, reconnect
+    ws-client.js               # WebSocket client, reconnect; presents the session token (`auth`)
     audio/
       audio-manager.js         # mic capture + gapless playback
     knowledge/
@@ -235,6 +242,11 @@ frontend/                      # ── CAPABILITY 3: Expression ──
     transcript/
       transcript.js            # the lines of the conversation on screen (pure, unit-tested)
       transcript-panel.js      # transcript window + "Cuộc trò chuyện mới" button
+    auth/
+      session.js               # the session of the page: the token and the user, kept in the browser (unit-tested)
+      auth-client.js           # calls the backend /auth API
+      auth-panel.js            # the mode beside "Hồ sơ", the sign-in form of a guest, the linked accounts
+      format.js                # pure helpers (unit-tested)
     memory/
       memory-client.js         # calls the backend /memory API
       profile-page.js          # "Hồ sơ" page: what the avatar remembers, add / edit / delete
@@ -291,7 +303,7 @@ Layering rules:
   the engine asks it for the profile before the LLM and answers without it when it is
   empty, slow or failing; a guest's turn reads nothing. Who the user is comes from
   `current_user_id()` (`features/accounts/identity.py`) and nowhere else: `main.py`
-  resolves it and hands it to the orchestrator, the core never does.
+  resolves it and hands it to the orchestrator, the core never does (see sign-in below).
 - What a logged-in user says is gathered outside the turn. The orchestrator tells the
   memory about each recorded turn and about the close of the conversation
   (`Memory.record_turn`, `Memory.close_conversation`), for a logged-in user only and
@@ -305,6 +317,26 @@ Layering rules:
   an item meanwhile (its changes are written relative to the row, in one transaction),
   and the conversations of one user are read one at a time. The stored turns are
   deleted once read, and after `MEMORY_TRANSCRIPT_TTL_DAYS` whatever happened.
+- A person is a guest or a signed-in user, and nothing else. Who they are still comes
+  from `current_user_id()` only: `AUTH_DEV_USER_ID` when it is set (development,
+  tests), otherwise the session token the page presents, in `Authorization: Bearer` on
+  HTTP and in an `auth` message on the WebSocket. A token that opens no session (none,
+  unknown, revoked, expired) is a guest, never an error; a database failing while it
+  is resolved is a guest too. `main.py` resolves the token and tells the orchestrator a
+  user id (`Orchestrator.set_user`): the core never sees a token. `auth` is the first
+  frame of a page; changing the user of an open connection closes the conversation.
+- A session is a random token of which the database keeps the SHA-256 only. It is kept
+  until it was not used for `AUTH_SESSION_IDLE_MINUTES` or is `AUTH_SESSION_MAX_HOURS`
+  old (checked on every use, never stored), is revoked by a sign-out, and with
+  `AUTH_LOGOUT_ON_LEAVE` when the orchestrator closes the user's conversation for
+  `absence` or `idle`. A turn counts as a use; looking at a session does not.
+- An account is a user name and a password (scrypt, `features/accounts/passwords.py`)
+  or an identity at an external provider, the pair (provider, id there), never an
+  email. Identities are linked to a user by that signed-in user only; two accounts are
+  never merged. Nothing of a provider is kept but who the person is. A password, a
+  session token and a provider's access token never reach a log, a span or the capture.
+- The HTTP routes `/auth` are a contract between `backend/features/accounts/api.py`
+  and `frontend/src/auth/`.
 - The persona reaches the turn through the `Persona` contract only: for a logged-in
   user the engine asks it for the personality that user gave the avatar, before the
   LLM; a guest's turn reads nothing. The persona is written into the system prompt:
@@ -426,7 +458,7 @@ says what.
   `### Removed`, in that order, leaving out the empty groups.
 - Start each entry with the module(s) it touches in brackets, using the module IDs of
   §0: `[vision]`, `[vad]`, `[stt]`, `[llm]`, `[tts]`, `[orchestrator]`, `[expression]`,
-  `[knowledge]`, `[memory]`, `[persona]`. Use `[shared]` for what belongs to no single module (config,
+  `[knowledge]`, `[memory]`, `[persona]`, `[accounts]`. Use `[shared]` for what belongs to no single module (config,
   providers, observability, packaging) and `[all]` for a change across the whole turn.
 - One line per entry, written for a reader who has not seen the code: what the avatar
   now does, not which file changed. Mark a breaking change with `**Breaking:**`.

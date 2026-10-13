@@ -222,6 +222,26 @@ freely in → the fields it states out, stored nowhere. A guest has no persona.
 > actually follows the persona (the name, the way of addressing), is checked on the real
 > model (`tests/e2e/test_real_persona.py`), not by an automated gate.
 
+### 1.12 Accounts (sign-in: a guest or a signed-in user → the user id every per-user feature is given)
+
+**Contract:** a session token in → the id of the user it signs in, or nobody: no token,
+an unknown one, a revoked one and an expired one are all a guest. A user name and a
+password, or the code of an external provider, in → a user and a session for them. The
+orchestrator is given a user id or `None`, never a token.
+
+| Type | Gate criteria |
+|---|---|
+| Functional — modes | Without a valid session: `/memory`, `/persona` and the per-user `/auth` routes answer `401`, a turn carries no user id, nothing is written; with one: the same routes reach that user's data only, and the turn carries their id. `GET /auth/session` answers `200` to both, with the user or `null`. `AUTH_DEV_USER_ID` set → that user on every route and connection, whatever is presented |
+| Functional — accounts | `POST /auth/register` creates a user with an opaque id and signs them in (`201`); `POST /auth/login` signs in; a user name is compared without case; a wrong password and an unknown user name get the same `401`; after `AUTH_LOGIN_MAX_ATTEMPTS` failures within `AUTH_LOGIN_WINDOW_MINUTES` the name is held (`429`), the right password included, until the window has passed; `AUTH_ALLOW_REGISTRATION=0` → `403` |
+| Functional — sessions | A session is kept: used within `AUTH_SESSION_IDLE_MINUTES` it stays and its end moves; not used for that long, or `AUTH_SESSION_MAX_HOURS` old however recently used, it signs nobody in; both follow the config for sessions that are open; `POST /auth/logout` ends that session and no other; a turn of the user counts as a use, the periodic look at the session of the connected page does not |
+| Functional — WebSocket | `auth` with a valid token → `session` with the user and the next turn is that user's; with `null` or a token that opens nothing → `session` with `null`; a connection whose first frame is not `auth` is a guest; signing in or out on an open connection closes the conversation in progress and cancels the running turn; a page that reconnects with the same session keeps its conversation; a session that ends while the page is connected (expired, signed out elsewhere, and with `AUTH_LOGOUT_ON_LEAVE` the conversation closed for `absence` or `idle`) → `session` with `null` and the next turn is a guest's; a conversation closed by the reset button signs nobody out |
+| Functional — providers | `GET /auth/{provider}/start` sends the browser to the provider with a `state` (also bound to that browser) and a PKCE challenge; the callback exchanges the code with the secret and the verifier, asks once who the person is, and sends the browser back to the page with a one-time code that `POST /auth/exchange` turns into a session, once, within a minute; a new identity creates a user, a known one finds it; two people with the same email are two users; a signed-in user links an identity through `POST /auth/{provider}/link` and then signs in either way as the same user; an identity cannot be unlinked while it is the only way to sign in (`409`); a provider without keys is not offered and answers `404` |
+| Resilience | A database failing while a token is resolved on the WebSocket → a guest, the connection kept; on a route → `502` without the database's text; a callback with another `state`, from another browser, replayed, or for another provider → refused, nothing created; a provider that fails, refuses or names nobody → the page is told, nothing is created; an identity that belongs to another account is not linked |
+| Secrets | A password is stored as an scrypt hash with its own salt and parameters; a session token as its SHA-256; no access token of a provider is stored; none of the three, nor a client secret, is in a response it does not belong to, a log line or a span |
+
+> Gated here with the provider's HTTP replaced by a fake. A real sign-in with Google
+> and with Facebook needs an application registered at each and has not been run.
+
 ---
 
 ## 2. Integration Gates
@@ -245,7 +265,7 @@ The expensive gate — a real turn, run sparingly, before a milestone.
 
 | Type | Gate criteria |
 |---|---|
-| Functional | One full turn works: person present → speaks a Vietnamese utterance → avatar answers in Vietnamese voice with lip-sync. Barge-in works. No tool involved; the knowledge base, the memory and the persona are optional beside the turn and gated on their own (§1.8, §1.10, §1.11) |
+| Functional | One full turn works: person present → speaks a Vietnamese utterance → avatar answers in Vietnamese voice with lip-sync. Barge-in works. No tool involved; the knowledge base, the memory and the persona are optional beside the turn and gated on their own (§1.8, §1.10, §1.11); so is sign-in (§1.12) |
 | Performance | **First audio < ~3.5s** (the committed internal target); **end-to-end < 10s** (SLA); dead-air gap is covered by an immediate acknowledging cue |
 | Resilience | Runs a sustained session without crashing or leaking resources; a mid-turn cloud error (LLM/TTS) degrades gracefully; weak-network behavior is observed and noted (cloud calls are the real latency risk) |
 | Cross-device | The pipeline gate passes on **both** target machines — MacBook M5 (Metal) and Windows + RTX (CUDA) |

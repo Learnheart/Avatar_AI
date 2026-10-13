@@ -157,14 +157,24 @@ planned), `docs/quality-gates.md`, `CHANGELOG.md`, `.env.example`.
       `idle` when asked, with unit tests
 - [x] Slice 5 — Google and Facebook: sign-in, linking, unlinking, with unit tests (the
       provider faked)
-- [ ] Slice 6 — the sign-in form, the mode and the linked accounts on the page, with
+- [x] Slice 6 — the sign-in form, the mode and the linked accounts on the page, with
       unit tests, `npm run build`
-- [ ] `CLAUDE.md` / `AGENTS.md`, `docs/ARCHITECTURE.md`, `docs/quality-gates.md`,
+- [x] `CLAUDE.md` / `AGENTS.md`, `docs/ARCHITECTURE.md`, `docs/quality-gates.md`,
       `CHANGELOG.md`, `.env.example`
 - [ ] Real run: register, sign in, a turn answered with the profile, the session still
       there after a reload and gone after its timeout; first audio and end-to-end times
       reported
 - [ ] Real sign-in with Google and with Facebook, and one of them linked to a local
       account
-- [ ] The page in a real browser: register, sign in, reload, sign out
+- [x] The page in a real browser (headless Chrome driven over CDP, 2026-10-13, on the
+      real app and routes with a temporary database, a fake orchestrator and a fake
+      Google answering at once): a guest shown as "Khách" with the form, "Tạo tài
+      khoản" and "Đăng nhập với Google"; a user name refused before any request; an
+      account created and the page signed in, its token reaching `/memory`; still signed
+      in after a reload; Google linked from the profile page and listed with its email;
+      signed out and the browser's kept session gone; signed in again with Google as the
+      same user; a wrong password refused with its message. In the backend log the
+      connection changes to the user and back to a guest
+- [ ] Seen while writing, to decide: the knowledge routes are still open to guests;
+      there is no way to change a password or to delete an account
 - [ ] Human verification
