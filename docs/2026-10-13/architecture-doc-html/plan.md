@@ -73,4 +73,6 @@ diagrams that only render in some viewers, no navigation.
 - [x] `architecture-doc` skill and its template updated
 - [x] Unit tests pass; the page renders with all its diagrams
 - [x] `CHANGELOG.md` entry
+- [x] Size controls on each diagram (smaller, larger, fit, 100%, full screen); a diagram
+      starts fitted to the width, never under 50%
 - [ ] Human verification

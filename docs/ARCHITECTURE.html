@@ -11,6 +11,8 @@
     Write the "less than" sign as &lt; and the ampersand as &amp; there; the "greater
     than" sign can stay as it is, so an arrow is typed the usual way.
     Without network the page shows the source text of a diagram instead of the drawing.
+    A drawn diagram gets its size controls from the script: smaller, larger, fit, 100%,
+    full screen.
   - Tables: <div class="table-wrap"><table>.
   - A part that exists gets <span class="tag built">built</span>, a planned one
     <span class="tag planned">planned</span>.
@@ -70,12 +72,20 @@
     font-style: normal; line-height: 1.6; vertical-align: 1px; white-space: nowrap; }
   .tag.built { color: var(--built); background: var(--built-soft); }
   .tag.planned { color: var(--planned); background: var(--planned-soft); }
-  figure.diagram { margin: 0 0 20px; padding: 16px; background: var(--panel); border: 1px solid var(--line);
-    border-radius: 8px; overflow-x: auto; cursor: zoom-in; }
-  figure.diagram pre { margin: 0; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
-  figure.diagram pre[data-processed] { text-align: center; }
-  figure.diagram.zoom { position: fixed; inset: 0; z-index: 10; margin: 0; border-radius: 0; overflow: auto;
-    background: var(--bg); cursor: zoom-out; }
+  figure.diagram { margin: 0 0 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  figure.diagram pre { margin: 0; padding: 16px; overflow: auto; max-height: 85vh;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
+  figure.diagram pre svg { display: block; margin: 0 auto; max-width: none !important; }
+  .diagram-tools { display: flex; align-items: center; justify-content: flex-end; gap: 6px;
+    padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+  .diagram-tools button { min-width: 30px; padding: 2px 9px; font: inherit; color: var(--text);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+  .diagram-tools button:hover { color: var(--accent); border-color: var(--accent); }
+  .diagram-tools output { min-width: 46px; text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .diagram-tools .gap { width: 8px; }
+  figure.diagram.zoom { position: fixed; inset: 0; z-index: 10; margin: 0; border-radius: 0;
+    display: flex; flex-direction: column; background: var(--bg); }
+  figure.diagram.zoom pre { flex: 1; max-height: none; }
   @media (max-width: 1000px) {
     .layout { display: block; }
     #toc { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 20px 16px; }
@@ -84,6 +94,9 @@
   @media print {
     #toc { display: none; } .layout { display: block; } main { padding: 0; }
     figure.diagram, .table-wrap { break-inside: avoid; }
+    .diagram-tools { display: none; }
+    figure.diagram pre { overflow: visible; max-height: none; }
+    figure.diagram pre svg { max-width: 100% !important; height: auto !important; }
   }
 </style>
 </head>
@@ -123,7 +136,7 @@
 <dt>Version</dt><dd>v2 (MVP 1 and MVP 2 as built)</dd>
 <dt>Status</dt><dd>Draft — waiting for human review</dd>
 <dt>Architecture records</dt><dd>Each official architecture is logged in <code>docs/adr/</code> with its context, high-level diagram and consequences. This document is the full detail of the current one, <a href="adr/0002-mvp-2-architecture.md">ADR 0002</a>.</dd>
-<dt>Reading the document</dt><dd>Everything drawn exists today. A part marked <span class="tag built">built</span> was added by MVP 2: the short-term conversation memory, the application database, the users, the memory of typed, imported and gathered facts with its profile page, the object store, the personality a person gives the avatar, and sign-in. Click a diagram to see it full screen.</dd>
+<dt>Reading the document</dt><dd>Everything drawn exists today. A part marked <span class="tag built">built</span> was added by MVP 2: the short-term conversation memory, the application database, the users, the memory of typed, imported and gathered facts with its profile page, the object store, the personality a person gives the avatar, and sign-in. Each diagram has its own size controls: smaller, larger, fit to the width, 100% and full screen.</dd>
 </dl>
 
 <section id="objectives">
@@ -1204,11 +1217,70 @@ conversations, a cloud object store.</p>
   } catch (error) {
     console.warn('Diagrams are shown as text: Mermaid could not be loaded or a diagram is invalid.', error)
   }
-  // A click on a diagram shows it full screen; a second click or Escape closes it.
-  const figures = document.querySelectorAll('figure.diagram')
-  figures.forEach((figure) => figure.addEventListener('click', () => figure.classList.toggle('zoom')))
+  // Size controls of each drawn diagram: smaller, larger, fit to the width, its own size, full screen.
+  const SIZE_STEP = 1.25
+  const SIZE_MIN = 0.2
+  const SIZE_MAX = 4
+  const SIZE_START_MIN = 0.5  // a diagram starts fitted to the width, never smaller than this
+  const figures = [...document.querySelectorAll('figure.diagram')]
+  for (const figure of figures) {
+    const pre = figure.querySelector('pre[data-processed]')
+    const svg = pre?.querySelector('svg')
+    if (!svg) continue  // left as text: nothing to size
+
+    const box = svg.viewBox.baseVal
+    const width = box.width || svg.getBoundingClientRect().width
+    const height = box.height || svg.getBoundingClientRect().height
+    const shown = document.createElement('output')
+    let scale = 1
+    const setScale = (next) => {
+      scale = Math.min(SIZE_MAX, Math.max(SIZE_MIN, next))
+      svg.style.width = `${width * scale}px`
+      svg.style.height = `${height * scale}px`
+      shown.textContent = `${Math.round(scale * 100)}%`
+    }
+    const fit = () => {
+      const style = getComputedStyle(pre)
+      const room = pre.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+      setScale(room / width)
+    }
+    const button = (label, title, onClick) => {
+      const element = document.createElement('button')
+      element.type = 'button'
+      element.textContent = label
+      element.title = title
+      element.setAttribute('aria-label', title)
+      element.addEventListener('click', onClick)
+      return element
+    }
+    const gap = document.createElement('span')
+    gap.className = 'gap'
+    const full = button('Full screen', 'Show the diagram full screen (Escape closes it)', () => {
+      const open = figure.classList.toggle('zoom')
+      full.textContent = open ? 'Close' : 'Full screen'
+    })
+    figure.addEventListener('diagram-close', () => {
+      figure.classList.remove('zoom')
+      full.textContent = 'Full screen'
+    })
+
+    const tools = document.createElement('div')
+    tools.className = 'diagram-tools'
+    tools.append(
+      button('−', 'Smaller', () => setScale(scale / SIZE_STEP)),
+      shown,
+      button('+', 'Larger', () => setScale(scale * SIZE_STEP)),
+      button('Fit', 'Fit the diagram to the width', fit),
+      button('100%', 'The diagram at its own size', () => setScale(1)),
+      gap,
+      full,
+    )
+    figure.prepend(tools)
+    fit()
+    setScale(Math.min(1, Math.max(SIZE_START_MIN, scale)))
+  }
   addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') figures.forEach((figure) => figure.classList.remove('zoom'))
+    if (event.key === 'Escape') figures.forEach((figure) => figure.dispatchEvent(new Event('diagram-close')))
   })
 </script>
 </body>
