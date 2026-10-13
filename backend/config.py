@@ -6,6 +6,7 @@ AppConfig inherits both, so a module reads any of them as `config.X`. Every key 
 file and of `tuning.py` can be set in the environment (`.env`); only `groq_api_key` has
 to be. Texts cannot: `prompts.py` is their only source.
 """
+import math
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
@@ -27,6 +28,10 @@ LOCAL_HASH = "local_hash"
 # Embedding backend of a local Ollama server.
 OLLAMA = "ollama"
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+# How a mail is sent: to the backend log (nothing leaves the machine), or by SMTP.
+MAIL_LOG, MAIL_SMTP = "log", "smtp"
+# How the connection to the SMTP server is protected.
+SMTP_STARTTLS, SMTP_SSL, SMTP_PLAIN = "starttls", "ssl", "none"
 
 
 @dataclass
@@ -121,6 +126,63 @@ class AppConfig(Tuning, Prompts):
     # Origins allowed to call the HTTP API from a browser, comma-separated; * = any.
     CORS_ALLOW_ORIGINS: str = env_str("CORS_ALLOW_ORIGINS", "*")
 
+    # ── Application database (users, memory) ────────────────────────────
+    # A SQLAlchemy URL. A SQLite file locally; PostgreSQL at deployment. It may hold a
+    # password, so it stays out of repr(config).
+    DATABASE_URL: str = env_str("DATABASE_URL", "sqlite:///backend/data/app.db", repr=False)
+    # ── Sign-in ─────────────────────────────────────────────────────────
+    # Development and tests: the id of the user every connection and request belongs
+    # to, without sign-in. Empty = the session token decides (no token = a guest).
+    AUTH_DEV_USER_ID: str = env_str("AUTH_DEV_USER_ID", "")
+    # How the code that proves an email address is sent: `log` writes the mail to the
+    # backend log (a machine without a mail server; it proves nothing about who owns
+    # the address), `smtp` sends it.
+    MAIL_BACKEND: str = env_str("MAIL_BACKEND", MAIL_LOG, normalize=str.lower)
+    SMTP_HOST: str = env_str("SMTP_HOST", "")
+    SMTP_PORT: int = env_int("SMTP_PORT", 587)
+    SMTP_USERNAME: str = env_str("SMTP_USERNAME", "")
+    SMTP_PASSWORD: str = env_str("SMTP_PASSWORD", repr=False)
+    # The address the mails come from.
+    SMTP_FROM: str = env_str("SMTP_FROM", "")
+    # starttls (port 587), ssl (port 465) or none.
+    SMTP_SECURITY: str = env_str("SMTP_SECURITY", SMTP_STARTTLS, normalize=str.lower)
+    # External providers. One whose client id is empty is not offered. The application
+    # is registered at the provider, with `<AUTH_PUBLIC_URL>/auth/<provider>/callback`
+    # as its redirect URI.
+    AUTH_GOOGLE_CLIENT_ID: str = env_str("AUTH_GOOGLE_CLIENT_ID", "")
+    AUTH_GOOGLE_CLIENT_SECRET: str = env_str("AUTH_GOOGLE_CLIENT_SECRET", repr=False)
+    AUTH_FACEBOOK_CLIENT_ID: str = env_str("AUTH_FACEBOOK_CLIENT_ID", "")
+    AUTH_FACEBOOK_CLIENT_SECRET: str = env_str("AUTH_FACEBOOK_CLIENT_SECRET", repr=False)
+    # The address of this backend as the browser reaches it (the provider sends the
+    # person back to it), and the address of the page they return to. No trailing slash.
+    AUTH_PUBLIC_URL: str = env_str("AUTH_PUBLIC_URL", "", normalize=lambda url: url.rstrip("/"))
+    AUTH_PAGE_URL: str = env_str("AUTH_PAGE_URL", "", normalize=lambda url: url.rstrip("/"))
+    # Where each provider is asked: the person is sent to `AUTHORIZE`, the code is
+    # exchanged at `TOKEN`, and `USERINFO` says who they are.
+    AUTH_GOOGLE_AUTHORIZE_URL: str = env_str(
+        "AUTH_GOOGLE_AUTHORIZE_URL", "https://accounts.google.com/o/oauth2/v2/auth"
+    )
+    AUTH_GOOGLE_TOKEN_URL: str = env_str(
+        "AUTH_GOOGLE_TOKEN_URL", "https://oauth2.googleapis.com/token"
+    )
+    AUTH_GOOGLE_USERINFO_URL: str = env_str(
+        "AUTH_GOOGLE_USERINFO_URL", "https://openidconnect.googleapis.com/v1/userinfo"
+    )
+    AUTH_GOOGLE_SCOPE: str = env_str("AUTH_GOOGLE_SCOPE", "openid email profile")
+    AUTH_FACEBOOK_AUTHORIZE_URL: str = env_str(
+        "AUTH_FACEBOOK_AUTHORIZE_URL", "https://www.facebook.com/v19.0/dialog/oauth"
+    )
+    AUTH_FACEBOOK_TOKEN_URL: str = env_str(
+        "AUTH_FACEBOOK_TOKEN_URL", "https://graph.facebook.com/v19.0/oauth/access_token"
+    )
+    AUTH_FACEBOOK_USERINFO_URL: str = env_str(
+        "AUTH_FACEBOOK_USERINFO_URL", "https://graph.facebook.com/v19.0/me?fields=id,name,email"
+    )
+    AUTH_FACEBOOK_SCOPE: str = env_str("AUTH_FACEBOOK_SCOPE", "public_profile email")
+    # The directory of the object store: the original bytes of what users import. Who
+    # owns an object is recorded in the application database only.
+    OBJECT_STORE_DIR: str = env_str("OBJECT_STORE_DIR", "backend/data/objects")
+
     # ── Camera ──────────────────────────────────────────────────────────
     CAMERA_INDEX: int = env_int("CAMERA_INDEX", 0)
     CAMERA_URL: str = env_str("CAMERA_URL", "")
@@ -174,6 +236,98 @@ class AppConfig(Tuning, Prompts):
     def _validate_values(self) -> None:
         if self.KNOWLEDGE_CHUNK_OVERLAP_CHARS >= self.KNOWLEDGE_CHUNK_CHARS:
             raise ValueError("KNOWLEDGE_CHUNK_OVERLAP_CHARS must be below KNOWLEDGE_CHUNK_CHARS.")
+        if self.KNOWLEDGE_QUERY_HISTORY_TURNS < 0:
+            raise ValueError("KNOWLEDGE_QUERY_HISTORY_TURNS must not be negative.")
+        # NaN or infinite: the rule would never fire and the conversation never close.
+        for key in ("CONVERSATION_ABSENCE_SEC", "CONVERSATION_IDLE_SEC"):
+            value = getattr(self, key)
+            if not (math.isfinite(value) and value > 0):
+                raise ValueError(
+                    "CONVERSATION_ABSENCE_SEC and CONVERSATION_IDLE_SEC must be positive "
+                    "and finite."
+                )
+        if self.MEMORY_HISTORY_MAX_TOKENS < 1:
+            raise ValueError("MEMORY_HISTORY_MAX_TOKENS must be at least 1.")
+        ratio = self.MEMORY_HISTORY_CHARS_PER_TOKEN
+        if not (math.isfinite(ratio) and ratio > 0):
+            raise ValueError("MEMORY_HISTORY_CHARS_PER_TOKEN must be positive and finite.")
+        if self.MEMORY_PROMPT_MAX_ITEMS < 1:
+            raise ValueError("MEMORY_PROMPT_MAX_ITEMS must be at least 1.")
+        if self.MEMORY_ITEM_MAX_CHARS < 1:
+            raise ValueError("MEMORY_ITEM_MAX_CHARS must be at least 1.")
+        if self.MAIL_BACKEND not in (MAIL_LOG, MAIL_SMTP):
+            raise ValueError(f"Invalid MAIL_BACKEND: {self.MAIL_BACKEND}")
+        if self.MAIL_BACKEND == MAIL_SMTP:
+            if not (self.SMTP_HOST and self.SMTP_FROM):
+                raise ValueError("SMTP_HOST and SMTP_FROM are required when MAIL_BACKEND=smtp.")
+            if self.SMTP_SECURITY not in (SMTP_STARTTLS, SMTP_SSL, SMTP_PLAIN):
+                raise ValueError(f"Invalid SMTP_SECURITY: {self.SMTP_SECURITY}")
+        for key in (
+            "AUTH_PASSWORD_MIN_CHARS",
+            "AUTH_LOGIN_MAX_ATTEMPTS",
+            "AUTH_OTP_MAX_ATTEMPTS",
+            "AUTH_OTP_MAX_CODES",
+            "AUTH_OTP_MAX_MAILS",
+        ):
+            if getattr(self, key) < 1:
+                raise ValueError(f"{key} must be at least 1.")
+        for key in (
+            "AUTH_SESSION_IDLE_MINUTES",
+            "AUTH_SESSION_MAX_HOURS",
+            "AUTH_LOGIN_WINDOW_MINUTES",
+            "AUTH_SESSION_CHECK_SEC",
+            "AUTH_SESSION_CLEANUP_MINUTES",
+            "AUTH_PROVIDER_TIMEOUT_SEC",
+            "AUTH_OTP_TTL_MINUTES",
+            "AUTH_OTP_RESEND_SEC",
+            "AUTH_OTP_WINDOW_MINUTES",
+            "SMTP_TIMEOUT_SEC",
+        ):
+            value = getattr(self, key)
+            if not (math.isfinite(value) and value > 0):
+                raise ValueError(f"{key} must be positive and finite.")
+        for provider in ("GOOGLE", "FACEBOOK"):
+            if not getattr(self, f"AUTH_{provider}_CLIENT_ID"):
+                continue
+            if not getattr(self, f"AUTH_{provider}_CLIENT_SECRET"):
+                raise ValueError(
+                    f"AUTH_{provider}_CLIENT_SECRET is required with AUTH_{provider}_CLIENT_ID."
+                )
+            if not (self.AUTH_PUBLIC_URL and self.AUTH_PAGE_URL):
+                raise ValueError(
+                    "AUTH_PUBLIC_URL and AUTH_PAGE_URL are required by the external "
+                    "sign-in providers."
+                )
+        for key in ("MEMORY_TIMEOUT_SEC", "PERSONA_TIMEOUT_SEC"):
+            value = getattr(self, key)
+            if not (math.isfinite(value) and value > 0):
+                raise ValueError(f"{key} must be positive and finite.")
+        if not self.DATABASE_URL.strip():
+            raise ValueError("DATABASE_URL must not be empty.")
+        if not self.OBJECT_STORE_DIR.strip():
+            raise ValueError("OBJECT_STORE_DIR must not be empty.")
+        for key in (
+            "LLM_COMPLETE_TIMEOUT_SEC", "MEMORY_IMPORT_MAX_FILE_MB", "MEMORY_TRANSCRIPT_TTL_DAYS"
+        ):
+            value = getattr(self, key)
+            if not (math.isfinite(value) and value > 0):
+                raise ValueError(f"{key} must be positive and finite.")
+        for key in (
+            "LLM_COMPLETE_MAX_TOKENS",
+            "MEMORY_IMPORT_MAX_CHARS",
+            "MEMORY_PROMOTE_SEEN_COUNT",
+            "MEMORY_CONSOLIDATE_MAX_CHARS",
+            "PERSONA_FIELD_MAX_CHARS",
+            "PERSONA_IMPORT_MAX_CHARS",
+        ):
+            if getattr(self, key) < 1:
+                raise ValueError(f"{key} must be at least 1.")
+        if self.MEMORY_EXTRACT_MAX_REJECTED < 0:
+            raise ValueError("MEMORY_EXTRACT_MAX_REJECTED must not be negative.")
+        if not 0.0 <= self.MEMORY_MIN_STT_CONFIDENCE <= 1.0:
+            raise ValueError("MEMORY_MIN_STT_CONFIDENCE must be between 0 and 1.")
+        if not 0.0 <= self.STT_NO_SPEECH_MAX_PROB <= 1.0:
+            raise ValueError("STT_NO_SPEECH_MAX_PROB must be between 0 and 1.")
         if self.DEVICE != AUTO and self.DEVICE not in DEVICES:
             raise ValueError(f"Invalid DEVICE: {self.DEVICE}")
         if self.LOG_LEVEL not in LOG_LEVELS:

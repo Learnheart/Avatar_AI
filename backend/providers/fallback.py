@@ -5,19 +5,21 @@ embedding).
 The backup takes over when the primary fails or does not answer within
 `FALLBACK_PRIMARY_TIMEOUT_SEC`. After a failure the primary is skipped for
 `FALLBACK_COOLDOWN_SEC`, so a network that blocks it costs one slow turn, not every turn.
+A background request (`LLM.complete`) has its own, longer wait and never starts that
+cooldown: its failure says nothing about the short answer of a turn.
 Which backend is the backup is configuration: `STT_BACKEND_BACKUP`, `LLM_BACKEND_BACKUP`,
 `EMBEDDING_BACKEND_BACKUP`.
 """
 import asyncio
 import time
 from contextlib import aclosing
-from typing import AsyncIterator
+from typing import AsyncIterator, Sequence
 
 from opentelemetry import trace
 
 from backend.config import AppConfig
 from backend.core.contracts import LLM, STT, Embedder, EmbeddingError, LLMError, STTError
-from backend.models import Transcript
+from backend.models import ChatTurn, Transcript
 from backend.utils.logging import get_logger
 
 logger = get_logger("providers.fallback")
@@ -39,8 +41,17 @@ class _Primary:
         return time.monotonic() >= self._skip_until
 
     def failed(self, reason: str) -> None:
+        """The backup answers this request, and the next ones for the cooldown."""
         cooldown = self._config.FALLBACK_COOLDOWN_SEC
         self._skip_until = time.monotonic() + cooldown
+        self._report(reason, cooldown_sec=cooldown)
+
+    def passed_over(self, reason: str) -> None:
+        """The backup answers this request alone: the primary is tried again by the
+        next one."""
+        self._report(reason)
+
+    def _report(self, reason: str, **details) -> None:
         # On the span of the step that was running, so the trace shows who answered.
         trace.get_current_span().add_event(
             "primary_backend_failed", {"stage": self._stage, "error": reason}
@@ -49,7 +60,7 @@ class _Primary:
             "msg": "Primary backend failed, using the backup",
             "stage": self._stage,
             "error": reason,
-            "cooldown_sec": cooldown,
+            **details,
         })
 
 
@@ -75,13 +86,21 @@ class FallbackSTT(STT):
 
 class FallbackLLM(LLM):
     def __init__(self, config: AppConfig, primary: LLM, backup: LLM) -> None:
+        self._config = config
         self._primary = primary
         self._backup = backup
         self._state = _Primary(config, "llm")
 
-    async def stream_answer(self, user_text: str) -> AsyncIterator[str]:
+    async def stream_answer(
+        self,
+        user_text: str,
+        history: Sequence[ChatTurn] = (),
+        profile: str = "",
+        persona: str = "",
+    ) -> AsyncIterator[str]:
+        request = (user_text, history, profile, persona)
         if self._state.available():
-            async with aclosing(self._primary.stream_answer(user_text)) as answer:
+            async with aclosing(self._primary.stream_answer(*request)) as answer:
                 try:
                     # Only the wait for the first delta is bounded: that is where a dead
                     # provider shows.
@@ -100,9 +119,22 @@ class FallbackLLM(LLM):
                         yield delta
                     return
 
-        async with aclosing(self._backup.stream_answer(user_text)) as answer:
+        async with aclosing(self._backup.stream_answer(*request)) as answer:
             async for delta in answer:
                 yield delta
+
+    async def complete(self, system: str, user: str) -> str:
+        # A primary the turns found dead is skipped. A failure here does not start the
+        # cooldown the turns share: a background request never degrades the conversation.
+        if self._state.available():
+            timeout = self._config.LLM_COMPLETE_TIMEOUT_SEC
+            try:
+                return await asyncio.wait_for(self._primary.complete(system, user), timeout)
+            except LLMError as e:
+                self._state.passed_over(str(e))
+            except asyncio.TimeoutError:
+                self._state.passed_over(f"no answer within {timeout}s")
+        return await self._backup.complete(system, user)
 
 
 class FallbackEmbedder(Embedder):

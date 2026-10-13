@@ -8,18 +8,46 @@
  *   4. LipSync → hook into audio + avatar
  *   5. Wire WS message handlers
  *
- * The knowledge panel is set up first: it only needs the backend HTTP API.
+ * The knowledge panel, the profile page, the sign-in and the transcript window are set
+ * up first: they do not wait for the avatar.
+ * The transcript window is filled from the WebSocket messages of the turn.
  */
 
 import { AvatarRenderer } from './avatar/avatar-renderer.js'
 import { WSClient } from './ws-client.js'
 import { AudioManager } from './audio/audio-manager.js'
+import { AuthClient } from './auth/auth-client.js'
+import { AuthPanel } from './auth/auth-panel.js'
+import { SESSION_VERDICT, pageSession, sessionVerdict } from './auth/session.js'
+import { AUTH_RETRY_MS } from './config.js'
 import { LipSync } from './avatar/lip-sync.js'
 import { KnowledgeClient } from './knowledge/knowledge-client.js'
 import { KnowledgePanel } from './knowledge/knowledge-panel.js'
+import { MemoryClient } from './memory/memory-client.js'
+import { ProfilePage } from './memory/profile-page.js'
+import { PersonaClient } from './persona/persona-client.js'
+import { PersonaPanel } from './persona/persona-panel.js'
+import { TranscriptPanel } from './transcript/transcript-panel.js'
 
 async function main() {
   new KnowledgePanel(new KnowledgeClient()).init()
+  const persona = new PersonaPanel(new PersonaClient())
+  persona.init()
+  const profile = new ProfilePage(new MemoryClient(), persona)
+  profile.init()
+  // Sign-in: the page starts as a guest, or as the user of the session it kept.
+  const auth = new AuthPanel(new AuthClient(), pageSession, () => profile.open())
+  pageSession.onChange(() => profile.sessionChanged())
+  auth.init()
+
+  // The WebSocket client is made now and connected last: the transcript window, which
+  // only needs it for its button, works while the avatar is still loading.
+  const ws = new WSClient(pageSession)
+
+  // The button only asks: the window is emptied by the `conversation` message that
+  // follows, so the screen cannot disagree with the backend.
+  const transcript = new TranscriptPanel()
+  transcript.init(() => ws.sendConversationReset())
 
   const container = document.getElementById('canvas-container')
 
@@ -27,8 +55,7 @@ async function main() {
   const avatar = new AvatarRenderer(container)
   await avatar.init()
 
-  // ── 2. WebSocket Client ───────────────────────────────────────────────
-  const ws = new WSClient()
+  // ── 2. WebSocket Client (created above, connected in step 6) ──────────
 
   // ── 3. Audio Manager ─────────────────────────────────────────────────
   const audio = new AudioManager(ws)
@@ -47,23 +74,51 @@ async function main() {
     avatar.applyTrackingData(msg.avatar_control.head_rotation)
   })
 
-  // speech_output → schedule audio for playback
+  // speech_output → schedule audio for playback; its sentence joins the avatar's line
   ws.on('speech_output', (msg) => {
     audio.queueAudio(msg.audio_data, msg.audio_mime_type, msg.is_final === true)
+    transcript.appendAvatarSentence(msg.text_content)
+  })
+
+  // transcript → what the person said, once speech-to-text finished
+  ws.on('transcript', (msg) => {
+    transcript.addPersonLine(msg.text)
+  })
+
+  // conversation → the conversation in progress (null: none); another one than the
+  // one on screen empties the transcript window
+  ws.on('conversation', (msg) => {
+    transcript.showConversation(msg.conversation_id)
   })
 
   // Queue drained after is_final → tell the backend the avatar stopped speaking
   audio.onPlaybackEnded(() => ws.sendPlaybackEnded())
 
-  // interrupt → stop playback immediately (barge-in)
+  // interrupt → stop playback immediately (barge-in), mark the avatar's line as cut
   ws.on('interrupt', () => {
     audio.interrupt()
+    transcript.cutAvatarLine()
   })
 
   // state → status label + "thinking" head tilt
   ws.on('state', (msg) => {
     ws.setStatus(msg.state)
     avatar.setState(msg.state)
+  })
+
+  // session → the answer to an `auth` frame, or the backend ending the session it
+  // opened. It says something about the token the page holds only when it names the
+  // last `auth` sent and that frame carried this token; a late answer to an earlier
+  // frame (the one of page load, the person before) changes nothing.
+  ws.on('session', (msg) => {
+    const sent = ws.lastAuth
+    switch (sessionVerdict(msg, sent, pageSession.token)) {
+      case SESSION_VERDICT.ACCEPT: pageSession.confirm(sent.token, msg.user); break
+      case SESSION_VERDICT.DROP: pageSession.rejected(sent.token); break
+      // The backend could not tell (its database failed): the token is kept.
+      case SESSION_VERDICT.RETRY: ws.retryAuth(AUTH_RETRY_MS); break
+      default: break
+    }
   })
 
   // connected → log session info

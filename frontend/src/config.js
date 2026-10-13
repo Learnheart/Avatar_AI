@@ -1,13 +1,14 @@
 /**
  * Frontend config — the single place for env-driven values and tunable constants.
  *
- * Env (Vite, see frontend/.env.example): VITE_WS_URL, VITE_API_URL, VITE_VRM_PATH.
+ * Env (Vite, see frontend/.env.example): VITE_WS_URL, VITE_API_URL, VITE_VRM_PATH,
+ * VITE_AUTH_RETRY_MS.
  */
 
 // ── Env-driven ────────────────────────────────────────────────────────────
 
 export const WS_URL = import.meta.env.VITE_WS_URL || `ws://${window.location.hostname}:8000/ws`
-// Backend HTTP API (knowledge base), without a trailing slash.
+// Backend HTTP API (knowledge base, memory, persona, sign-in), without a trailing slash.
 export const API_URL = (
   import.meta.env.VITE_API_URL || `http://${window.location.hostname}:8000`
 ).replace(/\/+$/, '')
@@ -33,6 +34,41 @@ export const ANALYSER_FFT_SIZE = 256        // Time-domain window read by lip-sy
 export const KNOWLEDGE_EXTENSIONS = ['.txt', '.md', '.csv', '.pdf', '.docx']
 export const KNOWLEDGE_MAX_FILE_MB = 10
 
+// ── Profile page (memory) ─────────────────────────────────────────────────
+
+// The text fields stop at this length; the backend has the last word (its
+// MEMORY_ITEM_MAX_CHARS).
+export const MEMORY_ITEM_MAX_CHARS = 200
+// A description of the person, checked before it is sent; the backend has the last
+// word (its loaders and MEMORY_IMPORT_MAX_FILE_MB).
+export const MEMORY_IMPORT_EXTENSIONS = ['.txt', '.md', '.csv', '.pdf', '.docx']
+export const MEMORY_IMPORT_MAX_FILE_MB = 5
+
+// ── Sign-in ───────────────────────────────────────────────────────────────
+
+// Checked before an account is created; the backend has the last word (its
+// AUTH_PASSWORD_MIN_CHARS).
+export const AUTH_PASSWORD_MIN_CHARS = 8
+// How long the page waits before it presents its token again, after the backend said
+// it could not tell whose it is (`session` with status `unresolved`).
+export const AUTH_RETRY_MS = Number(import.meta.env.VITE_AUTH_RETRY_MS) || 5000
+// The random verifier that binds a sign-in at a provider to this page, and the id of
+// an `auth` frame of the WebSocket.
+export const AUTH_VERIFIER_BYTES = 32
+export const AUTH_FRAME_ID_BYTES = 16
+
+// ── Persona block of the profile page ─────────────────────────────────────
+
+// The fields and the description stop at these lengths; the backend has the last word
+// (its PERSONA_FIELD_MAX_CHARS and PERSONA_IMPORT_MAX_CHARS).
+export const PERSONA_FIELD_MAX_CHARS = 300
+export const PERSONA_IMPORT_MAX_CHARS = 8000
+
+// ── Transcript window ─────────────────────────────────────────────────────
+
+export const TRANSCRIPT_MAX_LINES = 40          // Lines kept on screen; the oldest are dropped
+export const TRANSCRIPT_SCROLL_SLACK_PX = 24    // This close to the end, a new line scrolls the list
+
 // ── Head motion ───────────────────────────────────────────────────────────
 
 // Head rotation clamps (radians) — gentle motion: ~35% of the backend limits.
@@ -42,7 +78,17 @@ export const HEAD_CLAMP = {
   yaw: 0.27,     // ~±16°  (was ±45°)
   roll: 0.12,    // ~±7°   (was ±20°)
 }
-export const HEAD_LERP = 0.15           // Smoothing factor per frame
+export const HEAD_LERP = 0.04           // Smoothing factor per frame — a slow, unhurried turn
+// false: the head has a motion of its own and does not copy the person in front of it.
+// true: the person's head rotation is added to that motion (the backend sends it either way).
+export const HEAD_FOLLOWS_PERSON = false
+// The head's own motion: a slow sway per axis. Amplitude in radians (0.07 ≈ 4°), two
+// periods in seconds that do not divide each other, so it never looks like a loop.
+export const HEAD_IDLE = {
+  pitch: { amplitude: 0.03, periods: [9.1, 5.3], phase: 0.7 },
+  yaw: { amplitude: 0.07, periods: [13.7, 7.9], phase: 0 },
+  roll: { amplitude: 0.02, periods: [11.3, 6.1], phase: 2.1 },
+}
 export const HEAD_SHARE = 0.7           // Head takes 70%, neck the remaining 30%
 export const THINKING_TILT_RAD = 0.12   // Extra roll (~7°) while state is "thinking"
 

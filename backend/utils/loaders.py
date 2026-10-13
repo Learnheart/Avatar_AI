@@ -1,4 +1,6 @@
-"""Turn an uploaded file into plain text. The file type is taken from the extension."""
+"""Turn an uploaded file into plain text. The file type is taken from the extension.
+
+Used by the knowledge base (documents) and by the memory (imports)."""
 import csv
 import io
 from pathlib import Path
@@ -9,7 +11,7 @@ from pypdf import PdfReader
 
 
 class UnsupportedDocument(ValueError):
-    """The file type is not one the knowledge base can read."""
+    """The file type is not one that can be read."""
 
 
 class UnreadableDocument(ValueError):
@@ -51,12 +53,20 @@ _LOADERS: dict[str, Callable[[bytes], str]] = {
 SUPPORTED_EXTENSIONS = tuple(_LOADERS)
 
 
-def extract_text(name: str, data: bytes) -> str:
+def supported_extension(name: str) -> str:
+    """The extension of the file, when its type is one that can be read: a check to
+    make before the file is kept anywhere. Raises UnsupportedDocument."""
     extension = Path(name).suffix.lower()
     if extension not in _LOADERS:
         raise UnsupportedDocument(
             f"Unsupported file type '{extension}'. Supported: {', '.join(SUPPORTED_EXTENSIONS)}"
         )
+    return extension
+
+
+def extract_text(name: str, data: bytes) -> str:
+    """Raises UnsupportedDocument, or UnreadableDocument when the file cannot be parsed."""
+    extension = supported_extension(name)
     try:
         return _LOADERS[extension](data)
     except Exception as e:  # the parsers raise their own, unrelated error types

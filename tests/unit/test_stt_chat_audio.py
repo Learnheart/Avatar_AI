@@ -105,6 +105,14 @@ async def test_reply_text_is_read_from_a_string_or_from_parts(stt, content, expe
     assert (await stt.transcribe(_speech(), 16000)).text == expected
 
 
+async def test_a_chat_model_gives_no_confidence(stt):
+    transcript = await stt.transcribe(_speech(), 16000)
+
+    assert transcript.text == "Xin chào quý khách."
+    assert transcript.confidence is None
+    assert transcript.no_speech_prob is None
+
+
 async def test_reply_without_choices_gives_empty_text(stt):
     stt._client.reply = SimpleNamespace(choices=[])
 

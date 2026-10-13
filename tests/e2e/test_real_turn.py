@@ -34,10 +34,16 @@ FIRST_AUDIO_BUDGET_SEC = 3.5
 END_TO_END_BUDGET_SEC = 10.0
 
 
-@pytest.fixture(scope="module")
-def ws_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+# The log file of each backend started by `run_backend`, by the URL of its WebSocket.
+BACKEND_LOGS: dict[str, Path] = {}
+
+
+def run_backend(
+    tmp_path_factory: pytest.TempPathFactory, settings: Optional[dict[str, str]] = None
+) -> Iterator[str]:
     """Start the real app through its documented entry point on a free port (HOST / PORT
-    go in through the environment) and wait until /health answers."""
+    go in through the environment) and wait until /health answers. `settings` are
+    further keys of its environment. Yields the URL of its WebSocket, then stops it."""
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -50,6 +56,7 @@ def ws_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         "PORT": str(port),
         # An empty knowledge base of its own, not the developer's documents.
         "KNOWLEDGE_DB_PATH": str(work_dir / "knowledge.db"),
+        **(settings or {}),
     }
     with open(log_path, "w") as log:
         process = subprocess.Popen(
@@ -69,7 +76,9 @@ def ws_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
             if time.monotonic() > deadline:
                 pytest.fail(f"backend not ready in time:\n{log_path.read_text()[-4000:]}")
             time.sleep(1)
-        yield f"ws://127.0.0.1:{port}/ws"
+        url = f"ws://127.0.0.1:{port}/ws"
+        BACKEND_LOGS[url] = log_path
+        yield url
     finally:
         process.terminate()
         try:
@@ -77,6 +86,11 @@ def ws_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         except subprocess.TimeoutExpired:
             process.kill()
         print(f"\n[backend log] {log_path}")
+
+
+@pytest.fixture(scope="module")
+def ws_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+    yield from run_backend(tmp_path_factory)
 
 
 class Session:
@@ -142,13 +156,19 @@ class Session:
         await asyncio.gather(self._reader, return_exceptions=True)
 
 
-@pytest.fixture
-async def session(ws_url: str) -> AsyncIterator[Session]:
+async def connect(ws_url: str) -> AsyncIterator[Session]:
+    """A session on the backend at `ws_url`, once it said `connected`."""
     async with websockets.connect(ws_url, max_size=None) as ws:
         client = Session(ws)
         await client.wait_for(lambda m: m["type"] == "connected", timeout=10)
         yield client
         await client.close()
+
+
+@pytest.fixture
+async def session(ws_url: str) -> AsyncIterator[Session]:
+    async for client in connect(ws_url):
+        yield client
 
 
 def _is_state(state: str) -> Callable[[dict], bool]:
@@ -226,7 +246,7 @@ KNOWLEDGE_DOCUMENT = (
 KNOWLEDGE_FACT = ("7,35", "7.35", "bảy phẩy ba")
 
 
-async def _ask(session: Session, utterance_pcm: bytes) -> tuple[str, float, float]:
+async def ask(session: Session, utterance_pcm: bytes) -> tuple[str, float, float]:
     """One spoken question, up to the avatar being idle again.
     Returns (answer text, first audio, end to end) of this turn."""
     turn_start = len(session.messages)
@@ -269,11 +289,11 @@ async def test_turn_answers_from_an_uploaded_document(
             # Not selected: the document is in the base but the avatar does not use it.
             unselected = await http.patch(document_url, json={"enabled": False})
             assert unselected.json()["enabled"] is False
-            without_text, _, _ = await _ask(session, utterance_pcm)
+            without_text, _, _ = await ask(session, utterance_pcm)
 
             selected = await http.patch(document_url, json={"enabled": True})
             assert selected.json() == document
-            answer_text, first_audio, end_to_end = await _ask(session, utterance_pcm)
+            answer_text, first_audio, end_to_end = await ask(session, utterance_pcm)
         finally:
             deleted = await http.delete(document_url)
         assert deleted.status_code == 204

@@ -27,12 +27,123 @@ class Tuning:
     # think before transcribing, and the cap on the transcript length.
     STT_REASONING_EFFORT: str = env_str("STT_REASONING_EFFORT", "minimal")
     STT_MAX_TOKENS: int = env_int("STT_MAX_TOKENS", 512)
+    # An utterance whose every segment has a no-speech probability above this is not
+    # speech: its transcript is dropped. 1.0 = nothing is refused.
+    STT_NO_SPEECH_MAX_PROB: float = env_float("STT_NO_SPEECH_MAX_PROB", 1.0)
+    # A sentence of the transcript holding a phrase the STT invents (STT_HALLUCINATIONS)
+    # is cut when at most this many of its words are outside the phrases; with more, it
+    # is what a person said and is kept.
+    STT_HALLUCINATION_MAX_REST_WORDS: int = env_int("STT_HALLUCINATION_MAX_REST_WORDS", 3)
 
     # ── Answering (LLM) ─────────────────────────────────────────────────
     LLM_REASONING_EFFORT: str = env_str("LLM_REASONING_EFFORT", "low")
     LLM_MAX_TOKENS: int = env_int("LLM_MAX_TOKENS", 512)
     # Max wait for each streamed delta, first token included.
     LLM_TIMEOUT_SEC: float = env_float("LLM_TIMEOUT_SEC", 8.0)
+    # A whole answer asked in the background (`LLM.complete`: reading an import or a
+    # closed conversation), not spoken: it may take longer and be longer than the answer
+    # of a turn.
+    LLM_COMPLETE_TIMEOUT_SEC: float = env_float("LLM_COMPLETE_TIMEOUT_SEC", 30.0)
+    LLM_COMPLETE_MAX_TOKENS: int = env_int("LLM_COMPLETE_MAX_TOKENS", 2048)
+
+    # ── Conversation (short-term memory) ────────────────────────────────
+    # A conversation closes after this long without a face (while the camera is
+    # connected), or this long after its last turn ended.
+    CONVERSATION_ABSENCE_SEC: float = env_float("CONVERSATION_ABSENCE_SEC", 30.0)
+    CONVERSATION_IDLE_SEC: float = env_float("CONVERSATION_IDLE_SEC", 120.0)
+    # The earlier turns of the conversation given to the LLM cost at most this many
+    # tokens; past it the oldest turns are dropped, whole.
+    MEMORY_HISTORY_MAX_TOKENS: int = env_int("MEMORY_HISTORY_MAX_TOKENS", 2000)
+    # Tokens are estimated, not counted (each backend has its own tokenizer): this many
+    # characters make one token. Measured with spoken Vietnamese on the Databricks
+    # model: 3.3. Lower = more tokens counted, so less history kept.
+    MEMORY_HISTORY_CHARS_PER_TOKEN: float = env_float("MEMORY_HISTORY_CHARS_PER_TOKEN", 3.0)
+
+    # ── Memory (what is kept about a logged-in user) ────────────────────
+    # Memory items given to the LLM as the profile of the person; past it the least
+    # recently updated preferences and personality traits are left out.
+    MEMORY_PROMPT_MAX_ITEMS: int = env_int("MEMORY_PROMPT_MAX_ITEMS", 20)
+    # Max wait for the memory: for the profile in a turn (past it the question is
+    # answered without it), and at shutdown for the turns still being written.
+    MEMORY_TIMEOUT_SEC: float = env_float("MEMORY_TIMEOUT_SEC", 1.0)
+    # Characters of one memory item: a short sentence, since every active item is in
+    # every prompt. A longer text is refused.
+    MEMORY_ITEM_MAX_CHARS: int = env_int("MEMORY_ITEM_MAX_CHARS", 200)
+    # An import (a file or a pasted text the person describes themselves with): the
+    # size of the file, and the characters of its text given to the LLM in one request.
+    # Past either it is refused.
+    MEMORY_IMPORT_MAX_FILE_MB: float = env_float("MEMORY_IMPORT_MAX_FILE_MB", 5.0)
+    MEMORY_IMPORT_MAX_CHARS: int = env_int("MEMORY_IMPORT_MAX_CHARS", 20000)
+    # Gathering from conversations. A closed conversation is read once by the LLM into
+    # proposed (pending) items. A proposed preference or personality trait becomes
+    # active by itself once this many conversations stated it; a name or a way of
+    # addressing never does.
+    MEMORY_PROMOTE_SEEN_COUNT: int = env_int("MEMORY_PROMOTE_SEEN_COUNT", 2)
+    # An utterance the STT was less sure of than this is left out of what is read (0 =
+    # nothing is left out). Measured: sentences about oneself 0.93-0.97, one-word
+    # answers 0.45-0.70.
+    MEMORY_MIN_STT_CONFIDENCE: float = env_float("MEMORY_MIN_STT_CONFIDENCE", 0.6)
+    # The stored turns of a conversation are deleted once it is read, and after this
+    # many days whatever happened.
+    MEMORY_TRANSCRIPT_TTL_DAYS: float = env_float("MEMORY_TRANSCRIPT_TTL_DAYS", 7.0)
+    # Characters of a conversation read in one request; a longer one keeps its most
+    # recent turns.
+    MEMORY_CONSOLIDATE_MAX_CHARS: int = env_int("MEMORY_CONSOLIDATE_MAX_CHARS", 20000)
+    # Rejected items shown to the LLM that reads a conversation, the most recently
+    # rejected first (every active and pending item is shown). One that is not shown is
+    # still never proposed again.
+    MEMORY_EXTRACT_MAX_REJECTED: int = env_int("MEMORY_EXTRACT_MAX_REJECTED", 50)
+
+    # ── Sign-in (who is a guest, who is a signed-in user) ───────────────
+    # 0: accounts cannot be created at the kiosk.
+    AUTH_ALLOW_REGISTRATION: int = env_int("AUTH_ALLOW_REGISTRATION", 1)
+    # An account is created once the code sent to its email address is given back:
+    # within this long, in at most this many tries; another code can be asked for
+    # after this long.
+    AUTH_OTP_TTL_MINUTES: float = env_float("AUTH_OTP_TTL_MINUTES", 10.0)
+    AUTH_OTP_MAX_ATTEMPTS: int = env_int("AUTH_OTP_MAX_ATTEMPTS", 5)
+    AUTH_OTP_RESEND_SEC: float = env_float("AUTH_OTP_RESEND_SEC", 60.0)
+    # Mails carrying a code within one window: this many to one address, and this many
+    # to all addresses together. Past either, a code is refused until the window has
+    # moved on. Counted in RAM, per process.
+    AUTH_OTP_WINDOW_MINUTES: float = env_float("AUTH_OTP_WINDOW_MINUTES", 60.0)
+    AUTH_OTP_MAX_CODES: int = env_int("AUTH_OTP_MAX_CODES", 5)
+    AUTH_OTP_MAX_MAILS: int = env_int("AUTH_OTP_MAX_MAILS", 30)
+    # Max wait for the SMTP server when a mail is sent.
+    SMTP_TIMEOUT_SEC: float = env_float("SMTP_TIMEOUT_SEC", 10.0)
+    # Shortest password a local account accepts.
+    AUTH_PASSWORD_MIN_CHARS: int = env_int("AUTH_PASSWORD_MIN_CHARS", 8)
+    # A session is kept until it was not used (no request, no turn) for this long, or
+    # is this old whatever happened. On a shared kiosk these two bound how long the
+    # next person is taken for the one who signed in.
+    AUTH_SESSION_IDLE_MINUTES: float = env_float("AUTH_SESSION_IDLE_MINUTES", 30.0)
+    AUTH_SESSION_MAX_HOURS: float = env_float("AUTH_SESSION_MAX_HOURS", 12.0)
+    # 1: the session also ends when the person leaves the kiosk or goes silent (their
+    # conversation closed for `absence` or `idle`).
+    AUTH_LOGOUT_ON_LEAVE: int = env_int("AUTH_LOGOUT_ON_LEAVE", 0)
+    # Failed sign-ins on one email before it is held, and the window they are counted
+    # in (also how long it is held).
+    AUTH_LOGIN_MAX_ATTEMPTS: int = env_int("AUTH_LOGIN_MAX_ATTEMPTS", 5)
+    AUTH_LOGIN_WINDOW_MINUTES: float = env_float("AUTH_LOGIN_WINDOW_MINUTES", 10.0)
+    # How often the session of the connected page is looked at: once it has expired
+    # the page is told and the avatar answers a guest.
+    AUTH_SESSION_CHECK_SEC: float = env_float("AUTH_SESSION_CHECK_SEC", 30.0)
+    # How often the sessions that are over (revoked, expired) are deleted from the
+    # database while the backend runs; they are also deleted at each start.
+    AUTH_SESSION_CLEANUP_MINUTES: float = env_float("AUTH_SESSION_CLEANUP_MINUTES", 60.0)
+    # Max wait for an external provider (Google, Facebook) during a sign-in.
+    AUTH_PROVIDER_TIMEOUT_SEC: float = env_float("AUTH_PROVIDER_TIMEOUT_SEC", 10.0)
+
+    # ── Persona (the personality a logged-in user gives the avatar) ─────
+    # Characters of one field of the persona: every field that is set is in every
+    # prompt of that user. A longer text is refused.
+    PERSONA_FIELD_MAX_CHARS: int = env_int("PERSONA_FIELD_MAX_CHARS", 300)
+    # Characters of a pasted description of the avatar read by the LLM into the
+    # fields; a longer one is refused.
+    PERSONA_IMPORT_MAX_CHARS: int = env_int("PERSONA_IMPORT_MAX_CHARS", 8000)
+    # Max wait for the persona in a turn; past it the question is answered with the
+    # character of the system prompt.
+    PERSONA_TIMEOUT_SEC: float = env_float("PERSONA_TIMEOUT_SEC", 1.0)
 
     # ── Knowledge (uploaded documents) ──────────────────────────────────
     # Passages given to the LLM with the question.
@@ -41,6 +152,9 @@ class Tuning:
     KNOWLEDGE_MIN_SCORE: float = env_float("KNOWLEDGE_MIN_SCORE", 0.0)
     # Max wait for the lookup in a turn; past it the question is answered without it.
     KNOWLEDGE_TIMEOUT_SEC: float = env_float("KNOWLEDGE_TIMEOUT_SEC", 2.0)
+    # Previous utterances of the person searched together with the current one, so a
+    # follow-up finds the passages of its subject (0 = the current utterance alone).
+    KNOWLEDGE_QUERY_HISTORY_TURNS: int = env_int("KNOWLEDGE_QUERY_HISTORY_TURNS", 1)
     # Size of a chunk of a document, and how much of it is repeated in the next one.
     KNOWLEDGE_CHUNK_CHARS: int = env_int("KNOWLEDGE_CHUNK_CHARS", 800)
     KNOWLEDGE_CHUNK_OVERLAP_CHARS: int = env_int("KNOWLEDGE_CHUNK_OVERLAP_CHARS", 120)

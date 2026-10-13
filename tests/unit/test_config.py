@@ -30,6 +30,27 @@ def test_defaults_load():
     assert config.PLAYBACK_END_TIMEOUT_SEC == 2
     assert config.LOG_LEVEL == "INFO"
     assert config.TRACKING_FPS == 30
+    assert config.CONVERSATION_ABSENCE_SEC == 30
+    assert config.CONVERSATION_IDLE_SEC == 120
+    assert config.MEMORY_HISTORY_MAX_TOKENS == 2000
+    assert config.MEMORY_HISTORY_CHARS_PER_TOKEN == 3.0
+    assert config.KNOWLEDGE_QUERY_HISTORY_TURNS == 1
+    assert config.STT_NO_SPEECH_MAX_PROB == 1.0
+    assert config.DATABASE_URL == "sqlite:///backend/data/app.db"
+    assert config.AUTH_DEV_USER_ID == ""
+    assert config.MEMORY_PROMPT_MAX_ITEMS == 20
+    assert config.MEMORY_TIMEOUT_SEC == 1.0
+    assert config.MEMORY_ITEM_MAX_CHARS == 200
+    assert config.OBJECT_STORE_DIR == "backend/data/objects"
+    assert config.LLM_COMPLETE_TIMEOUT_SEC == 30
+    assert config.LLM_COMPLETE_MAX_TOKENS == 2048
+    assert config.MEMORY_IMPORT_MAX_FILE_MB == 5
+    assert config.MEMORY_IMPORT_MAX_CHARS == 20000
+    assert config.MEMORY_PROMOTE_SEEN_COUNT == 2
+    assert config.MEMORY_MIN_STT_CONFIDENCE == 0.6
+    assert config.MEMORY_TRANSCRIPT_TTL_DAYS == 7
+    assert config.MEMORY_CONSOLIDATE_MAX_CHARS == 20000
+    assert config.MEMORY_EXTRACT_MAX_REJECTED == 50
 
 
 def test_missing_groq_api_key_fails_validation():
@@ -73,6 +94,173 @@ def test_unparseable_number_falls_back_to_default(monkeypatch):
 def test_invalid_values_fail_validation(overrides):
     with pytest.raises(ValueError):
         AppConfig(GROQ_API_KEY="test-key", **overrides).validate()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"CONVERSATION_ABSENCE_SEC": 0},
+        {"CONVERSATION_ABSENCE_SEC": -5},
+        {"CONVERSATION_IDLE_SEC": 0},
+        {"CONVERSATION_IDLE_SEC": -1},
+        {"CONVERSATION_ABSENCE_SEC": float("nan")},
+        {"CONVERSATION_ABSENCE_SEC": float("inf")},
+        {"CONVERSATION_IDLE_SEC": float("nan")},
+        {"CONVERSATION_IDLE_SEC": float("inf")},
+        {"MEMORY_HISTORY_MAX_TOKENS": 0},
+        {"MEMORY_HISTORY_CHARS_PER_TOKEN": 0},
+        {"MEMORY_HISTORY_CHARS_PER_TOKEN": -1.0},
+        {"MEMORY_HISTORY_CHARS_PER_TOKEN": float("nan")},
+        {"MEMORY_HISTORY_CHARS_PER_TOKEN": float("inf")},
+        {"KNOWLEDGE_QUERY_HISTORY_TURNS": -1},
+        {"STT_NO_SPEECH_MAX_PROB": 1.5},
+        {"STT_NO_SPEECH_MAX_PROB": -0.1},
+        {"MEMORY_PROMPT_MAX_ITEMS": 0},
+        {"MEMORY_ITEM_MAX_CHARS": 0},
+        {"MEMORY_TIMEOUT_SEC": 0},
+        {"MEMORY_TIMEOUT_SEC": -1},
+        {"MEMORY_TIMEOUT_SEC": float("nan")},
+        {"MEMORY_TIMEOUT_SEC": float("inf")},
+        {"PERSONA_TIMEOUT_SEC": 0},
+        {"AUTH_PASSWORD_MIN_CHARS": 0},
+        {"AUTH_LOGIN_MAX_ATTEMPTS": 0},
+        {"AUTH_SESSION_IDLE_MINUTES": 0},
+        {"AUTH_SESSION_IDLE_MINUTES": float("nan")},
+        {"AUTH_SESSION_MAX_HOURS": -1},
+        {"AUTH_SESSION_MAX_HOURS": float("inf")},
+        {"AUTH_LOGIN_WINDOW_MINUTES": 0},
+        {"AUTH_SESSION_CHECK_SEC": 0},
+        {"AUTH_SESSION_CLEANUP_MINUTES": 0},
+        {"AUTH_PROVIDER_TIMEOUT_SEC": 0},
+        {"AUTH_OTP_TTL_MINUTES": 0},
+        {"AUTH_OTP_MAX_ATTEMPTS": 0},
+        {"AUTH_OTP_RESEND_SEC": 0},
+        {"AUTH_OTP_WINDOW_MINUTES": 0},
+        {"AUTH_OTP_WINDOW_MINUTES": float("inf")},
+        {"AUTH_OTP_MAX_CODES": 0},
+        {"AUTH_OTP_MAX_MAILS": 0},
+        {"SMTP_TIMEOUT_SEC": 0},
+        {"MAIL_BACKEND": "pigeon"},
+        {"PERSONA_TIMEOUT_SEC": float("nan")},
+        {"PERSONA_TIMEOUT_SEC": float("inf")},
+        {"PERSONA_FIELD_MAX_CHARS": 0},
+        {"PERSONA_IMPORT_MAX_CHARS": 0},
+        {"DATABASE_URL": " "},
+        {"OBJECT_STORE_DIR": " "},
+        {"LLM_COMPLETE_TIMEOUT_SEC": 0},
+        {"LLM_COMPLETE_TIMEOUT_SEC": -1},
+        {"LLM_COMPLETE_TIMEOUT_SEC": float("nan")},
+        {"LLM_COMPLETE_TIMEOUT_SEC": float("inf")},
+        {"LLM_COMPLETE_MAX_TOKENS": 0},
+        {"MEMORY_IMPORT_MAX_FILE_MB": 0},
+        {"MEMORY_IMPORT_MAX_FILE_MB": -1},
+        {"MEMORY_IMPORT_MAX_FILE_MB": float("nan")},
+        {"MEMORY_IMPORT_MAX_CHARS": 0},
+        {"MEMORY_PROMOTE_SEEN_COUNT": 0},
+        {"MEMORY_MIN_STT_CONFIDENCE": -0.1},
+        {"MEMORY_MIN_STT_CONFIDENCE": 1.1},
+        {"MEMORY_MIN_STT_CONFIDENCE": float("nan")},
+        {"MEMORY_TRANSCRIPT_TTL_DAYS": 0},
+        {"MEMORY_TRANSCRIPT_TTL_DAYS": -1},
+        {"MEMORY_TRANSCRIPT_TTL_DAYS": float("inf")},
+        {"MEMORY_CONSOLIDATE_MAX_CHARS": 0},
+        {"MEMORY_EXTRACT_MAX_REJECTED": -1},
+    ],
+)
+def test_invalid_conversation_settings_fail_validation(overrides):
+    (key,) = overrides
+    with pytest.raises(ValueError, match=key):
+        AppConfig(GROQ_API_KEY="test-key", **overrides).validate()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "missing"),
+    [
+        ({"AUTH_GOOGLE_CLIENT_ID": "id"}, "AUTH_GOOGLE_CLIENT_SECRET"),
+        ({"AUTH_FACEBOOK_CLIENT_ID": "id"}, "AUTH_FACEBOOK_CLIENT_SECRET"),
+        ({"AUTH_GOOGLE_CLIENT_ID": "id", "AUTH_GOOGLE_CLIENT_SECRET": "s"}, "AUTH_PUBLIC_URL"),
+        ({"AUTH_FACEBOOK_CLIENT_ID": "id", "AUTH_FACEBOOK_CLIENT_SECRET": "s",
+          "AUTH_PUBLIC_URL": "http://localhost:8000"}, "AUTH_PAGE_URL"),
+    ],
+)
+def test_a_sign_in_provider_needs_its_secret_and_the_two_addresses(overrides, missing):
+    with pytest.raises(ValueError, match=missing):
+        AppConfig(GROQ_API_KEY="test-key", **overrides).validate()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "named"),
+    [
+        ({"MAIL_BACKEND": "smtp"}, "SMTP_HOST"),
+        ({"MAIL_BACKEND": "smtp", "SMTP_HOST": "smtp.example.com"}, "SMTP_FROM"),
+        ({"MAIL_BACKEND": "smtp", "SMTP_HOST": "smtp.example.com",
+          "SMTP_FROM": "avatar@example.com", "SMTP_SECURITY": "tls13"}, "SMTP_SECURITY"),
+    ],
+)
+def test_sending_by_smtp_needs_a_server_and_a_sender(overrides, named):
+    with pytest.raises(ValueError, match=named):
+        AppConfig(GROQ_API_KEY="test-key", **overrides).validate()
+
+
+def test_a_configured_smtp_server_is_accepted_and_its_password_is_not_shown():
+    config = AppConfig(
+        GROQ_API_KEY="test-key", MAIL_BACKEND="smtp", SMTP_HOST="smtp.example.com",
+        SMTP_FROM="avatar@example.com", SMTP_USERNAME="avatar", SMTP_PASSWORD="hunter22",
+    )
+
+    config.validate()
+    assert "hunter22" not in repr(config)
+    assert AppConfig(GROQ_API_KEY="test-key").MAIL_BACKEND == "log"
+
+
+def test_a_configured_sign_in_provider_is_accepted_and_its_secret_is_not_shown():
+    config = AppConfig(
+        GROQ_API_KEY="test-key",
+        AUTH_GOOGLE_CLIENT_ID="id",
+        AUTH_GOOGLE_CLIENT_SECRET="secret",
+        AUTH_PUBLIC_URL="http://localhost:8000",
+        AUTH_PAGE_URL="http://localhost:3000",
+    )
+
+    config.validate()
+    assert "secret" not in repr(config)
+
+
+def test_the_addresses_of_the_sign_in_are_read_without_their_last_slash(monkeypatch):
+    monkeypatch.setenv("AUTH_PUBLIC_URL", "http://localhost:8000/")
+    monkeypatch.setenv("AUTH_PAGE_URL", "http://localhost:3000//")
+
+    config = AppConfig(GROQ_API_KEY="test-key")
+
+    assert (config.AUTH_PUBLIC_URL, config.AUTH_PAGE_URL) == (
+        "http://localhost:8000", "http://localhost:3000"
+    )
+
+
+def test_the_edges_of_the_conversation_settings_are_accepted():
+    AppConfig(
+        GROQ_API_KEY="test-key",
+        MEMORY_HISTORY_MAX_TOKENS=1,
+        KNOWLEDGE_QUERY_HISTORY_TURNS=0,
+        STT_NO_SPEECH_MAX_PROB=0.0,
+        MEMORY_PROMPT_MAX_ITEMS=1,
+        MEMORY_ITEM_MAX_CHARS=1,
+        LLM_COMPLETE_MAX_TOKENS=1,
+        MEMORY_IMPORT_MAX_CHARS=1,
+        MEMORY_IMPORT_MAX_FILE_MB=0.001,
+        MEMORY_PROMOTE_SEEN_COUNT=1,
+        MEMORY_MIN_STT_CONFIDENCE=0.0,
+        MEMORY_TRANSCRIPT_TTL_DAYS=0.01,
+        MEMORY_CONSOLIDATE_MAX_CHARS=1,
+        MEMORY_EXTRACT_MAX_REJECTED=0,
+    ).validate()
+    AppConfig(GROQ_API_KEY="test-key", MEMORY_MIN_STT_CONFIDENCE=1.0).validate()
+
+
+def test_the_database_url_never_appears_in_repr():
+    config = AppConfig(DATABASE_URL="postgresql://avatar:s3cret@db.test/avatar")
+
+    assert "s3cret" not in repr(config)
 
 
 def test_groq_api_key_never_appears_in_repr_or_str():

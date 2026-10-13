@@ -39,6 +39,7 @@ def config(tmp_path) -> AppConfig:
         GROQ_API_KEY="test-key",
         CAPTURE_DIR=str(tmp_path / "capture"),
         KNOWLEDGE_DB_PATH=str(tmp_path / "knowledge.db"),
+        DATABASE_URL=f"sqlite:///{tmp_path / 'app.db'}",
         PLAYBACK_END_TIMEOUT_SEC=0.05,
         TRACKING_FPS=200,
     )
@@ -256,6 +257,41 @@ async def test_a_turn_stores_its_audio_the_frames_and_the_perception_events(conf
     assert {"old": "listening", "new": "thinking"}.items() <= next(
         e for e in events if e["event"] == "state" and e["new"] == "thinking"
     ).items()
+
+
+async def test_a_frame_is_stored_only_while_a_client_is_connected(config, store):
+    orch = Orchestrator(
+        config, vad=FakeVAD(), engine=FakeEngine(), camera=FakeCamera(),
+        tracker=FakeTracker(), capture=store,
+    )
+    stored: list[bool] = []  # for each frame handed to the store: was a client connected
+    store_frame = store.frame
+
+    def frame(image, tracking) -> None:
+        stored.append(orch.ws_manager.is_connected)
+        store_frame(image, tracking)
+
+    store.frame = frame
+    await orch.start()
+    try:
+        # No client: the frame is tracked (the person is noticed) but not stored.
+        orch._camera.frame = FRAME
+        await wait_until(lambda: orch._present)
+        assert stored == []
+
+        await orch.handle_connect(FakeWebSocket())
+        orch._camera.frame = FRAME
+        await wait_until(lambda: stored != [])
+    finally:
+        await orch.stop()
+    store.stop()
+
+    assert stored == [True]
+    assert len(_lines(_files(config, "*/*/tracking.jsonl")[0])) == 1
+    assert len(_files(config, "*/*/frames/*.jpg")) == 1
+    # The arrival was noticed without a client, and is still an event.
+    events = _lines(_files(config, "*/*/events.jsonl")[0])
+    assert "person_arrived" in [e["event"] for e in events]
 
 
 def test_capture_is_off_by_default(config):

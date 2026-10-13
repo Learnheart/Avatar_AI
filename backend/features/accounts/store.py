@@ -1,0 +1,302 @@
+"""
+The users of the application database, how they sign in (local credentials, identities
+at external providers) and their open sessions. All the SQL of the accounts is here,
+written against SQLAlchemy Core. Every method blocks; call them off the event loop.
+"""
+import threading
+from datetime import datetime, timedelta
+from typing import Optional
+
+from sqlalchemy import (
+    Column,
+    ForeignKey,
+    Integer,
+    String,
+    Table,
+    case,
+    delete,
+    func,
+    insert,
+    literal,
+    or_,
+    select,
+    update,
+)
+
+from backend.models import Credentials, Identity, Session, User
+from backend.utils.database import Database, UTCDateTime, metadata
+
+users = Table(
+    "users",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("display_name", String, nullable=False),
+    Column("created_at", UTCDateTime, nullable=False),
+    Column("last_seen_at", UTCDateTime, nullable=False),
+)
+
+# A local account: one per email address, which is not the user id and lives here only.
+credentials = Table(
+    "credentials",
+    metadata,
+    Column("email", String, primary_key=True),
+    Column("user_id", String, ForeignKey(users.c.id), nullable=False, unique=True),
+    # scrypt, with its salt and its parameters (features/accounts/passwords.py).
+    Column("password_hash", String, nullable=False),
+    Column("failed_attempts", Integer, nullable=False),
+    Column("first_failure_at", UTCDateTime),
+    Column("updated_at", UTCDateTime, nullable=False),
+)
+
+# A user as an external provider knows them. The email is kept to be shown, never to
+# find a user.
+identities = Table(
+    "identities",
+    metadata,
+    Column("provider", String, primary_key=True),
+    Column("subject", String, primary_key=True),
+    Column("user_id", String, ForeignKey(users.c.id), nullable=False, index=True),
+    Column("email", String),
+    Column("created_at", UTCDateTime, nullable=False),
+)
+
+# How `AccountsStore.detach_identity` ended.
+DETACHED, NOT_LINKED, LAST_WAY = "detached", "not_linked", "last_way"
+
+# An open sign-in. The id is the SHA-256 of the token: the token is not stored.
+sessions = Table(
+    "sessions",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("user_id", String, ForeignKey(users.c.id), nullable=False, index=True),
+    Column("created_at", UTCDateTime, nullable=False),
+    Column("last_seen_at", UTCDateTime, nullable=False),
+    Column("revoked_at", UTCDateTime),
+)
+
+
+class UsersStore:
+    def __init__(self, database: Database) -> None:
+        self._database = database
+        # Two first uses of the same user at once would both insert the row.
+        self._lock = threading.Lock()
+
+    def touch(self, user_id: str, display_name: str, now: datetime) -> None:
+        """Note that the user was seen at `now`; the row is created on first use, with
+        `display_name`."""
+        with self._lock, self._database.begin() as connection:
+            seen = connection.execute(
+                update(users).where(users.c.id == user_id).values(last_seen_at=now)
+            )
+            if seen.rowcount == 0:
+                connection.execute(
+                    insert(users).values(
+                        id=user_id, display_name=display_name, created_at=now, last_seen_at=now
+                    )
+                )
+
+    def get(self, user_id: str) -> Optional[User]:
+        with self._database.begin() as connection:
+            row = connection.execute(select(users).where(users.c.id == user_id)).first()
+        return User(**row._mapping) if row else None
+
+    def count(self) -> int:
+        with self._database.begin() as connection:
+            return connection.execute(select(func.count()).select_from(users)).scalar_one()
+
+
+class AccountsStore:
+    """Credentials, identities and sessions. A user is created together with the first
+    way they sign in, in one transaction."""
+
+    def __init__(self, database: Database) -> None:
+        self._database = database
+        # Two creations of the same email or identity at once would both insert it.
+        self._lock = threading.Lock()
+
+    # ── Local accounts ────────────────────────────────────────────────────
+
+    def add_account(self, user: User, email: str, password_hash: str) -> bool:
+        """Create the user and their local account. False, and nothing written, when
+        the email has an account."""
+        with self._lock, self._database.begin() as connection:
+            taken = connection.execute(
+                select(credentials.c.email).where(credentials.c.email == email)
+            ).first()
+            if taken is not None:
+                return False
+            connection.execute(insert(users).values(**vars(user)))
+            connection.execute(
+                insert(credentials).values(
+                    email=email,
+                    user_id=user.id,
+                    password_hash=password_hash,
+                    failed_attempts=0,
+                    updated_at=user.created_at,
+                )
+            )
+        return True
+
+    def get_credentials(self, email: str) -> Optional[Credentials]:
+        query = select(
+            credentials.c.email,
+            credentials.c.user_id,
+            credentials.c.password_hash,
+            credentials.c.failed_attempts,
+            credentials.c.first_failure_at,
+        ).where(credentials.c.email == email)
+        with self._database.begin() as connection:
+            row = connection.execute(query).first()
+        return Credentials(**row._mapping) if row else None
+
+    def charge_attempt(self, email: str, now: datetime, window: timedelta, limit: int) -> bool:
+        """Count one sign-in attempt on the email, before its password is looked at.
+        False, and nothing counted, when `limit` attempts were counted within `window`
+        already (or the email has no account). The count restarts at 1 once the window
+        of the first of them has passed. One statement: attempts made at the same
+        moment cannot all read the count before any of them writes it."""
+        passed = or_(
+            credentials.c.first_failure_at.is_(None),
+            credentials.c.first_failure_at <= now - window,
+        )
+        since = literal(now, UTCDateTime)
+        with self._database.begin() as connection:
+            charged = connection.execute(
+                update(credentials)
+                .where(credentials.c.email == email)
+                .where(or_(passed, credentials.c.failed_attempts < limit))
+                .values(
+                    failed_attempts=case((passed, 1), else_=credentials.c.failed_attempts + 1),
+                    first_failure_at=case((passed, since), else_=credentials.c.first_failure_at),
+                )
+            )
+        return charged.rowcount > 0
+
+    def clear_attempts(self, email: str) -> None:
+        """Forget the attempts counted on the email: a sign-in went through."""
+        with self._database.begin() as connection:
+            connection.execute(
+                update(credentials)
+                .where(credentials.c.email == email)
+                .values(failed_attempts=0, first_failure_at=None)
+            )
+
+    # ── Identities at external providers ──────────────────────────────────
+
+    def identity_user(self, provider: str, subject: str) -> Optional[str]:
+        """The id of the user this identity belongs to, or None when nobody has it."""
+        with self._database.begin() as connection:
+            row = connection.execute(
+                select(identities.c.user_id).where(_identity(provider, subject))
+            ).first()
+        return row.user_id if row else None
+
+    def add_identity(self, identity: Identity, new_user: Optional[User] = None) -> Optional[str]:
+        """Attach the identity to its user, created with it when `new_user` is given.
+        The id of the user the identity belongs to afterwards: another one than
+        `identity.user_id` when somebody had it already (nothing is written then), and
+        None when the user has another identity of that provider already."""
+        with self._lock, self._database.begin() as connection:
+            owner = connection.execute(
+                select(identities.c.user_id).where(_identity(identity.provider, identity.subject))
+            ).first()
+            if owner is not None:
+                return owner.user_id
+            if new_user is not None:
+                connection.execute(insert(users).values(**vars(new_user)))
+            else:
+                other = connection.execute(
+                    select(identities.c.subject).where(
+                        (identities.c.user_id == identity.user_id)
+                        & (identities.c.provider == identity.provider)
+                    )
+                ).first()
+                if other is not None:
+                    return None
+            connection.execute(insert(identities).values(**vars(identity)))
+        return identity.user_id
+
+    def list_identities(self, user_id: str) -> list[Identity]:
+        """The identities of the user, oldest first."""
+        query = (
+            select(identities)
+            .where(identities.c.user_id == user_id)
+            .order_by(identities.c.created_at, identities.c.provider)
+        )
+        with self._database.begin() as connection:
+            return [Identity(**row._mapping) for row in connection.execute(query)]
+
+    def detach_identity(self, user_id: str, provider: str) -> str:
+        """Detach the user's identity at the provider unless it is the only way they
+        have to sign in: DETACHED, NOT_LINKED (they have none there) or LAST_WAY
+        (nothing written). The look and the deletion are one transaction, the user's
+        row locked for it: two detachments at once cannot each see the other's
+        identity as the way that remains."""
+        with self._lock, self._database.begin() as connection:
+            connection.execute(
+                select(users.c.id).where(users.c.id == user_id).with_for_update()
+            )
+            linked = connection.execute(
+                select(identities.c.provider).where(identities.c.user_id == user_id)
+            ).scalars().all()
+            if provider not in linked:
+                return NOT_LINKED
+            if len(linked) == 1:
+                password = connection.execute(
+                    select(credentials.c.email).where(credentials.c.user_id == user_id)
+                ).first()
+                if password is None:
+                    return LAST_WAY
+            connection.execute(
+                delete(identities).where(
+                    (identities.c.user_id == user_id) & (identities.c.provider == provider)
+                )
+            )
+        return DETACHED
+
+    # ── Sessions ──────────────────────────────────────────────────────────
+
+    def add_session(self, session: Session) -> None:
+        with self._database.begin() as connection:
+            connection.execute(insert(sessions).values(**vars(session)))
+
+    def get_session(self, session_id: str) -> Optional[Session]:
+        with self._database.begin() as connection:
+            row = connection.execute(select(sessions).where(sessions.c.id == session_id)).first()
+        return Session(**row._mapping) if row else None
+
+    def touch_session(self, session_id: str, now: datetime) -> None:
+        """Note that the session was used at `now`."""
+        with self._database.begin() as connection:
+            connection.execute(
+                update(sessions).where(sessions.c.id == session_id).values(last_seen_at=now)
+            )
+
+    def revoke_session(self, session_id: str, now: datetime) -> bool:
+        """End the session (the first time only); False when there is none to end."""
+        with self._database.begin() as connection:
+            revoked = connection.execute(
+                update(sessions)
+                .where((sessions.c.id == session_id) & sessions.c.revoked_at.is_(None))
+                .values(revoked_at=now)
+            )
+        return revoked.rowcount > 0
+
+    def delete_ended_sessions(self, unused_since: datetime, created_before: datetime) -> int:
+        """Housekeeping, for every user: delete the sessions that are over (revoked,
+        not used since `unused_since`, or created before `created_before`). How many."""
+        with self._database.begin() as connection:
+            deleted = connection.execute(
+                delete(sessions).where(
+                    or_(
+                        sessions.c.revoked_at.is_not(None),
+                        sessions.c.last_seen_at < unused_since,
+                        sessions.c.created_at < created_before,
+                    )
+                )
+            )
+        return deleted.rowcount
+
+
+def _identity(provider: str, subject: str):
+    return (identities.c.provider == provider) & (identities.c.subject == subject)

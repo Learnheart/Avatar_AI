@@ -63,11 +63,18 @@
       border: 1px solid rgba(255, 180, 0, 0.3);
     }
 
-    /* Knowledge panel */
-    #knowledge-toggle {
+    /* Buttons opening the knowledge panel and the profile page */
+    #toolbar {
       position: fixed;
       top: 16px;
       left: 16px;
+      display: flex;
+      gap: 8px;
+      z-index: 100;
+    }
+
+    #knowledge-toggle,
+    #profile-toggle {
       padding: 6px 14px;
       border-radius: 20px;
       font-family: sans-serif;
@@ -77,11 +84,38 @@
       background: rgba(255,255,255,0.08);
       border: 1px solid rgba(255,255,255,0.2);
       cursor: pointer;
-      z-index: 100;
     }
 
-    #knowledge-toggle:hover { background: rgba(255,255,255,0.16); }
+    #knowledge-toggle:hover,
+    #profile-toggle:hover { background: rgba(255,255,255,0.16); }
 
+    /* Who is signed in: a guest, or the name of the user */
+    #session-chip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 3px 4px 3px 14px;
+      border-radius: 20px;
+      font-family: sans-serif;
+      font-size: 13px;
+      color: rgba(255,255,255,0.8);
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+    #session-mode { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #session-action {
+      padding: 3px 10px;
+      border-radius: 16px;
+      font: inherit;
+      font-size: 12px;
+      color: rgba(255,255,255,0.8);
+      background: rgba(255,255,255,0.1);
+      border: none;
+      cursor: pointer;
+    }
+    #session-action:hover { color: #fff; background: rgba(108, 99, 255, 0.5); }
+
+    /* Knowledge panel */
     #knowledge-panel {
       position: fixed;
       top: 56px;
@@ -181,6 +215,365 @@
       white-space: nowrap;
     }
 
+    /* Transcript window: the conversation in progress, under the status label.
+       Below the knowledge panel in the stack, so an opened panel is never blocked. */
+    #transcript-panel {
+      position: fixed;
+      top: 56px;
+      right: 16px;
+      width: 320px;
+      max-width: calc(100vw - 32px);
+      max-height: calc(100vh - 72px);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 16px;
+      border-radius: 12px;
+      font-family: sans-serif;
+      font-size: 13px;
+      color: rgba(255,255,255,0.85);
+      background: rgba(18, 18, 28, 0.94);
+      border: 1px solid rgba(255,255,255,0.15);
+      z-index: 90;
+    }
+
+    #transcript-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    /* The header of a drop-down: its arrow points down while the body is open */
+    .drop-down::after {
+      content: "▸";
+      display: inline-block;
+      margin-left: 6px;
+      font-size: 11px;
+      opacity: 0.7;
+      transition: transform 0.15s;
+    }
+    .drop-down[aria-expanded="true"]::after { transform: rotate(90deg); }
+
+    #transcript-toggle {
+      padding: 0;
+      font: inherit;
+      color: inherit;
+      background: none;
+      border: none;
+      cursor: pointer;
+    }
+    #transcript-toggle:focus-visible { outline: 2px solid #6c63ff; outline-offset: 3px; }
+    #transcript-list[hidden] { display: none; }
+
+    #transcript-reset {
+      color: rgba(255,255,255,0.7);
+      background: none;
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 6px;
+      padding: 3px 9px;
+      font-size: 12px;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+
+    #transcript-reset:hover { color: #fff; border-color: #6c63ff; }
+
+    #transcript-list {
+      list-style: none;
+      min-height: 0;
+      overflow-y: auto;
+      padding-right: 4px;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,255,255,0.25) transparent;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .transcript-empty { font-size: 12px; opacity: 0.6; }
+
+    .transcript-line {
+      flex: none;
+      max-width: 88%;
+      padding: 7px 10px;
+      border-radius: 8px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .transcript-line.person {
+      align-self: flex-end;
+      background: rgba(108, 99, 255, 0.22);
+      border: 1px solid rgba(108, 99, 255, 0.45);
+    }
+
+    .transcript-line.avatar {
+      align-self: flex-start;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.15);
+    }
+
+    .transcript-line.cut { border-style: dashed; }
+    .transcript-line.cut .transcript-text { opacity: 0.6; }
+
+    .transcript-speaker { font-size: 11px; font-weight: 600; opacity: 0.6; margin-bottom: 2px; }
+    .transcript-line.person .transcript-speaker { text-align: right; }
+
+    .transcript-cut-mark { margin-left: 6px; font-weight: 400; color: #ffb400; }
+
+    /* Narrow window: a strip at the bottom, so the avatar's face stays clear. */
+    @media (max-width: 900px) {
+      #transcript-panel {
+        top: auto;
+        bottom: 16px;
+        width: auto;
+        left: 16px;
+        max-height: 32vh;
+      }
+    }
+
+    /* Profile page: a modal <dialog> covering the avatar, the panels and their
+       buttons. It scrolls as a whole. Closed, the browser hides it. */
+    #profile-page {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      max-width: none;
+      max-height: none;
+      margin: 0;
+      border: none;
+      overflow-y: auto;
+      padding: 32px 16px;
+      font-family: sans-serif;
+      font-size: 14px;
+      color: rgba(255,255,255,0.85);
+      background: rgba(10, 10, 15, 0.92);
+    }
+
+    #profile-page::backdrop { background: none; }
+
+    #profile-content {
+      width: 100%;
+      max-width: 920px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    #profile-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+    }
+
+    #profile-title { font-size: 22px; font-weight: 600; }
+    #profile-subtitle { margin-top: 4px; font-size: 13px; opacity: 0.6; }
+
+    #profile-message { min-height: 18px; font-size: 13px; color: #00c864; }
+    #profile-message.error { color: #ff6b6b; }
+
+    #profile-guest,
+    .profile-block {
+      padding: 20px;
+      border-radius: 12px;
+      background: rgba(18, 18, 28, 0.94);
+      border: 1px solid rgba(255,255,255,0.15);
+    }
+
+    #profile-guest { line-height: 1.6; }
+
+    #profile-body { display: flex; flex-direction: column; gap: 16px; }
+    #profile-body[hidden], #profile-guest[hidden] { display: none; }
+
+    .profile-block h2 {
+      margin-bottom: 16px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      opacity: 0.6;
+    }
+
+    .profile-groups {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 28px;
+    }
+
+    .profile-group { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+    .profile-group h3 { font-size: 16px; font-weight: 600; }
+
+    .profile-hint,
+    .profile-empty,
+    .profile-item-source { font-size: 12px; opacity: 0.6; }
+
+    .profile-hint { margin-top: -6px; }
+
+    .profile-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+
+    .profile-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .profile-item.editing { border-color: #6c63ff; }
+
+    .profile-item-content { flex: 1; min-width: 0; }
+    .profile-item-text { line-height: 1.45; overflow-wrap: anywhere; }
+    .profile-item-source { margin-top: 2px; }
+
+    .profile-add { display: flex; gap: 8px; }
+
+    .profile-input {
+      flex: 1;
+      min-width: 0;
+      padding: 7px 10px;
+      font: inherit;
+      color: #fff;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 6px;
+    }
+
+    .profile-input::placeholder { color: rgba(255,255,255,0.35); }
+    .profile-input:focus { outline: none; border-color: #6c63ff; }
+
+    .profile-button {
+      flex: none;
+      padding: 6px 11px;
+      font-size: 12px;
+      white-space: nowrap;
+      color: rgba(255,255,255,0.8);
+      background: none;
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .profile-button:hover { color: #fff; border-color: #6c63ff; }
+    .profile-button.primary { color: #fff; background: rgba(108, 99, 255, 0.35); border-color: #6c63ff; }
+    .profile-button.danger:hover { color: #ff6b6b; border-color: rgba(255, 107, 107, 0.6); }
+    .profile-button:disabled { opacity: 0.4; cursor: default; }
+    .profile-button:focus-visible { outline: 2px solid #6c63ff; outline-offset: 1px; }
+
+    .profile-item-quote {
+      display: block;
+      margin-top: 4px;
+      padding-left: 8px;
+      font-size: 12px;
+      font-style: italic;
+      line-height: 1.45;
+      opacity: 0.75;
+      overflow-wrap: anywhere;
+      border-left: 2px solid rgba(108, 99, 255, 0.6);
+    }
+
+    /* Proposals: what the avatar heard and the person has not confirmed */
+    #profile-proposals { border-color: rgba(255, 180, 0, 0.45); }
+    #profile-proposals[hidden] { display: none; }
+    .profile-proposal { flex-wrap: wrap; }
+    .profile-proposal .profile-item-content { flex: 1 1 260px; }
+    .profile-proposal .profile-item-source { margin: 0 0 2px; }
+    .profile-proposal .profile-edit-input { width: 100%; }
+    .profile-proposal-replaces {
+      margin-top: 4px;
+      font-size: 12px;
+      line-height: 1.45;
+      opacity: 0.75;
+      overflow-wrap: anywhere;
+    }
+    .profile-proposal-replaces s { opacity: 0.8; }
+
+    /* Imports: a description of the person, as a file or a pasted text */
+    .profile-block > .profile-hint { margin: -8px 0 16px; }
+
+    #profile-import-drop {
+      width: 100%;
+      min-height: 132px;
+      padding: 18px 12px;
+      font: inherit;
+      line-height: 1.6;
+      color: inherit;
+      background: none;
+      border: 1px dashed rgba(255,255,255,0.3);
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    #profile-import-drop:hover:enabled,
+    #profile-import-drop.dragging {
+      border-color: #6c63ff;
+      background: rgba(108, 99, 255, 0.12);
+    }
+
+    #profile-import-drop:focus-visible { outline: 2px solid #6c63ff; outline-offset: 1px; }
+    #profile-import-drop:disabled,
+    #profile-import-text:disabled { opacity: 0.4; cursor: default; }
+
+    #profile-import-hint { display: block; font-size: 12px; opacity: 0.6; }
+
+    #profile-import-text { flex: none; min-height: 132px; line-height: 1.45; resize: vertical; }
+    #profile-import-submit { align-self: flex-end; }
+
+    #profile-import-message { min-height: 18px; margin: 14px 0; font-size: 13px; color: #00c864; }
+    #profile-import-message.error { color: #ff6b6b; }
+    #profile-import-message.busy { color: #ffb400; animation: profile-busy 1.2s ease-in-out infinite; }
+
+    @keyframes profile-busy { 50% { opacity: 0.45; } }
+
+    .profile-import-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .profile-import.removing { flex-wrap: wrap; border-color: rgba(255, 107, 107, 0.6); }
+    .profile-import-question { margin-top: 6px; line-height: 1.45; }
+    .profile-import-choices { display: flex; flex-wrap: wrap; gap: 8px; }
+
+    /* Sign-in form of a guest, and the accounts linked to a signed-in user */
+    #auth-form { display: flex; flex-direction: column; gap: 10px; max-width: 360px; margin-top: 16px; }
+    #auth-form .profile-input { flex: none; }
+    #auth-credentials, #auth-code-step { display: flex; flex-direction: column; gap: 10px; }
+    #auth-credentials[hidden], #auth-code-step[hidden] { display: none; }
+    #auth-buttons, #auth-providers, #auth-code-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+    #auth-register[hidden], #auth-identities[hidden] { display: none; }
+    #auth-code-sent { line-height: 1.5; }
+    #auth-message, #auth-identity-message { min-height: 18px; font-size: 13px; color: #00c864; }
+    #auth-message.error, #auth-identity-message.error { color: #ff6b6b; }
+
+    /* Persona: a description to read, then one input per field */
+    #persona-read-form { display: flex; flex-direction: column; gap: 10px; }
+    #persona-description { flex: none; min-height: 96px; line-height: 1.45; resize: vertical; }
+    #persona-description:disabled,
+    .persona-field .profile-input:disabled { opacity: 0.4; cursor: default; }
+    #persona-read { align-self: flex-end; }
+
+    #persona-message { min-height: 18px; margin: 14px 0; font-size: 13px; color: #00c864; }
+    #persona-message.error { color: #ff6b6b; }
+    #persona-message.busy { color: #ffb400; animation: profile-busy 1.2s ease-in-out infinite; }
+
+    #persona-fields { gap: 16px 28px; }
+    .persona-field { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+    .persona-field label { font-size: 13px; font-weight: 600; }
+    .persona-field .profile-input { flex: none; }
+    .persona-default { margin-top: 0; line-height: 1.45; overflow-wrap: anywhere; }
+    .persona-default[hidden] { display: none; }
+
+    #persona-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+
+    /* Narrow window: one group per row. */
+    @media (max-width: 820px) {
+      #profile-page { padding: 20px 12px; }
+      .profile-groups { grid-template-columns: minmax(0, 1fr); }
+    }
+
     /* Loading overlay */
     #loading {
       position: fixed;
@@ -239,8 +632,18 @@
   <!-- Connection status -->
   <div id="status" class="disconnected">● OFFLINE</div>
 
+  <!-- Buttons of the knowledge panel and of the profile page -->
+  <div id="toolbar">
+    <button id="knowledge-toggle" class="drop-down" type="button" aria-expanded="false">Tài liệu</button>
+    <button id="profile-toggle" type="button">Hồ sơ</button>
+    <!-- Who is signed in on this page (src/auth/auth-panel.js) -->
+    <div id="session-chip">
+      <span id="session-mode">Khách</span>
+      <button id="session-action" type="button">Đăng nhập</button>
+    </div>
+  </div>
+
   <!-- Knowledge base: the documents the avatar answers from -->
-  <button id="knowledge-toggle" type="button">Tài liệu</button>
   <div id="knowledge-panel" hidden>
     <div id="knowledge-header">
       <span>Tài liệu tri thức</span>
@@ -255,6 +658,145 @@
     <div id="knowledge-summary"></div>
     <ul id="knowledge-list"></ul>
   </div>
+
+  <!-- Transcript: the conversation in progress, both sides -->
+  <div id="transcript-panel">
+    <div id="transcript-header">
+      <button id="transcript-toggle" class="drop-down" type="button" aria-expanded="true">Hội thoại</button>
+      <button id="transcript-reset" type="button">Cuộc trò chuyện mới</button>
+    </div>
+    <ul id="transcript-list" role="log" aria-live="polite"></ul>
+  </div>
+
+  <!-- Profile page: what the avatar knows about the person (groups filled by
+       src/memory/profile-page.js) and the personality they give it
+       (src/persona/persona-panel.js) -->
+  <dialog id="profile-page" aria-labelledby="profile-title">
+    <div id="profile-content">
+      <div id="profile-header">
+        <div>
+          <h1 id="profile-title">Hồ sơ của bạn</h1>
+          <div id="profile-subtitle">Những điều avatar biết về bạn, và tính cách bạn chọn cho avatar.</div>
+        </div>
+        <button id="profile-close" class="profile-button" type="button">Đóng</button>
+      </div>
+      <div id="profile-message" role="status"></div>
+      <div id="profile-guest" hidden>
+        Bạn đang là khách: avatar vẫn trò chuyện với bạn nhưng không ghi nhớ gì về bạn.
+        Đăng nhập để avatar nhớ bạn và dùng tính cách bạn chọn cho nó.
+        <!-- Sign-in form (src/auth/auth-panel.js) -->
+        <div id="auth-form">
+          <div id="auth-credentials">
+            <input id="auth-email" class="profile-input" type="email" autocomplete="username"
+              maxlength="254" aria-label="Email" placeholder="Email" />
+            <input id="auth-password" class="profile-input" type="password"
+              autocomplete="current-password" maxlength="256" aria-label="Mật khẩu"
+              placeholder="Mật khẩu (ít nhất 8 ký tự)" />
+            <div id="auth-buttons">
+              <button id="auth-login" class="profile-button primary" type="button">Đăng nhập</button>
+              <button id="auth-register" class="profile-button" type="button" hidden>Tạo tài khoản</button>
+            </div>
+            <div id="auth-providers"></div>
+          </div>
+          <!-- Second step of a new account: the code sent to the email -->
+          <div id="auth-code-step" hidden>
+            <div id="auth-code-sent"></div>
+            <input id="auth-code" class="profile-input" type="text" inputmode="numeric"
+              autocomplete="one-time-code" maxlength="8" aria-label="Mã xác nhận"
+              placeholder="Mã xác nhận gồm 6 chữ số" />
+            <div id="auth-code-buttons">
+              <button id="auth-verify" class="profile-button primary" type="button">Xác nhận</button>
+              <button id="auth-resend" class="profile-button" type="button">Gửi lại mã</button>
+              <button id="auth-back" class="profile-button" type="button">Quay lại</button>
+            </div>
+          </div>
+          <div id="auth-message" role="status"></div>
+        </div>
+      </div>
+      <div id="profile-body" hidden>
+        <!-- Proposals: gathered from the conversations, shown while there is one -->
+        <section class="profile-block" id="profile-proposals"
+          aria-labelledby="profile-proposals-title" hidden>
+          <h2 id="profile-proposals-title"></h2>
+          <p class="profile-hint">
+            Avatar chưa dùng những điều này khi trò chuyện. Chọn "Ghi nhớ" để đưa vào hồ sơ,
+            "Bỏ qua" nếu không đúng.
+          </p>
+          <ul id="profile-proposal-list" class="profile-list"></ul>
+        </section>
+        <section class="profile-block">
+          <h2>Bạn là ai</h2>
+          <div class="profile-groups">
+            <div class="profile-group" id="profile-group-identity"></div>
+            <div class="profile-group" id="profile-group-addressing"></div>
+          </div>
+        </section>
+        <section class="profile-block">
+          <h2>Sở thích và tính cách</h2>
+          <div class="profile-groups">
+            <div class="profile-group" id="profile-group-preference"></div>
+            <div class="profile-group" id="profile-group-personality"></div>
+          </div>
+        </section>
+        <!-- Imports: a description of the person, read into items by the backend -->
+        <section class="profile-block">
+          <h2>Bản mô tả về bạn</h2>
+          <p class="profile-hint">
+            Đưa một tệp hoặc dán một đoạn văn giới thiệu về bạn: avatar đọc và thêm những điều
+            cần nhớ vào các danh sách ở trên. Bản gốc được giữ lại ở đây.
+          </p>
+          <div class="profile-groups" id="profile-import-form">
+            <div class="profile-group">
+              <button id="profile-import-drop" type="button">
+                Chọn hoặc kéo thả một tệp vào đây
+                <span id="profile-import-hint"></span>
+              </button>
+              <input id="profile-import-input" type="file" hidden />
+            </div>
+            <div class="profile-group">
+              <textarea id="profile-import-text" class="profile-input"
+                aria-label="Dán đoạn văn mô tả về bạn"
+                placeholder="Hoặc dán đoạn văn mô tả về bạn vào đây"></textarea>
+              <button id="profile-import-submit" class="profile-button primary" type="button">Đọc đoạn văn này</button>
+            </div>
+          </div>
+          <div id="profile-import-message" role="status"></div>
+          <ul id="profile-import-list" class="profile-list"></ul>
+        </section>
+        <!-- Linked accounts: the providers the signed-in user can also sign in with -->
+        <section class="profile-block" id="auth-identities" aria-labelledby="auth-identities-title" hidden>
+          <h2 id="auth-identities-title">Tài khoản liên kết</h2>
+          <p class="profile-hint">
+            Liên kết một tài khoản để lần sau đăng nhập bằng cách nào cũng ra cùng hồ sơ này.
+          </p>
+          <div id="auth-identity-message" role="status"></div>
+          <ul id="auth-identity-list" class="profile-list"></ul>
+        </section>
+        <!-- Persona: the personality the person gives the avatar (fields built by
+             src/persona/persona-panel.js) -->
+        <section class="profile-block" id="persona-block" aria-labelledby="persona-title">
+          <h2 id="persona-title">Tính cách của avatar</h2>
+          <p class="profile-hint">
+            Không bắt buộc. Dán một đoạn mô tả avatar mà bạn muốn rồi bấm "Đọc mô tả" để điền
+            các trường bên dưới, hoặc tự nhập từng trường. Avatar chỉ dùng sau khi bạn bấm "Lưu".
+            Trường nào để trống thì avatar dùng giá trị mặc định ghi ngay dưới trường đó.
+          </p>
+          <div id="persona-read-form">
+            <textarea id="persona-description" class="profile-input"
+              aria-label="Dán đoạn mô tả tính cách của avatar"
+              placeholder="Ví dụ: Bạn là Mai, một trợ lý vui vẻ. Xưng em và gọi tôi là anh. Trả lời ngắn gọn, đi thẳng vào ý chính."></textarea>
+            <button id="persona-read" class="profile-button primary" type="button">Đọc mô tả</button>
+          </div>
+          <div id="persona-message" role="status"></div>
+          <div class="profile-groups" id="persona-fields"></div>
+          <div id="persona-actions">
+            <button id="persona-clear" class="profile-button danger" type="button">Xoá tính cách</button>
+            <button id="persona-save" class="profile-button primary" type="button">Lưu</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  </dialog>
 
   <script type="module" src="/src/main.js"></script>
 </body>

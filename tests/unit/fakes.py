@@ -1,15 +1,20 @@
-"""Fakes for the orchestrator's neighbours: VAD, engine, camera, tracker, WebSocket."""
+"""Fakes for the orchestrator's neighbours: VAD, engine, camera, tracker, memory,
+WebSocket."""
 import asyncio
 import base64
 import json
+import time
 from typing import AsyncIterator, Callable, Optional
 
 from backend.config import AppConfig
+from backend.core.contracts import Memory
 from backend.models import (
     AudioEvent,
+    ChatTurn,
     DoneEvent,
     EngineEvent,
     HeadRotation,
+    MemoryProfile,
     TrackingResult,
     TranscriptEvent,
     VADEvent,
@@ -55,9 +60,11 @@ class FakeVAD:
 
 
 class FakeEngine:
-    """Replays `events` for each turn. `gate` holds the turn before any event (thinking);
-    `error` is raised after the first event of type `error_after`; `close_gate` holds the
-    turn while it is being closed."""
+    """Replays `events` for each turn. `gate` holds the turn before any event (thinking),
+    or right after the first event of type `gate_after` when that is set; `error` is
+    raised after the first event of type `error_after`; `close_gate` holds the turn while
+    it is being closed. `histories` and `user_ids` hold the history and the user id each
+    turn was given."""
 
     def __init__(self) -> None:
         self.events: list[EngineEvent] = [
@@ -67,10 +74,13 @@ class FakeEngine:
             DoneEvent(),
         ]
         self.gate: Optional[asyncio.Event] = None
+        self.gate_after: Optional[type] = None
         self.error: Optional[Exception] = None
         self.error_after: type = TranscriptEvent
         self.close_gate: Optional[asyncio.Event] = None
         self.utterances: list[bytes] = []
+        self.histories: list[tuple] = []
+        self.user_ids: list[Optional[str]] = []
         self.closed = 0
         self.loaded = False
 
@@ -80,13 +90,19 @@ class FakeEngine:
     def close(self) -> None:
         self.loaded = False
 
-    async def respond(self, pcm16: bytes, sample_rate: int) -> AsyncIterator[EngineEvent]:
+    async def respond(
+        self, pcm16: bytes, sample_rate: int, history: tuple = (), user_id: Optional[str] = None
+    ) -> AsyncIterator[EngineEvent]:
         self.utterances.append(pcm16)
+        self.histories.append(tuple(history))
+        self.user_ids.append(user_id)
         try:
-            if self.gate is not None:
+            if self.gate is not None and self.gate_after is None:
                 await self.gate.wait()
             for event in self.events:
                 yield event
+                if self.gate is not None and isinstance(event, self.gate_after or ()):
+                    await self.gate.wait()
                 if self.error and isinstance(event, self.error_after):
                     raise self.error
         finally:
@@ -155,13 +171,66 @@ class FakeWebSocket:
         return [m for m in self.sent if m["type"] not in ("tracking_update", "connected")]
 
 
-def build_orchestrator(config: AppConfig) -> Orchestrator:
+class FakeClock:
+    """The orchestrator's clock, moved by the test. The event loop keeps its own."""
+
+    def __init__(self, now: float = 1000.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class FakeMemory(Memory):
+    """Records what the orchestrator tells the memory: `calls` holds
+    ("record_turn", user id, conversation id, turn) and ("close_conversation", user id,
+    conversation id) in the order they ran. `gate` holds every call until it is set;
+    `error` is raised by every call."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+        self.gate: Optional[asyncio.Event] = None
+        self.error: Optional[Exception] = None
+        self.cancelled: list[str] = []
+
+    async def profile(self, user_id: str) -> MemoryProfile:
+        return MemoryProfile()
+
+    async def record_turn(self, user_id: str, conversation_id: str, turn: ChatTurn) -> None:
+        await self._run("record_turn", user_id, conversation_id, turn)
+
+    async def close_conversation(self, user_id: str, conversation_id: str) -> None:
+        await self._run("close_conversation", user_id, conversation_id)
+
+    async def _run(self, *call) -> None:
+        try:
+            if self.gate is not None:
+                await self.gate.wait()
+        except asyncio.CancelledError:
+            self.cancelled.append(call[0])
+            raise
+        self.calls.append(call)
+        if self.error:
+            raise self.error
+
+
+def build_orchestrator(
+    config: AppConfig,
+    clock: Callable[[], float] = time.monotonic,
+    memory: Optional[Memory] = None,
+) -> Orchestrator:
+    """The orchestrator measures its conversation on `clock`."""
     return Orchestrator(
         config,
         vad=FakeVAD(),
         engine=FakeEngine(),
         camera=FakeCamera(),
         tracker=FakeTracker(),
+        memory=memory,
+        clock=clock,
     )
 
 

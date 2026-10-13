@@ -7,23 +7,31 @@ State machine (design.md §2):
 This is the ONLY place that changes the avatar state (through _transition).
 Receives events from: Camera/HeadTracker, VAD, ConversationEngine, WebSocket.
 Sends messages through: WSManager → frontend.
+
+It also owns the conversation, the session of one user: it opens at the first utterance,
+its turns are recorded here as they were spoken and handed to the engine with each new
+utterance, and it closes when the person left, stayed silent, changed, or asked for a
+new one. For a logged-in user the memory is told about each recorded turn and about the
+close, in the background: no turn and no close waits for it.
 """
 import asyncio
 import base64
 import binascii
 import json
 import time
+import uuid
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import aclosing
-from typing import Awaitable, Optional
+from typing import Awaitable, Callable, Optional
 
 from fastapi import WebSocket
 from opentelemetry import trace
 
 from backend.config import AppConfig
 from backend.core.conversation.engine import ConversationEngine
-from backend.core.contracts import STTError
+from backend.core.conversation.history import Conversation, TurnRecord
+from backend.core.contracts import Memory, STTError
 from backend.models import (
     MIC_SAMPLE_RATE,
     PCM_SAMPLE_WIDTH,
@@ -37,11 +45,13 @@ from backend.models import (
 from backend.core.orchestrator.state import can_transition
 from backend.core.orchestrator.ws_manager import (
     WSManager,
+    conversation_message,
     error_message,
     interrupt_message,
     speech_message,
     state_message,
     tracking_message,
+    transcript_message,
 )
 from backend.core.perception.camera import Camera
 from backend.core.perception.tracking import HeadTracker
@@ -63,6 +73,11 @@ logger = get_logger("orchestrator")
 
 _MIC_BYTES_PER_SEC = MIC_SAMPLE_RATE * PCM_SAMPLE_WIDTH
 
+# The names of the background tasks that tell the memory about a conversation: one per
+# recorded turn (a write, quick) and one for its close (as long as an LLM request).
+_MEMORY_RECORD = "memory-record_turn"
+_MEMORY_CLOSE = "memory-close_conversation"
+
 
 class Orchestrator:
     def __init__(
@@ -72,17 +87,23 @@ class Orchestrator:
         engine: ConversationEngine,
         camera: Camera,
         tracker: HeadTracker,
+        memory: Optional[Memory] = None,
         capture: Optional[CaptureStore] = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        """With `capture`, every tracked frame, the audio of each turn and the perception
-        events are stored on disk."""
+        """With `memory`, the turns and the close of a logged-in user's conversation are
+        handed to it. With `capture`, every tracked frame, the audio of each turn and
+        the perception events are stored on disk. `clock` gives the seconds the
+        conversation boundary and the record of what was spoken are measured in."""
         self.config = config
+        self._clock = clock
         self.ws_manager = WSManager(config)
 
         self._vad = vad
         self._engine = engine
         self._camera = camera
         self._tracker = tracker
+        self._memory = memory
         self._capture = capture
 
         # Blocking inference never runs on the event loop: one thread per model.
@@ -111,6 +132,29 @@ class Orchestrator:
         self._last_face_at: Optional[float] = None
         self._present = False  # whether a person is in front of the camera
         self._session_id = ""  # of the connected client; names the turns of one visit
+
+        # The conversation: the session of one user, open from the first utterance to
+        # its close. One at a time, because the backend serves one connection.
+        self._user_id: Optional[str] = None  # of the connected client; None = guest
+        self._conversation: Optional[Conversation] = None
+        # When it was opened or its last turn ended, on `clock`.
+        self._conversation_active_at = 0.0
+        # Since when no face is seen while the camera is connected; None = not absent.
+        self._absent_since: Optional[float] = None
+        # What the running turn has heard and spoken so far.
+        self._turn_record: Optional[TurnRecord] = None
+        # What the memory is being told, in the background, each task named after its
+        # call. Per conversation the calls run one after the other, in the order they
+        # were made: `_memory_last` holds the latest of each conversation.
+        self._memory_jobs: set[asyncio.Task] = set()
+        self._memory_last: dict[str, asyncio.Task] = {}
+
+        # What the wiring (`backend/main.py`) asked to be told about a signed-in user,
+        # each called in the background and never awaited by a turn: a turn of the user
+        # was recorded (user id); a conversation of the user closed (user id, reason).
+        self.on_user_turn: Optional[Callable[[str], Awaitable[None]]] = None
+        self.on_conversation_closed: Optional[Callable[[str, str], Awaitable[None]]] = None
+        self._notices: set[asyncio.Task] = set()
 
     @property
     def state(self) -> AvatarState:
@@ -145,6 +189,10 @@ class Orchestrator:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks = []
+        await self._stop_memory_jobs()
+        for notice in set(self._notices):
+            notice.cancel()
+        await asyncio.gather(*self._notices, return_exceptions=True)
 
         loop = asyncio.get_running_loop()
         await self._release("camera", asyncio.to_thread(self._camera.stop))
@@ -172,15 +220,66 @@ class Orchestrator:
 
     # ── WebSocket: connection + incoming messages ─────────────────────────
 
-    async def handle_connect(self, websocket: WebSocket) -> str:
+    async def handle_connect(
+        self, websocket: WebSocket, user_id: Optional[str] = None
+    ) -> str:
         """The previous socket is detached before the reset, so nothing of the old session
         (its `state` messages, its audio still in flight) leaks into the new one. The reset
-        therefore reaches no client, so the new one is told the current state itself."""
+        therefore reaches no client, so the new one is told the current state itself.
+        `user_id` is the person behind the connection, None for a guest: the open
+        conversation is kept for the same user and closed for another one."""
         await self.ws_manager.detach()
         await self._reset_turn()
+        if self._conversation is not None and self._conversation.user_id != user_id:
+            await self._close_conversation("user_changed")
+        self._user_id = user_id
         self._session_id = await self.ws_manager.connect(websocket)
         await self.ws_manager.send(state_message(self._state))
+        conversation = self._conversation
+        await self.ws_manager.send(
+            conversation_message(conversation.id if conversation else None)
+        )
         return self._session_id
+
+    async def set_user(self, user_id: Optional[str]) -> None:
+        """The person behind the connection signed in or out (None = a guest). For
+        another user than the one set, the running turn is cancelled as by a barge-in,
+        an utterance being heard is dropped and the conversation closes: a conversation
+        belongs to one user from its first utterance. The same user changes nothing.
+        The user is compared under the lock: of two changes close together, the one
+        asked last is the one that holds."""
+        async with self._turn_lock:
+            if user_id == self._user_id:
+                return
+            answering = self._state in (AvatarState.THINKING, AvatarState.SPEAKING)
+            await self._cancel_turn()
+            if answering:
+                await self.ws_manager.send(interrupt_message())
+            await self._drop_turn()
+            await self._close_conversation("user_changed")
+            self._user_id = user_id
+        logger.info({"msg": "User of the connection changed", "user_id": user_id})
+
+    def _notify(self, what: str, call: Optional[Awaitable[None]]) -> None:
+        """Run a notice to the wiring in the background; its failure is logged."""
+        if call is None:
+            return
+
+        async def run() -> None:
+            try:
+                await call
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error({
+                    "msg": "Notice failed",
+                    "notice": what,
+                    "error": summarize_error(e, self.config.ERROR_SUMMARY_MAX_CHARS),
+                })
+
+        notice = asyncio.create_task(run(), name=what)
+        self._notices.add(notice)
+        notice.add_done_callback(self._notices.discard)
 
     async def handle_disconnect(self, websocket: WebSocket) -> None:
         """Losing the active socket cancels the running turn and resets the state to idle.
@@ -217,6 +316,8 @@ class Orchestrator:
         elif msg_type == "playback_ended":
             if self._state == AvatarState.SPEAKING:
                 self._playback_ended.set()
+        elif msg_type == "conversation_reset":
+            await self._reset_conversation()
         else:
             await self._send_error("unknown_message", f"Unknown message type: {msg_type!r}")
 
@@ -288,9 +389,12 @@ class Orchestrator:
         self._perception_event(
             "speech_end", utterance_ms=round(len(pcm) / _MIC_BYTES_PER_SEC * 1000)
         )
+        conversation = await self._open_conversation()
         await self._transition(AvatarState.THINKING)
+        self._turn_record = TurnRecord()
         self._turn_task = asyncio.create_task(
-            self._run_turn(pcm, self._speech_started_ns), name="turn"
+            self._run_turn(pcm, self._speech_started_ns, conversation, self._turn_record),
+            name="turn",
         )
 
     def _perception_event(self, event: str, **data: object) -> None:
@@ -307,14 +411,18 @@ class Orchestrator:
 
     # ── Turn: STT → LLM → TTS → client ────────────────────────────────────
 
-    async def _run_turn(self, pcm: bytes, speech_started_ns: int) -> None:
+    async def _run_turn(
+        self, pcm: bytes, speech_started_ns: int, conversation: Conversation, record: TurnRecord
+    ) -> None:
         """One turn under TURN_TIMEOUT_SEC. Any failure → `error` message + idle.
-        The turn is one trace, starting when the person started to speak."""
+        The turn is one trace, starting when the person started to speak. However it
+        ends, what was heard and spoken is recorded in its conversation."""
         utterance_ms = round(len(pcm) / _MIC_BYTES_PER_SEC * 1000)
+        attributes = {"session.id": self._session_id, "conversation.id": conversation.id}
+        if conversation.user_id is not None:
+            attributes["user.id"] = conversation.user_id
         with tracer.start_as_current_span(
-            "turn",
-            start_time=speech_started_ns,
-            attributes={"session.id": self._session_id},
+            "turn", start_time=speech_started_ns, attributes=attributes
         ) as span:
             # The listening phase is over when the turn starts: a span closed at once.
             tracer.start_span(
@@ -326,16 +434,20 @@ class Orchestrator:
 
             outcome = "completed"
             try:
-                await self._turn(pcm)
+                await self._turn(pcm, conversation, record)
             except asyncio.CancelledError:
-                outcome = "cancelled"  # barge-in, disconnect or shutdown
+                # Barge-in, reset, disconnect or shutdown: always through _cancel_turn,
+                # which took the cut before the engine was closed.
+                outcome = "cancelled"
                 raise
             except asyncio.TimeoutError:
                 outcome = "timeout"
+                record.cut(self._clock())
                 logger.error({"msg": "Turn timed out", "timeout_sec": self.config.TURN_TIMEOUT_SEC})
                 await self._fail_turn("turn_timeout", "The turn took too long")
             except Exception as e:
                 outcome = "failed"
+                record.cut(self._clock())
                 span.set_status(trace.StatusCode.ERROR, f"{type(e).__name__}")
                 # A provider failure is expected and already summarized; its traceback would
                 # print the chained provider response in full.
@@ -350,18 +462,47 @@ class Orchestrator:
             finally:
                 span.set_attribute("turn.outcome", outcome)
                 turns.add(1, {"outcome": outcome})
+                self._record_turn(conversation, record)
 
-    async def _turn(self, pcm: bytes) -> None:
+    def _record_turn(self, conversation: Conversation, record: TurnRecord) -> None:
+        """The one place where a turn that ended, however it ended, enters the history
+        of its conversation. A turn in which nothing was understood is not recorded and
+        does not keep the conversation open: noise is not the person speaking."""
+        turn = record.chat_turn()
+        if turn is None:
+            return
+        conversation.append(turn)
+        if conversation is self._conversation:
+            self._conversation_active_at = self._clock()
+        logger.info({
+            "msg": "Turn recorded",
+            "conversation_id": conversation.id,
+            "sentences": len(turn.sentences),
+            "interrupted": turn.interrupted,
+        })
+        if self._memory is not None and conversation.user_id is not None:
+            self._tell_memory(
+                conversation.id,
+                _MEMORY_RECORD,
+                self._memory.record_turn(conversation.user_id, conversation.id, turn),
+            )
+        if self.on_user_turn is not None and conversation.user_id is not None:
+            self._notify("user_turn", self.on_user_turn(conversation.user_id))
+
+    async def _turn(self, pcm: bytes, conversation: Conversation, record: TurnRecord) -> None:
         playback_end = await asyncio.wait_for(
-            self._respond(pcm), timeout=self.config.TURN_TIMEOUT_SEC
+            self._respond(pcm, conversation, record), timeout=self.config.TURN_TIMEOUT_SEC
         )
         if playback_end is not None:
             await self._wait_for_playback(playback_end)
         await self._transition(AvatarState.IDLE)
 
-    async def _respond(self, pcm: bytes) -> Optional[float]:
+    async def _respond(
+        self, pcm: bytes, conversation: Conversation, record: TurnRecord
+    ) -> Optional[float]:
         """
-        Stream the engine's events to the client.
+        Stream the engine's events to the client, noting in `record` what was heard and
+        what was sent to be spoken.
         Returns the loop time at which the sent audio is estimated to finish playing,
         or None if no audio was sent.
         """
@@ -374,7 +515,12 @@ class Orchestrator:
         span = trace.get_current_span()  # the turn
         answer_pcm = bytearray()  # kept only to be captured
 
-        async with aclosing(self._engine.respond(pcm, MIC_SAMPLE_RATE)) as events:
+        # The engine keeps no history: it is handed the turns of this user's conversation,
+        # and who that user is.
+        answer = self._engine.respond(
+            pcm, MIC_SAMPLE_RATE, conversation.history, conversation.user_id
+        )
+        async with aclosing(answer) as events:
             async for event in events:
                 if isinstance(event, TranscriptEvent):
                     logger.info({
@@ -382,6 +528,9 @@ class Orchestrator:
                         "chars": len(event.text),
                         "stt_ms": round((loop.time() - started) * 1000),
                     })
+                    if event.text.strip():
+                        record.heard(event.text, event.confidence)
+                        await self.ws_manager.send(transcript_message(event.text))
                 elif isinstance(event, AudioEvent):
                     replied = True
                     sample_rate = event.sample_rate
@@ -394,8 +543,10 @@ class Orchestrator:
                         stage_duration.record(first_audio_ms, {"stage": "turn_first_audio"})
                         logger.info({"msg": "First audio", "first_audio_ms": round(first_audio_ms)})
                         await self._transition(AvatarState.SPEAKING)
-                    audio_sec += len(event.pcm) / PCM_SAMPLE_WIDTH / event.sample_rate
+                    chunk_sec = len(event.pcm) / PCM_SAMPLE_WIDTH / event.sample_rate
+                    audio_sec += chunk_sec
                     await self._send_speech(event.text, event.pcm, sample_rate)
+                    record.spoke(event.text, chunk_sec, self._clock(), fallback=event.fallback)
 
         if replied:
             # Cleared before the final message: only a `playback_ended` answering it counts.
@@ -445,43 +596,224 @@ class Orchestrator:
         await self.ws_manager.send(error_message(code, message))
 
     async def _cancel_turn(self) -> None:
+        """Cancel the running turn and wait until it is recorded as interrupted."""
         task, self._turn_task = self._turn_task, None
         if task is None or task.done():
             return
+        # The cut is now: closing the engine may take a moment.
+        if self._turn_record is not None:
+            self._turn_record.cut(self._clock(), interrupted=True)
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
 
     async def _reset_turn(self) -> None:
         """Drop the running turn and all buffered audio; back to idle."""
         async with self._turn_lock:
-            await self._cancel_turn()
-            while not self._audio_queue.empty():
-                self._audio_queue.get_nowait()
-            self._utterance.clear()
-            self._clear_preroll()
-            await asyncio.get_running_loop().run_in_executor(
-                self._vad_executor, self._vad.reset
+            await self._drop_turn()
+
+    async def _drop_turn(self) -> None:
+        """The reset itself. Call with the turn lock held."""
+        await self._cancel_turn()
+        while not self._audio_queue.empty():
+            self._audio_queue.get_nowait()
+        self._utterance.clear()
+        self._clear_preroll()
+        await asyncio.get_running_loop().run_in_executor(
+            self._vad_executor, self._vad.reset
+        )
+        await self._transition(AvatarState.IDLE)
+
+    # ── Conversation: the session of one user ─────────────────────────────
+
+    async def _open_conversation(self) -> Conversation:
+        """The open conversation; the first utterance opens one for the connected user."""
+        if self._conversation is None:
+            self._conversation = Conversation(
+                id=str(uuid.uuid4()),
+                user_id=self._user_id,
+                max_tokens=self.config.MEMORY_HISTORY_MAX_TOKENS,
+                chars_per_token=self.config.MEMORY_HISTORY_CHARS_PER_TOKEN,
             )
-            await self._transition(AvatarState.IDLE)
+            self._conversation_active_at = self._clock()
+            logger.info({
+                "msg": "Conversation opened",
+                "conversation_id": self._conversation.id,
+                "user_id": self._user_id,
+            })
+            await self.ws_manager.send(conversation_message(self._conversation.id))
+        return self._conversation
+
+    async def _close_conversation(self, reason: str) -> None:
+        """Drop the open conversation and its history, and tell the client."""
+        conversation, self._conversation = self._conversation, None
+        if conversation is None:
+            return
+        logger.info({
+            "msg": "Conversation closed",
+            "conversation_id": conversation.id,
+            "user_id": conversation.user_id,
+            "reason": reason,
+            "turns": len(conversation.history),
+        })
+        if self._memory is not None and conversation.user_id is not None:
+            self._tell_memory(
+                conversation.id,
+                _MEMORY_CLOSE,
+                self._memory.close_conversation(conversation.user_id, conversation.id),
+            )
+        if self.on_conversation_closed is not None and conversation.user_id is not None:
+            self._notify(
+                "conversation_closed",
+                self.on_conversation_closed(conversation.user_id, reason),
+            )
+        await self.ws_manager.send(conversation_message(None))
+
+    # ── Memory: told in the background, for a logged-in user only ─────────
+
+    def _tell_memory(self, conversation_id: str, what: str, call: Awaitable[None]) -> None:
+        """Run a call of the memory about a conversation in the background, after the
+        calls already made about that conversation: its close is not read before its
+        last turn was written. Nothing waits for it."""
+        job = asyncio.create_task(
+            self._memory_job(self._memory_last.get(conversation_id), conversation_id, what, call),
+            name=what,
+        )
+        self._memory_jobs.add(job)
+        self._memory_last[conversation_id] = job
+        job.add_done_callback(lambda done: self._memory_job_done(conversation_id, done))
+
+    async def _memory_job(
+        self,
+        previous: Optional[asyncio.Task],
+        conversation_id: str,
+        what: str,
+        call: Awaitable[None],
+    ) -> None:
+        """One call of the memory. Its failure is logged: the memory never costs a turn."""
+        try:
+            if previous is not None:
+                # `wait` does not cancel what it waits for when this job is cancelled.
+                await asyncio.wait({previous})
+            await call
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error({
+                "msg": "Memory call failed",
+                "call": what,
+                "conversation_id": conversation_id,
+                "error": summarize_error(e, self.config.ERROR_SUMMARY_MAX_CHARS),
+            })
+        finally:
+            if asyncio.iscoroutine(call):
+                call.close()  # a call cancelled before it started is not left unawaited
+
+    def _memory_job_done(self, conversation_id: str, job: asyncio.Task) -> None:
+        self._memory_jobs.discard(job)
+        if self._memory_last.get(conversation_id) is job:
+            del self._memory_last[conversation_id]
+
+    async def _stop_memory_jobs(self) -> None:
+        """At shutdown: a conversation still being read is dropped (it is read again
+        at the next start), and the turns still being written are waited for, no longer
+        than MEMORY_TIMEOUT_SEC: a memory that answers no more does not hang the
+        shutdown. What is abandoned then is cancelled and logged."""
+        jobs = set(self._memory_jobs)
+        if not jobs:
+            return
+        for job in jobs:
+            if job.get_name() == _MEMORY_CLOSE:
+                job.cancel()
+        _, hanging = await asyncio.wait(jobs, timeout=self.config.MEMORY_TIMEOUT_SEC)
+        if hanging:
+            for job in hanging:
+                job.cancel()
+            logger.warning({
+                "msg": "Memory calls abandoned",
+                "calls": sorted(job.get_name() for job in hanging),
+                "timeout_sec": self.config.MEMORY_TIMEOUT_SEC,
+            })
+
+    async def _reset_conversation(self) -> None:
+        """The person asked for a new conversation. A running turn is cancelled as by a
+        barge-in and recorded as interrupted, an utterance being heard is dropped, then
+        the conversation closes. With none open, nothing happens."""
+        async with self._turn_lock:
+            if self._conversation is None:
+                return
+            answering = self._state in (AvatarState.THINKING, AvatarState.SPEAKING)
+            # Cancelled here, ahead of the reset below, so that `interrupt` goes out
+            # after the last audio of the turn and before `state: idle`.
+            await self._cancel_turn()
+            if answering:
+                await self.ws_manager.send(interrupt_message())
+            await self._drop_turn()
+            await self._close_conversation("reset")
+
+    def _turn_running(self) -> bool:
+        return self._turn_task is not None and not self._turn_task.done()
+
+    async def _check_conversation(self) -> None:
+        """Close the conversation when the person left or stayed silent. Never while a
+        turn runs or an utterance is being heard."""
+        now = self._clock()
+        # Absence is only known while the camera is connected.
+        if self._present or not self._camera.connected:
+            self._absent_since = None
+        elif self._absent_since is None:
+            self._absent_since = now
+
+        reason = self._close_reason(now)
+        if reason is None:
+            return
+        # An utterance may be ending right now: decide again with the turn lock held.
+        async with self._turn_lock:
+            reason = self._close_reason(self._clock())
+            if reason is not None:
+                await self._close_conversation(reason)
+
+    def _close_reason(self, now: float) -> Optional[str]:
+        """Why the open conversation is over at `now`, or None."""
+        if (
+            self._conversation is None
+            or self._state != AvatarState.IDLE
+            or self._turn_running()
+        ):
+            return None
+        if now - self._conversation_active_at >= self.config.CONVERSATION_IDLE_SEC:
+            return "idle"
+        if self._absent_since is not None:
+            # A person who just spoke was there: absence counts from the later of the
+            # last face and the last turn.
+            absent_from = max(self._absent_since, self._conversation_active_at)
+            if now - absent_from >= self.config.CONVERSATION_ABSENCE_SEC:
+                return "absence"
+        return None
 
     # ── Tracking (parallel plane) ─────────────────────────────────────────
 
     async def _tracking_loop(self) -> None:
-        """Send tracking_update at TRACKING_FPS, regardless of the turn state."""
+        """Track the camera at TRACKING_FPS, regardless of the turn state, and send
+        tracking_update while a client is connected. Presence is followed without a
+        client too: each tick checks whether the conversation is over."""
         loop = asyncio.get_running_loop()
         interval = 1.0 / self.config.TRACKING_FPS
         while True:
             tick = loop.time()
-            if self.ws_manager.is_connected:
-                try:
-                    tracking = await self._read_tracking()
+            try:
+                tracking = await self._read_tracking()
+                if self.ws_manager.is_connected:
                     await self.ws_manager.send(tracking_message(
                         present=tracking.present,
                         head_rotation=self._head_rotation(tracking),
                         is_speaking=self._state == AvatarState.SPEAKING,
                     ))
-                except Exception as e:
-                    logger.warning({"msg": "Tracking loop error", "error": str(e)})
+            except Exception as e:
+                logger.warning({"msg": "Tracking loop error", "error": str(e)})
+            try:
+                await self._check_conversation()
+            except Exception as e:
+                logger.warning({"msg": "Conversation check error", "error": str(e)})
             await asyncio.sleep(max(interval - (loop.time() - tick), 0.0))
 
     async def _read_tracking(self) -> TrackingResult:
@@ -499,11 +831,13 @@ class Orchestrator:
         return self._last_tracking
 
     def _record_frame(self, frame: object, process_ms: float) -> None:
-        """Measure one tracked frame and, with capture on, store it with its result."""
+        """Measure one tracked frame and, with capture on, store it with its result.
+        A frame is stored only while a client is connected: with nobody using the
+        avatar, tracking still follows presence but no image is kept."""
         tracking = self._last_tracking
         perception_duration.record(process_ms, {"stage": "tracking"})
         frames_tracked.add(1, {"present": tracking.present})
-        if self._capture:
+        if self._capture and self.ws_manager.is_connected:
             rotation = tracking.head_rotation
             self._capture.frame(frame, {
                 "present": tracking.present,

@@ -6,6 +6,7 @@
  * from the user: they are only ever written with textContent.
  */
 
+import { Collapsible } from '../ui/collapsible.js'
 import { KNOWLEDGE_EXTENSIONS, KNOWLEDGE_MAX_FILE_MB } from '../config.js'
 import { formatBytes, isSupportedFile, usageSummary } from './format.js'
 
@@ -26,13 +27,18 @@ export class KnowledgePanel {
     document.getElementById('knowledge-hint').textContent =
       `${KNOWLEDGE_EXTENSIONS.join(' ')} · tối đa ${KNOWLEDGE_MAX_FILE_MB} MB`
 
-    this._toggle.addEventListener('click', () => {
-      const opening = this._panel.hidden
-      this._panel.hidden = !opening
-      if (opening) this.refresh()
+    // A drop-down under its button of the toolbar, closed until it is asked for; the
+    // list is read each time it opens.
+    const dropDown = new Collapsible({
+      header: this._toggle,
+      body: this._panel,
+      key: 'avatar.panel.knowledge',
+      open: false,
+      onChange: (open) => { if (open) this.refresh() },
     })
     document.getElementById('knowledge-close').addEventListener('click', () => {
-      this._panel.hidden = true
+      dropDown.set(false)
+      this._toggle.focus()
     })
 
     this._drop.addEventListener('click', () => this._input.click())

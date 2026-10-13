@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from backend.config import AppConfig
 from backend.main import create_app
+from backend.utils.database import DatabaseError
 from tests.unit.fakes import build_orchestrator
 
 
@@ -27,14 +28,17 @@ def _receive_turn_message(ws) -> dict:
 def _receive_handshake(ws) -> None:
     assert ws.receive_json()["type"] == "connected"
     assert _receive_turn_message(ws) == {"type": "state", "state": "idle"}
+    assert _receive_turn_message(ws) == {"type": "conversation", "conversation_id": None}
 
 
 def test_connected_then_the_current_state_are_sent_on_open(client, config):
     with client.websocket_connect("/ws") as ws:
         message = ws.receive_json()
         state = _receive_turn_message(ws)
+        conversation = _receive_turn_message(ws)
 
     assert state == {"type": "state", "state": "idle"}
+    assert conversation == {"type": "conversation", "conversation_id": None}
     assert message["type"] == "connected"
     assert message["session_id"]
     assert message["config"] == {
@@ -112,3 +116,36 @@ def test_startup_fails_without_groq_api_key():
     with pytest.raises(ValueError, match="groq_api_key"):
         with TestClient(app):
             pass
+
+
+# ── Identity ──────────────────────────────────────────────────────────────
+
+def test_a_connection_belongs_to_a_guest_by_default(client):
+    with client.websocket_connect("/ws") as ws:
+        _receive_handshake(ws)
+
+        assert client.app.state.orchestrator._user_id is None
+    assert client.app.state.users.count() == 0
+
+
+def test_a_connection_belongs_to_the_configured_user(config):
+    config.AUTH_DEV_USER_ID = "linh"
+    with TestClient(create_app(config, build_orchestrator(config))) as client:
+        with client.websocket_connect("/ws") as ws:
+            _receive_handshake(ws)
+
+            assert client.app.state.orchestrator._user_id == "linh"
+        assert client.app.state.users.get("linh").display_name == "linh"
+
+
+def test_a_failing_user_lookup_connects_as_a_guest(config):
+    config.AUTH_DEV_USER_ID = "linh"
+    with TestClient(create_app(config, build_orchestrator(config))) as client:
+        def down(*args, **kwargs):
+            raise DatabaseError("database is gone")
+
+        client.app.state.users.touch = down
+        with client.websocket_connect("/ws") as ws:
+            _receive_handshake(ws)
+
+            assert client.app.state.orchestrator._user_id is None

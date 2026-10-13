@@ -8,6 +8,8 @@ import assert from 'node:assert/strict'
 
 import {
   clampHeadRotation,
+  headTarget,
+  idleHeadRotation,
   mouthTargetFromRms,
   rmsFromTimeDomain,
   splitHeadNeck,
@@ -197,4 +199,60 @@ test('stepMouth output stays within 0..1 and treats non-finite input as 0', () =
   assert.ok(Math.abs(stepMouth(Infinity, 1, MOUTH) - 0.4) < EPSILON)
   assert.equal(stepMouth(5, 1, MOUTH), 1)
   assert.equal(stepMouth(-5, 0, MOUTH), 0)
+})
+
+
+// ── The head's own motion ───────────────────────────────────────────────────
+
+const IDLE = {
+  pitch: { amplitude: 0.03, periods: [9.1, 5.3], phase: 0.7 },
+  yaw: { amplitude: 0.07, periods: [13.7, 7.9], phase: 0 },
+  roll: { amplitude: 0.02, periods: [11.3, 6.1], phase: 2.1 },
+}
+
+test('idleHeadRotation stays within the amplitude of each axis', () => {
+  for (let t = 0; t < 600; t += 0.37) {
+    const rotation = idleHeadRotation(t, IDLE)
+    for (const axis of ['pitch', 'yaw', 'roll']) {
+      assert.ok(Math.abs(rotation[axis]) <= IDLE[axis].amplitude + 1e-12, `${axis} at ${t}`)
+    }
+  }
+})
+
+test('idleHeadRotation moves, slowly, and depends on time alone', () => {
+  const at = (t) => idleHeadRotation(t, IDLE).yaw
+
+  assert.deepEqual(idleHeadRotation(12.5, IDLE), idleHeadRotation(12.5, IDLE))
+  assert.notEqual(at(0), at(3))
+  // A sixtieth of a second apart, the head has barely moved: no jump between frames.
+  for (let t = 0; t < 60; t += 1.3) {
+    assert.ok(Math.abs(at(t + 1 / 60) - at(t)) < 0.001, `jump at ${t}`)
+  }
+})
+
+test('idleHeadRotation uses both periods: it does not repeat after the slow one', () => {
+  const [slow] = IDLE.yaw.periods
+
+  assert.ok(Math.abs(idleHeadRotation(2, IDLE).yaw - idleHeadRotation(2 + slow, IDLE).yaw) > 1e-4)
+})
+
+test('idleHeadRotation treats a time that is no number as the start', () => {
+  assert.deepEqual(idleHeadRotation(NaN, IDLE), idleHeadRotation(0, IDLE))
+})
+
+test('headTarget without anybody to follow is the head\'s own motion plus the extra roll', () => {
+  const idle = { pitch: 0.01, yaw: -0.02, roll: 0.005 }
+
+  assert.deepEqual(headTarget(idle, null, 0, LIMITS), idle)
+  assert.ok(Math.abs(headTarget(idle, null, 0.1, LIMITS).roll - 0.105) < 1e-12)
+})
+
+test('headTarget adds the person it follows and clamps the sum', () => {
+  const idle = { pitch: 0.01, yaw: 0.02, roll: 0 }
+
+  const target = headTarget(idle, { pitch: 0.1, yaw: 5, roll: -0.05 }, 0.02, LIMITS)
+
+  assert.ok(Math.abs(target.pitch - 0.11) < 1e-12)
+  assert.equal(target.yaw, LIMITS.yaw)
+  assert.ok(Math.abs(target.roll - -0.03) < 1e-12)
 })
