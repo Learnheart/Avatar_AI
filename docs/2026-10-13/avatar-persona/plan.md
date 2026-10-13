@@ -146,12 +146,24 @@ Then the docs: `CLAUDE.md` / `AGENTS.md`, `docs/ARCHITECTURE.md`,
       `npm run build`
 - [x] `CLAUDE.md` / `AGENTS.md`, `docs/ARCHITECTURE.md`, `docs/quality-gates.md`,
       `CHANGELOG.md`, `.env.example`
-- [ ] Real run: `PERSONA_PROMPT` and `PERSONA_IMPORT_PROMPT` measured on the real model
-      (a description read into the right fields; a turn answered in the name and the
-      way of addressing that were set; the person's own `addressing` item winning over
-      the persona's), with first audio and end-to-end times reported. The test is
-      written (`tests/e2e/test_real_persona.py`) and has never run: on 2026-10-13 the
-      network of the dev machine answered 503 for `api.groq.com`
+- [x] Real run (2026-10-13, Databricks STT + LLM, `LLM_BACKEND=databricks`
+      `STT_BACKEND=databricks`; `api.groq.com` answered 503 on that network):
+      `tests/e2e/test_real_persona.py` run twice. The description is read in 2.3 s into
+      `name` "Bông", `addressing` "Tự xưng là em, gọi người dùng là anh" and
+      `answer_style` "Trả lời thật ngắn gọn". Asked its name, the default character
+      answers "Mình là trợ lý cá nhân của bạn…"; with the fields saved, "Dạ em chào
+      anh! Em là Bông…". The persona read costs the turn under 1 ms. Asked directly of
+      the model with a persona (em / anh) and a profile holding "Gọi tôi là chị, xưng
+      em": three answers out of three call the person "chị Linh" and keep the name
+      Bông, so the person's own `addressing` wins; `avoid` "Không nói về chính trị"
+      declines a question about an election
+- [ ] The latency gate on this path: end to end 5.5 s (under 10 s), first audio 4.0 s
+      and 4.2 s against 3.5 s, so the e2e test fails on its last assertion. In the
+      measured turn the STT took 1.9 s and the first sentence of the LLM 1.6 s; the same
+      gate fails on Databricks without the persona (`../../2026-10-12/knowledge-base/plan.md`).
+      Not measured on Groq
+- [ ] Seen in the real run, to decide: with a playful persona the model writes emoji
+      in its answers ("😊", "💕"), which go to the TTS as text
 - [x] The block in a real browser (headless Chrome driven over CDP, 2026-10-13, on the
       real app and routes with a temporary database, a fake orchestrator and a scripted
       LLM): the six fields shown; a description read into three of them and nothing
