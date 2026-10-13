@@ -245,10 +245,12 @@ class Orchestrator:
         """The person behind the connection signed in or out (None = a guest). For
         another user than the one set, the running turn is cancelled as by a barge-in,
         an utterance being heard is dropped and the conversation closes: a conversation
-        belongs to one user from its first utterance. The same user changes nothing."""
-        if user_id == self._user_id:
-            return
+        belongs to one user from its first utterance. The same user changes nothing.
+        The user is compared under the lock: of two changes close together, the one
+        asked last is the one that holds."""
         async with self._turn_lock:
+            if user_id == self._user_id:
+                return
             answering = self._state in (AvatarState.THINKING, AvatarState.SPEAKING)
             await self._cancel_turn()
             if answering:

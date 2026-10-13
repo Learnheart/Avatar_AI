@@ -1561,6 +1561,22 @@ async def test_setting_the_same_user_changes_nothing(orch, ws):
     assert _conversation_ids(ws) == [conversation]
 
 
+async def test_of_two_changes_of_user_close_together_the_last_one_holds(orch, ws):
+    # A sign-in still waiting for the turn lock when the sign-out arrives: compared
+    # before the lock, the sign-out saw a guest, did nothing, and the sign-in won.
+    await orch._turn_lock.acquire()
+    sign_in = asyncio.create_task(orch.set_user("user-7"))
+    await asyncio.sleep(0)
+    sign_out = asyncio.create_task(orch.set_user(None))
+    await asyncio.sleep(0)
+    assert orch._user_id is None and not sign_in.done()
+
+    orch._turn_lock.release()
+    await asyncio.wait_for(asyncio.gather(sign_in, sign_out), timeout=2.0)
+
+    assert orch._user_id is None
+
+
 async def test_changing_the_user_cancels_the_running_turn_as_a_barge_in(orch, ws):
     orch._engine.gate = asyncio.Event()
     orch._engine.gate_after = AudioEvent
