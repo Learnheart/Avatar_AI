@@ -30,6 +30,10 @@ class Tuning:
     # An utterance whose every segment has a no-speech probability above this is not
     # speech: its transcript is dropped. 1.0 = nothing is refused.
     STT_NO_SPEECH_MAX_PROB: float = env_float("STT_NO_SPEECH_MAX_PROB", 1.0)
+    # A sentence of the transcript holding a phrase the STT invents (STT_HALLUCINATIONS)
+    # is cut when at most this many of its words are outside the phrases; with more, it
+    # is what a person said and is kept.
+    STT_HALLUCINATION_MAX_REST_WORDS: int = env_int("STT_HALLUCINATION_MAX_REST_WORDS", 3)
 
     # ── Answering (LLM) ─────────────────────────────────────────────────
     LLM_REASONING_EFFORT: str = env_str("LLM_REASONING_EFFORT", "low")
@@ -99,6 +103,12 @@ class Tuning:
     AUTH_OTP_TTL_MINUTES: float = env_float("AUTH_OTP_TTL_MINUTES", 10.0)
     AUTH_OTP_MAX_ATTEMPTS: int = env_int("AUTH_OTP_MAX_ATTEMPTS", 5)
     AUTH_OTP_RESEND_SEC: float = env_float("AUTH_OTP_RESEND_SEC", 60.0)
+    # Mails carrying a code within one window: this many to one address, and this many
+    # to all addresses together. Past either, a code is refused until the window has
+    # moved on. Counted in RAM, per process.
+    AUTH_OTP_WINDOW_MINUTES: float = env_float("AUTH_OTP_WINDOW_MINUTES", 60.0)
+    AUTH_OTP_MAX_CODES: int = env_int("AUTH_OTP_MAX_CODES", 5)
+    AUTH_OTP_MAX_MAILS: int = env_int("AUTH_OTP_MAX_MAILS", 30)
     # Max wait for the SMTP server when a mail is sent.
     SMTP_TIMEOUT_SEC: float = env_float("SMTP_TIMEOUT_SEC", 10.0)
     # Shortest password a local account accepts.
@@ -118,6 +128,9 @@ class Tuning:
     # How often the session of the connected page is looked at: once it has expired
     # the page is told and the avatar answers a guest.
     AUTH_SESSION_CHECK_SEC: float = env_float("AUTH_SESSION_CHECK_SEC", 30.0)
+    # How often the sessions that are over (revoked, expired) are deleted from the
+    # database while the backend runs; they are also deleted at each start.
+    AUTH_SESSION_CLEANUP_MINUTES: float = env_float("AUTH_SESSION_CLEANUP_MINUTES", 60.0)
     # Max wait for an external provider (Google, Facebook) during a sign-in.
     AUTH_PROVIDER_TIMEOUT_SEC: float = env_float("AUTH_PROVIDER_TIMEOUT_SEC", 10.0)
 

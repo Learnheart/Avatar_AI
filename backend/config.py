@@ -253,7 +253,13 @@ class AppConfig(Tuning, Prompts):
                 raise ValueError("SMTP_HOST and SMTP_FROM are required when MAIL_BACKEND=smtp.")
             if self.SMTP_SECURITY not in (SMTP_STARTTLS, SMTP_SSL, SMTP_PLAIN):
                 raise ValueError(f"Invalid SMTP_SECURITY: {self.SMTP_SECURITY}")
-        for key in ("AUTH_PASSWORD_MIN_CHARS", "AUTH_LOGIN_MAX_ATTEMPTS", "AUTH_OTP_MAX_ATTEMPTS"):
+        for key in (
+            "AUTH_PASSWORD_MIN_CHARS",
+            "AUTH_LOGIN_MAX_ATTEMPTS",
+            "AUTH_OTP_MAX_ATTEMPTS",
+            "AUTH_OTP_MAX_CODES",
+            "AUTH_OTP_MAX_MAILS",
+        ):
             if getattr(self, key) < 1:
                 raise ValueError(f"{key} must be at least 1.")
         for key in (
@@ -261,9 +267,11 @@ class AppConfig(Tuning, Prompts):
             "AUTH_SESSION_MAX_HOURS",
             "AUTH_LOGIN_WINDOW_MINUTES",
             "AUTH_SESSION_CHECK_SEC",
+            "AUTH_SESSION_CLEANUP_MINUTES",
             "AUTH_PROVIDER_TIMEOUT_SEC",
             "AUTH_OTP_TTL_MINUTES",
             "AUTH_OTP_RESEND_SEC",
+            "AUTH_OTP_WINDOW_MINUTES",
             "SMTP_TIMEOUT_SEC",
         ):
             value = getattr(self, key)
