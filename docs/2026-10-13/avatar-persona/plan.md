@@ -144,12 +144,18 @@ Then the docs: `CLAUDE.md` / `AGENTS.md`, `docs/ARCHITECTURE.md`,
 - [x] Slice 3 — reading a pasted description (`POST /persona/read`) with unit tests
 - [x] Slice 4 — the "Tính cách của avatar" block on the profile page with unit tests,
       `npm run build`
-- [ ] `CLAUDE.md` / `AGENTS.md`, `docs/ARCHITECTURE.md`, `docs/quality-gates.md`,
+- [x] `CLAUDE.md` / `AGENTS.md`, `docs/ARCHITECTURE.md`, `docs/quality-gates.md`,
       `CHANGELOG.md`, `.env.example`
 - [ ] Real run: `PERSONA_PROMPT` and `PERSONA_IMPORT_PROMPT` measured on the real model
       (a description read into the right fields; a turn answered in the name and the
       way of addressing that were set; the person's own `addressing` item winning over
-      the persona's), with first audio and end-to-end times reported
-- [ ] The block in a real browser: read a description, correct a field, save, reload,
-      delete
+      the persona's), with first audio and end-to-end times reported. The test is
+      written (`tests/e2e/test_real_persona.py`) and has never run: on 2026-10-13 the
+      network of the dev machine answered 503 for `api.groq.com`
+- [x] The block in a real browser (headless Chrome driven over CDP, 2026-10-13, on the
+      real app and routes with a temporary database, a fake orchestrator and a scripted
+      LLM): the six fields shown; a description read into three of them and nothing
+      stored; a field corrected, the page closed and reopened with the unsaved form
+      kept; saved, and still there after a reload; a value over the limit refused with
+      its reason and the stored persona unchanged; deleted
 - [ ] Human verification

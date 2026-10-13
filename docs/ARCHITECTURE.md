@@ -9,8 +9,9 @@
 > the current one, [ADR 0002](adr/0002-mvp-2-architecture.md).
 > **Reading the diagrams:** solid boxes exist today (MVP 1, and of MVP 2 the short-term
 > conversation memory, the application database, the users, the memory of typed,
-> imported and gathered facts with its profile page, and the object store). What is
-> still planned (sign-in, customising the character) is marked in the text.
+> imported and gathered facts with its profile page, the object store, and the
+> personality a person gives the avatar). What is still planned (sign-in) is marked in
+> the text.
 
 ---
 
@@ -45,7 +46,7 @@ documents the user has uploaded.
 | Milestone | Status | What it delivers |
 |---|---|---|
 | **MVP 1** | Built, demo-ready | One complete spoken turn end to end (presence → listen → understand → answer → speak), interruption by speaking over the avatar, answers from uploaded documents, a backup provider per cloud step, turn tracing |
-| **MVP 2** | Built, except sign-in: the short-term part, the application database, the users, the memory of typed and imported facts with its profile page, the object store, and the facts gathered from conversations with their approval | Memory: the avatar follows the conversation in progress and remembers a signed-in person across visits; a profile page where the person corrects what is remembered; an application database for users. Customising the character the avatar plays is intended for this milestone and is **not designed yet** |
+| **MVP 2** | Built, except sign-in: the short-term part, the application database, the users, the memory of typed and imported facts with its profile page, the object store, and the facts gathered from conversations with their approval | Memory: the avatar follows the conversation in progress and remembers a signed-in person across visits; a profile page where the person corrects what is remembered; an application database for users; a personality for the avatar, set by the person on the same page (built) |
 | Later | Not planned | Sign-in itself, several people talking at the same time, recognising a person by face or voice, tool/function calling, accurate mouth shapes, body gestures and emotion |
 
 **Constraints.**
@@ -89,8 +90,9 @@ documents the user has uploaded.
 | Document panel | Frontend — knowledge | Upload, list, delete documents and tick the ones the avatar may use |
 | Conversation memory, short-term *(MVP 2, built)* | The earlier turns of the conversation in progress | Kept in working memory only; bounded to the most recent turns; gone when the conversation ends. Each turn is kept as it happened: what was heard, and the sentences that had actually started to play |
 | Application database *(MVP 2, built)* | System and user information: the users, and what the avatar remembers about each of them | Short remembered facts, each *active* (used in answers), *pending* (proposed after a conversation, awaiting approval) or *rejected* (kept only so that it is never proposed again); and the turns of a signed-in person's conversation, kept until that conversation has been read. Written through one database toolkit (SQLAlchemy Core), so the engine is a configuration choice: a local SQLite file first, PostgreSQL when deployed for many users. Tables are created at startup; there is no migration tool yet |
+| Avatar personality *(MVP 2, built)* | The character the avatar plays for a signed-in person | A handful of named settings (its name, its role, how it addresses the person, its character, how it answers, what it avoids), each a short text and each optional; kept per person in the application database; given to the language model with every turn of that person, on top of the default character. A guest gets the default character |
 | Object store *(MVP 2, built)* | The original files a person imports to describe themselves | One store for all users, holding the files unchanged; who owns a file is recorded in the application database, and a file is only ever read through that record; a local folder first, replaceable by a cloud bucket |
-| Profile page *(MVP 2, built)* | Frontend — the person's configuration | Shows what the avatar remembers about the person as editable settings: add, edit, delete, import a description and manage the imports; approve or reject what the avatar gathered from conversations, each proposal shown with the words it comes from |
+| Profile page *(MVP 2, built)* | Frontend — the person's configuration | Shows what the avatar remembers about the person as editable settings: add, edit, delete, import a description and manage the imports; approve or reject what the avatar gathered from conversations, each proposal shown with the words it comes from; give the avatar a personality, by pasting a description that is read into the settings or by typing them |
 
 ---
 
@@ -98,9 +100,10 @@ documents the user has uploaded.
 
 Three capability blocks on a stable spine. **Perception** feeds the **Orchestrator**,
 which drives the **Conversation** engine, whose output flows to **Expression** in the
-browser. Two features sit *beside* the turn and are consulted by it: the **knowledge
-base** and **memory** (typed and imported facts, and facts gathered from
-conversations as proposals). Every model the system calls sits behind a
+browser. Three features sit *beside* the turn and are consulted by it: the **knowledge
+base**, **memory** (typed and imported facts, and facts gathered from
+conversations as proposals) and the **persona** (the personality a person gives the
+avatar). Every model the system calls sits behind a
 fixed boundary and is chosen by configuration.
 
 *(Mermaid is used instead of ASCII: with knowledge, memory, swappable providers and
@@ -133,7 +136,7 @@ flowchart TB
 
         subgraph CONV["CONVERSATION ENGINE (swappable boundary)"]
             stt["Understand (speech to text)"]
-            lookup["Look up (knowledge, memory)"]
+            lookup["Look up (knowledge, persona, memory)"]
             llm["Think (LLM, streamed)"]
             tts["Speak (text to speech, per sentence)"]
             stt --> lookup --> llm --> tts
@@ -142,6 +145,7 @@ flowchart TB
         subgraph BESIDE["BESIDE THE TURN"]
             kb["Knowledge base: documents, passages"]
             memory["Memory: facts per user"]
+            persona["Persona: the avatar's personality per user"]
             accounts["Users: who is speaking"]
         end
 
@@ -151,7 +155,7 @@ flowchart TB
 
     subgraph DATA["Data on the machine"]
         kdb[("Vector database: passages of the documents")]
-        appdb[("Application database: users and their facts")]
+        appdb[("Application database: users, their facts, their avatar's personality")]
         objects[("Object store: imported originals")]
         capture[("Capture folder (off by default)")]
     end
@@ -171,6 +175,7 @@ flowchart TB
     orch -->|"head rotation, turn state"| avatar
     docpanel -->|"HTTP"| kb
     profile -->|"HTTP"| memory
+    profile -->|"HTTP"| persona
 
     vision --> orch
     vad --> orch
@@ -178,8 +183,10 @@ flowchart TB
     CONV -->|"text + audio, streamed"| orch
     lookup -.-> kb
     lookup -.-> memory
+    lookup -.-> persona
     accounts -.-> orch
     accounts -.-> memory
+    accounts -.-> persona
 
     stt --> backends
     llm --> backends
@@ -192,6 +199,7 @@ flowchart TB
     kb --> kdb
     memory --> appdb
     memory --> objects
+    persona --> appdb
     accounts --> appdb
     obs --> capture
     obs --> otlp
@@ -297,32 +305,42 @@ any turn, reads the closed conversation into proposed facts that the person appr
 rejects on the profile page. Until sign-in exists, one configured user stands in for it
 and everyone else is a guest. Planned: sign-in.
 
+Also built, beside the memory: the persona. A signed-in person gives the avatar a
+personality as a few named settings, typed on the profile page or read from a
+description they paste by one request to the language model, outside any turn; what is
+read only fills the page, and nothing is kept until the person saves. The saved
+settings are given to the Conversation engine with each turn of that person.
+
 ```mermaid
 flowchart TB
     signin["Sign-in (planned separately)"] -->|"a user, or a guest"| orch
 
     subgraph FE["Frontend (browser)"]
-        profile["Profile page: add, edit, approve, reject, delete, import"]
+        profile["Profile page: add, edit, approve, reject, delete, import; the avatar's personality"]
     end
 
     subgraph BE["Backend"]
         orch["Orchestrator: opens and closes the conversation (presence + silence)"]
         engine["Conversation engine: with the earlier turns (short-term)"]
         memory["Memory: facts per user, active, pending or rejected"]
+        persona["Persona: the avatar's personality per user"]
     end
 
     subgraph DATA["Data"]
-        appdb[("Application database: users and their facts")]
+        appdb[("Application database: users, their facts, their avatar's personality")]
         objects[("Object store: imported originals, shared by all users")]
     end
 
     orch -->|"every turn"| engine
     memory -->|"the person's active facts"| engine
+    persona -->|"the personality the person chose"| engine
     orch -->|"each turn as it ends, then the close: in the background"| memory
     memory -->|"reads the closed conversation, proposes facts"| memory
     profile <-->|"what the avatar remembers"| memory
     profile -->|"an imported description"| memory
+    profile <-->|"the avatar's personality, a pasted description to read"| persona
     memory --> appdb
+    persona --> appdb
     memory --> objects
 ```
 
@@ -340,9 +358,9 @@ flowchart TB
 - **Providers are configuration.** A provider being blocked, slow or replaced is solved
   by a setting, and a backup can stand behind any cloud step. This is what lets the same
   build run on an open network and on a restricted company network.
-- **Optional parts stand beside the turn.** The knowledge base and memory are asked for
-  help and given a short time to answer; if they are empty, slow or failing, the avatar
-  answers without them.
+- **Optional parts stand beside the turn.** The knowledge base, memory and the persona
+  are asked for help and given a short time to answer; if they are empty, slow or
+  failing, the avatar answers without them.
 - **Lip-sync lives in the frontend, bound to the audio actually playing.** Mouth
   movement is derived from the loudness of the audio coming out of the speaker, not
   from when a network packet arrived — so it stays in sync regardless of network
@@ -373,6 +391,13 @@ flowchart TB
 - **The profile page is the correction point** *(built)*. Everything the avatar
   remembers is visible and editable there, and what the page shows is exactly what the
   language model is given.
+- **The avatar's personality is a setting of the person, not of the kiosk** *(built)*.
+  It is a few named, optional settings rather than one free text, so each can be
+  shown, corrected and limited on its own; it refines the default character instead of
+  replacing it, so an empty setting falls back to the default. Where the person asked
+  to be addressed in a certain way in their own facts, that wins over the personality.
+  A pasted description is only read into the settings: the person sees and saves them,
+  and the description itself is not kept.
 - **Imported originals are the source of truth** *(built)*. The file a person imports
   is kept unchanged in one object store shared by all users; the remembered facts point
   back to it, and its text is re-derived from it rather than stored twice. An import
@@ -412,7 +437,7 @@ sequenceDiagram
     O-->>F: transcript
     E->>K: passages for this question and the one before it
     K-->>E: matching passages (or none, or too slow)
-    Note over E: for a known person: also their remembered facts (a guest has none)
+    Note over E: for a known person: also the avatar's personality and their remembered facts (a guest has none)
     E->>C: earlier turns + question + passages, to the LLM
     loop each sentence, as soon as it is complete
         C-->>E: a sentence of the answer
@@ -523,6 +548,7 @@ flowchart TD
 | A primary cloud provider | A slightly slower answer, once | The backup takes over and the primary is skipped for a cool-down period |
 | Knowledge lookup (empty, slow, failing) | A general answer | The question is answered without the documents |
 | Memory (empty, slow, failing) | An answer that does not know them | The turn runs without the profile |
+| Persona (none set, slow, failing) | An answer in the default character | The turn runs without the personality |
 | Application database, at startup | The avatar does not start | Startup stops with the reason: nothing runs on a database it cannot open |
 | Camera | The avatar looks straight ahead | The head returns to neutral; the camera is retried; listening and answering are unaffected |
 | The person speaks over the avatar | The avatar stops and listens | The running answer is cancelled and a new turn starts |
@@ -636,6 +662,7 @@ and the block moves to its own service — without redrawing the architecture ab
 | 2026-10-12 | v2 | Application database, users and long-term memory of typed facts built (second slice of MVP 2): one database for users and memory items, a configured user standing in for sign-in, the person's active facts given to the LLM with each turn, the profile page and its HTTP routes. Import, the object store, facts gathered from conversations and their approval stay planned | [0002](adr/0002-mvp-2-architecture.md) | `docs/2026-10-12/conversation-memory/` |
 | 2026-10-12 | v2 | Import and the object store built (third slice of MVP 2): a person describes themselves with a file or a pasted text, the original is kept unchanged in one object store for all users with its owner recorded in the application database, and one request to the language model outside the turn reads it into facts used at once. Facts gathered from conversations and their approval stay planned | [0002](adr/0002-mvp-2-architecture.md) | `docs/2026-10-12/conversation-memory/` |
 | 2026-10-13 | v2 | Gathering from conversations built (fourth slice of MVP 2): the Orchestrator hands the Memory the turns of a signed-in person and the close of the conversation, in the background; one request to the language model outside the turn reads the closed conversation into proposed facts, which the person approves or rejects on the profile page; a preference or a trait said again on a later visit becomes active by itself, a name never does; a rejected fact is never proposed again; the stored turns are deleted once read. Sign-in stays planned | [0002](adr/0002-mvp-2-architecture.md) | `docs/2026-10-12/conversation-memory/` |
+| 2026-10-13 | v2 | Avatar personality built (the character customisation of MVP 2): a signed-in person gives the avatar a few named settings (name, role, way of addressing, character, answer style, what to avoid), typed on the profile page or read from a pasted description by one request to the language model outside the turn; the saved settings are given to the language model with each turn of that person, on top of the default character; a guest gets the default character | [0002](adr/0002-mvp-2-architecture.md) | `docs/2026-10-13/avatar-persona/` |
 
 **Still deferred:** sign-in, several people at the same time, recognising a person by
 face or voice, tool/function calling, accurate mouth shapes, body gestures and emotion,

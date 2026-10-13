@@ -24,11 +24,12 @@ summary: Tests for the personality a signed-in person gives the avatar
 | Extraction | `test_persona_extraction.py` | an object with known keys → those fields; an unknown key, a value that is not text, an empty or too long one → dropped, the others kept; `{}` → no field; prose, a code fence, an array → `InvalidPersonaAnswer` |
 | Reading | `test_persona_service.py` | the LLM is given `PERSONA_IMPORT_PROMPT` and the description between delimiters it cannot close; the fields come back and nothing is stored; an empty text → `EmptyDescription`; one over `PERSONA_IMPORT_MAX_CHARS` → `DescriptionTooLong`, no LLM call; an LLM failure or an invalid answer → `PersonaReadFailed`; no field found → `NothingToRead` |
 | API | `test_persona_api.py` | `GET` starts with `{}`; `PUT` stores and `GET` gives it back; `PUT` replaces; `DELETE` → 204 and `{}`; an unknown key, a value too long, a body without `fields` → 422; `POST /persona/read` → the fields, and `GET` still `{}`; 413, 422 (empty, nothing found), 502 (LLM); a guest → 401 on every route; a failing database → 502; a saved persona is in the LLM request of the next turn |
-| Frontend | `frontend/tests/persona.test.js` | the fields of the page have the keys of the backend; `formValues` trims and leaves out empty fields; `mergeRead` overwrites only the fields that were read; `isDirty`; `readMessage`; `personaErrorMessage` for 401, 413, 422, 502, a network failure |
+| Frontend | `frontend/tests/persona.test.js` | the fields of the page have the keys of the backend; `formValues` trims and leaves out empty fields; `mergeRead` overwrites only the fields that were read; `sameFields`; `readMessage`; `personaErrorMessage` for 401, 413, 422, 502, a network failure |
 
 ## End-to-end tests (real environment, `RUN_E2E=1`)
 
-- `tests/e2e/test_real_turn.py`: a description of the avatar read by the real LLM gives
+- `tests/e2e/test_real_persona.py` (a backend of its own, signed in, on a temporary
+  database): a description of the avatar read by the real LLM gives
   the name and the way of addressing it states; with those fields saved, a turn asking
   "bạn tên là gì" is answered with that name. First audio and end-to-end times are
   reported against the gate (3.5 s / 10 s).

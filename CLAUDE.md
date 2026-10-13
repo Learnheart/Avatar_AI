@@ -39,7 +39,7 @@ summary: <one line>
   here; it is never listed under `modules:`.
 - `modules:` lists the parts of that agent the change touches. They are components of
   one pipeline, not agents: `vision`, `vad`, `stt`, `llm`, `tts`, `orchestrator`,
-  `expression`, `knowledge`, `memory`.
+  `expression`, `knowledge`, `memory`, `persona`.
 - A plan contains: problem statement, requirements, decisions made, implementation
   approach, and ends with a `## To-do` checklist (`- [ ] task`).
 - A plan that changes the overall architecture carries the new architecture record
@@ -106,8 +106,9 @@ cover as much logic as possible with unit tests.
 | **Knowledge base** | sqlite-vec (SQLite extension) + embedding qua `EMBEDDING_BACKEND` (`local_hash` \| `openai_compatible` \| `databricks` \| `ollama`), backup qua `EMBEDDING_BACKEND_BACKUP`; pypdf, python-docx | Upload tài liệu (txt, md, csv, pdf, docx) → chunk → vector; tra cứu đoạn liên quan cho mỗi câu hỏi trước khi gọi LLM |
 | **Application database** | SQLAlchemy Core trên `DATABASE_URL` (file SQLite local; PostgreSQL khi deploy) | Lưu user, memory (những điều avatar nhớ về từng user) và các turn của cuộc trò chuyện chưa được đọc; bảng được tạo lúc startup, chưa có migration tool |
 | **Memory** | logic nội bộ trên application database; `AUTH_DEV_USER_ID` thay cho login; import và cuộc trò chuyện đã đóng được đọc bằng một lần gọi LLM ngoài turn (`LLM.complete`) | Hồ sơ của user đã đăng nhập (các memory item `active`) đưa vào LLM mỗi turn; import file / đoạn văn tự giới thiệu → memory item; cuộc trò chuyện đã đóng → memory item `pending` (đề xuất) chờ user duyệt hoặc từ chối, sở thích / tính cách được nhắc lại ở cuộc trò chuyện sau thì tự `active`; turn đã lưu bị xoá sau khi đọc; guest không có memory |
+| **Persona** | logic nội bộ trên application database; đoạn mô tả dán vào được đọc bằng một lần gọi LLM ngoài turn (`LLM.complete`) | Tính cách user đã đăng nhập đặt cho avatar: một dict các trường định nghĩa trước (`name`, `role`, `addressing`, `personality`, `answer_style`, `avoid`), trường nào có giá trị thì đưa vào LLM mỗi turn dưới dạng một system message riêng, sau `SYSTEM_PROMPT` và trước hồ sơ của user; không bắt buộc, guest dùng tính cách mặc định |
 | **Object store** | thư mục local `OBJECT_STORE_DIR` (thay được bằng S3-compatible) | Giữ nguyên bản gốc của file user import; chủ sở hữu chỉ ghi trong application database |
-| Observability | OpenTelemetry SDK (traces + metrics) + OTLP/HTTP exporter; JSON log trên stdout | Mỗi turn một trace, mỗi bước một span (listen, stt, knowledge, embedding, memory, llm, tts, playback) kèm input/output; số đo vòng lặp perception; `CAPTURE_ENABLED` lưu frame camera + audio + trace ra đĩa |
+| Observability | OpenTelemetry SDK (traces + metrics) + OTLP/HTTP exporter; JSON log trên stdout | Mỗi turn một trace, mỗi bước một span (listen, stt, knowledge, embedding, persona, memory, llm, tts, playback) kèm input/output; số đo vòng lặp perception; `CAPTURE_ENABLED` lưu frame camera + audio + trace ra đĩa |
 | Device Capability Router | logic nội bộ (phát hiện Metal/CUDA/CPU lúc startup) | Chọn backend inference phù hợp máy; cho phép override qua config |
 
 ### Frontend (browser)
@@ -119,7 +120,7 @@ cover as much logic as possible with unit tests.
 | Audio | Web Audio API (AudioWorklet + AnalyserNode) | Thu mic (PCM 16kHz), phát audio, đo loudness cho lip-sync |
 | Lip-sync | logic thuần (RMS → blendshape mồm) | Amplitude-driven, bám audio đang phát |
 | Knowledge panel | DOM thuần + fetch (`VITE_API_URL`) | Upload / liệt kê / xoá tài liệu tri thức; tick chọn tài liệu avatar được dùng để trả lời |
-| Profile page ("Hồ sơ") | DOM thuần + fetch (`VITE_API_URL`) | Xem / thêm / sửa / xoá những điều avatar nhớ về user; duyệt / từ chối những điều avatar thu thập được từ cuộc trò chuyện |
+| Profile page ("Hồ sơ") | DOM thuần + fetch (`VITE_API_URL`) | Xem / thêm / sửa / xoá những điều avatar nhớ về user; duyệt / từ chối những điều avatar thu thập được từ cuộc trò chuyện; khối "Tính cách của avatar": dán mô tả để LLM tách thành các trường, sửa từng trường, lưu / xoá |
 
 ### External (cloud)
 
@@ -152,13 +153,13 @@ in `core/contracts.py`, and backends are swapped by config, not by editing calle
 
 ```
 backend/
-  main.py                      # FastAPI app, /ws, /health, /knowledge, /memory; wires core + providers + features
+  main.py                      # FastAPI app, /ws, /health, /knowledge, /memory, /persona; wires core + providers + features
   config.py                    # AppConfig — secrets, per-machine and provider values
   tuning.py                    # behaviour parameters (VAD, timeouts, conversation, head clamps, voice)
   prompts.py                   # system prompt and other texts
   models.py                    # shared dataclasses and enums
   core/                        # ── one turn; imports no provider, runtime or feature ──
-    contracts.py               # STT, LLM, TTS, Embedder, Knowledge, Memory interfaces and their errors
+    contracts.py               # STT, LLM, TTS, Embedder, Knowledge, Memory, Persona interfaces and their errors
     orchestrator/
       orchestrator.py          # turn state machine + routing (only owner of state); owns the conversation, tells the memory
       state.py                 # allowed state transitions
@@ -168,7 +169,7 @@ backend/
       tracking.py              # MediaPipe presence + head rotation
       vad.py                   # Silero VAD: speech_start / speech_end
     conversation/              # ── CAPABILITY 2 (separated pipeline) ──
-      engine.py                # ConversationEngine: audio + earlier turns in → (knowledge lookup, profile) → text + audio out
+      engine.py                # ConversationEngine: audio + earlier turns in → (knowledge lookup, persona, profile) → text + audio out
       history.py               # Conversation (one user session, its turns), record of a turn, chat messages (pure)
   providers/                   # ── model backends behind core/contracts.py ──
     catalog.py                 # backend name → builder, for every stage (+ device router)
@@ -183,7 +184,7 @@ backend/
     embedding/openai_compatible.py  # any /embeddings API; Databricks endpoints, Ollama
   runtime/                     # ── what depends on the machine (macOS / Windows) ──
     device.py                  # metal / cuda / cpu detection
-  features/                    # ── built beside the core: knowledge (RAG), memory ──
+  features/                    # ── built beside the core: knowledge (RAG), memory, persona ──
     knowledge/
       knowledge_base.py        # KnowledgeBase: add / list / select / delete documents, search
       chunking.py              # document text → chunks (pure)
@@ -200,6 +201,11 @@ backend/
       extraction.py            # LLM answer (JSON) → validated memory items or operations on them (pure)
       store.py                 # tables memory_items, imports, conversations, turns (all the SQL of the memory)
       api.py                   # HTTP routes /memory/items, /memory/imports
+    persona/
+      persona.py               # PersonaService: the fields a user gives the avatar, the text given to the LLM and its cache, reading a description (one LLM call)
+      extraction.py            # LLM answer (JSON object) → validated persona fields (pure)
+      store.py                 # table persona_fields (all the SQL of the persona)
+      api.py                   # HTTP routes /persona, /persona/read
   data/                        # knowledge.db, app.db, objects/, capture/ (gitignored, per machine)
   utils/
     env.py                     # dataclass fields read from the environment
@@ -232,6 +238,10 @@ frontend/                      # ── CAPABILITY 3: Expression ──
     memory/
       memory-client.js         # calls the backend /memory API
       profile-page.js          # "Hồ sơ" page: what the avatar remembers, add / edit / delete
+      format.js                # pure helpers (unit-tested)
+    persona/
+      persona-client.js        # calls the backend /persona API
+      persona-panel.js         # "Tính cách của avatar" block of the profile page: read a description, edit the fields, save / delete
       format.js                # pure helpers (unit-tested)
     avatar/
       avatar-renderer.js       # VRM render, applies head / mouth values
@@ -295,7 +305,16 @@ Layering rules:
   an item meanwhile (its changes are written relative to the row, in one transaction),
   and the conversations of one user are read one at a time. The stored turns are
   deleted once read, and after `MEMORY_TRANSCRIPT_TTL_DAYS` whatever happened.
-- Users and memory live in the application database (`DATABASE_URL`).
+- The persona reaches the turn through the `Persona` contract only: for a logged-in
+  user the engine asks it for the personality that user gave the avatar, before the
+  LLM, and answers in the default character (`SYSTEM_PROMPT`) when there is none or the
+  read is slow or failing; a guest's turn reads nothing. It is a system message of its
+  own between `SYSTEM_PROMPT` and the profile, so what the person asked for themselves
+  (their own way of being addressed) comes last and wins. Its fields are declared once
+  (`PERSONA_FIELDS` in `backend/models.py`), stored per user and never read across
+  users; a description is read into them by `LLM.complete`, given between delimiters as
+  material and stored nowhere: only what the user saves is kept.
+- Users, memory and persona live in the application database (`DATABASE_URL`).
   `backend/utils/database.py` is the only module that knows engines; a feature declares
   its tables and keeps all its SQL in its `store.py`, written against SQLAlchemy Core
   with nothing specific to one engine. Every per-user table carries `user_id` and every
@@ -307,12 +326,14 @@ Layering rules:
   and an object is never served by its key — every read goes through the row and its
   `user_id`. The text of an import is derived from the bytes and stored nowhere. It is
   given to the LLM between delimiters, as material to read and never as instructions.
-- Work the LLM does outside a turn (reading an import or a closed conversation) goes
+- Work the LLM does outside a turn (reading an import, a closed conversation or a
+  description of the avatar) goes
   through `LLM.complete`,
   with its own limits (`LLM_COMPLETE_TIMEOUT_SEC`, `LLM_COMPLETE_MAX_TOKENS`); its
   failure never puts the primary of the turns into the fallback cooldown.
 - The HTTP routes `/memory` are a contract between `backend/features/memory/api.py` and
-  `frontend/src/memory/`.
+  `frontend/src/memory/`; the routes `/persona`, between
+  `backend/features/persona/api.py` and `frontend/src/persona/`.
 - Every step of a turn is a span of `backend/utils/telemetry.py` carrying its input and
   output; a new step gets one. Inside an async generator use `detached_span`, never
   `start_as_current_span`. Per-frame and per-chunk work (tracking, VAD) is measured with
@@ -402,7 +423,7 @@ says what.
   `### Removed`, in that order, leaving out the empty groups.
 - Start each entry with the module(s) it touches in brackets, using the module IDs of
   §0: `[vision]`, `[vad]`, `[stt]`, `[llm]`, `[tts]`, `[orchestrator]`, `[expression]`,
-  `[knowledge]`, `[memory]`. Use `[shared]` for what belongs to no single module (config,
+  `[knowledge]`, `[memory]`, `[persona]`. Use `[shared]` for what belongs to no single module (config,
   providers, observability, packaging) and `[all]` for a change across the whole turn.
 - One line per entry, written for a reader who has not seen the code: what the avatar
   now does, not which file changed. Mark a breaking change with `**Breaking:**`.

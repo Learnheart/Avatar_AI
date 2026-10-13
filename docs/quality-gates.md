@@ -166,7 +166,7 @@ turn audio and spans on disk.
 
 | Type | Gate criteria |
 |---|---|
-| Functional | Each turn is one trace rooted at `turn` (from speech start) with `listen`, `stt`, `knowledge` (when wired), `memory` (for a known person), `llm`, one `tts` per sentence and `playback`; a failed, timed-out or cancelled turn says so on its root; every log line of the turn carries its `trace_id`; capture writes a playable `utterance.wav` / `answer.wav` and a `trace.json` per turn |
+| Functional | Each turn is one trace rooted at `turn` (from speech start) with `listen`, `stt`, `knowledge` (when wired), `persona` and `memory` (for a known person), `llm`, one `tts` per sentence and `playback`; a failed, timed-out or cancelled turn says so on its root; every log line of the turn carries its `trace_id`; capture writes a playable `utterance.wav` / `answer.wav` and a `trace.json` per turn |
 | Performance | No measurable cost on a turn: with capture on, local stages (TTS first chunk, tracking time per frame) stay within their run-to-run variation; nothing is written or exported on the event loop |
 | Resilience | No OTLP endpoint, an unreachable one, a full capture queue or a disk error → the turn is unaffected; dropped capture items are counted; the capture directory stays under `CAPTURE_MAX_GB` once an hour has passed |
 
@@ -200,6 +200,26 @@ stores nothing.
 > real model (`tests/e2e`), not by an automated gate. Whether the answer actually follows the profile (the way of addressing) is
 > checked by a real turn (`tests/e2e`), not by an automated gate.
 
+### 1.11 Persona (the personality a known person gives the avatar → a system message of the turn; reading a description)
+
+**Contract:** a user id in → the text given to the LLM out, written from the fields
+that user set (`name`, `role`, `addressing`, `personality`, `answer_style`, `avoid`, in
+that order, each with its label), or nothing when none is set. A dictionary of fields
+in → the whole persona of that user, used from the next turn. A description written
+freely in → the fields it states out, stored nowhere. A guest has no persona.
+
+| Type | Gate criteria |
+|---|---|
+| Functional | `PUT /persona` stores the fields it is given as the whole persona of the user (a field left out or empty is gone), `GET` gives back the fields that are set, `DELETE` removes them; the turn of that user carries them as a system message of its own after `SYSTEM_PROMPT` and before the profile, and a turn without persona is the request it was before; each value reaches the prompt on one line whatever was typed (line breaks, control and invisible characters never do) and braces in it are plain text; one user never reads or changes another's persona; a guest gets `401` on every route and no row is written for them; the fields survive a restart |
+| Functional — reading | `POST /persona/read` gives the description to ONE `LLM.complete` call with `PERSONA_IMPORT_PROMPT` (never the persona of the turns), between delimiters it cannot close; the fields of the answer come back and nothing is stored (`GET` is unchanged); each reading is one `persona.read` trace with the description in, the fields out and its outcome |
+| Performance | The persona read in a turn is answered from RAM after the first read of a user, also when none is set, and never takes longer than `PERSONA_TIMEOUT_SEC`; a save or a delete applies to the next turn; a guest's turn makes no persona read at all |
+| Resilience | An unknown field, a value longer than `PERSONA_FIELD_MAX_CHARS`, a value that is not text or a body without `fields` → `422`, the stored persona unchanged; a failing store → `502` without the database's text; none set, a slow or a failing read in a turn → the turn completes in the default character |
+| Resilience — reading | An empty description → `422`; one over `PERSONA_IMPORT_MAX_CHARS` → `413`, without an LLM call; an LLM failure, or an answer that is not the JSON object asked for (prose, a code fence, an array) → `502` without the provider's text; in a valid object a key that is no field, a value that is not text, an empty one or one over the limit is dropped and the others kept; no field left → `422` |
+
+> Whether the model reads a description into the right fields, and whether the answer
+> actually follows the persona (the name, the way of addressing), is checked on the real
+> model (`tests/e2e/test_real_persona.py`), not by an automated gate.
+
 ---
 
 ## 2. Integration Gates
@@ -223,7 +243,7 @@ The expensive gate — a real turn, run sparingly, before a milestone.
 
 | Type | Gate criteria |
 |---|---|
-| Functional | One full turn works: person present → speaks a Vietnamese utterance → avatar answers in Vietnamese voice with lip-sync. Barge-in works. No tool involved; the knowledge base and the memory are optional beside the turn and gated on their own (§1.8, §1.10) |
+| Functional | One full turn works: person present → speaks a Vietnamese utterance → avatar answers in Vietnamese voice with lip-sync. Barge-in works. No tool involved; the knowledge base, the memory and the persona are optional beside the turn and gated on their own (§1.8, §1.10, §1.11) |
 | Performance | **First audio < ~3.5s** (the committed internal target); **end-to-end < 10s** (SLA); dead-air gap is covered by an immediate acknowledging cue |
 | Resilience | Runs a sustained session without crashing or leaking resources; a mid-turn cloud error (LLM/TTS) degrades gracefully; weak-network behavior is observed and noted (cloud calls are the real latency risk) |
 | Cross-device | The pipeline gate passes on **both** target machines — MacBook M5 (Metal) and Windows + RTX (CUDA) |
