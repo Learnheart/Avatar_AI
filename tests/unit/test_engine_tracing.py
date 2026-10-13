@@ -6,6 +6,7 @@ import pytest
 from backend.config import AppConfig
 from backend.core.contracts import KnowledgeError, LLMError, MemoryServiceError, PersonaError
 from backend.core.conversation.engine import ConversationEngine
+from backend.core.conversation.history import system_prompt
 from backend.models import ChatTurn, MemoryProfile, Passage
 from backend.utils.telemetry import tracer
 from tests.unit.test_engine import (
@@ -75,7 +76,7 @@ async def test_each_step_records_what_went_through_it(config, spans):
 
     assert "Kỳ hạn sáu tháng: 5%." in llm.attributes["llm.prompt"]
     assert llm.attributes["llm.prompt"].endswith(f"Câu hỏi: {QUESTION}")
-    assert llm.attributes["llm.system_prompt"] == config.SYSTEM_PROMPT
+    assert llm.attributes["llm.system_prompt"] == system_prompt(config)
     assert llm.attributes["llm.answer"] == "Năm phần trăm. Kỳ hạn sáu tháng."
     assert llm.attributes["llm.first_token_ms"] >= 0
 
@@ -228,6 +229,9 @@ async def test_the_persona_span_carries_the_text_and_the_llm_span_too(config, sp
     assert read.attributes["persona.outcome"] == "hit"
     assert read.status.is_ok
     assert steps["llm"][0].attributes["llm.persona"] == PERSONA
+    assert steps["llm"][0].attributes["llm.system_prompt"] == config.SYSTEM_PROMPT.format(
+        persona=PERSONA
+    )
 
 
 def _persona_fails(persona: FakePersona) -> None:

@@ -7,7 +7,7 @@ import pytest
 
 from backend.config import AppConfig
 from backend.core.contracts import STTError
-from backend.core.conversation.history import chat_messages
+from backend.core.conversation.history import chat_messages, system_prompt
 from backend.models import (
     AudioEvent,
     AvatarState,
@@ -1122,7 +1122,7 @@ async def test_two_utterances_cut_by_a_barge_in_reach_the_llm_as_one_user_messag
 
     history = orch._engine.histories[1]
     assert history == (ChatTurn("xin chào", (), True, None),)
-    messages = chat_messages(history, "về lãi suất", system_prompt=config.SYSTEM_PROMPT)
+    messages = chat_messages(history, "về lãi suất", system_prompt=system_prompt(config))
     assert messages[1:] == [("user", "xin chào\nvề lãi suất")]
 
 

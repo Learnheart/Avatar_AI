@@ -7,9 +7,9 @@ backends only read the turns they are handed.
 """
 from collections import deque
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
-from backend.models import ChatTurn
+from backend.models import PERSONA_FIELDS, ChatTurn
 
 SYSTEM, USER, ASSISTANT = "system", "user", "assistant"
 
@@ -104,21 +104,37 @@ class TurnRecord:
         )
 
 
+def persona_lines(config, fields: Mapping[str, str]) -> str:
+    """The persona as it is written into the system prompt: the fields of
+    PERSONA_DEFAULT, each replaced by the one of `fields` that is set, in the order of
+    PERSONA_FIELDS, one line per field with its label. `config` holds the texts."""
+    persona = {**config.PERSONA_DEFAULT, **{k: v for k, v in fields.items() if v}}
+    return "\n".join(
+        config.PERSONA_PROMPT_FIELD.format(
+            label=config.PERSONA_FIELD_LABELS[name], value=persona[name]
+        )
+        for name in PERSONA_FIELDS
+        if name in persona
+    )
+
+
+def system_prompt(config, persona: str = "") -> str:
+    """The system message of a turn: SYSTEM_PROMPT with the persona written into it.
+    `persona` is the one a person gave their avatar, as `persona_lines` wrote it; ""
+    is the default persona."""
+    return config.SYSTEM_PROMPT.format(persona=persona or persona_lines(config, {}))
+
+
 def chat_messages(
-    history: Sequence[ChatTurn],
-    user_text: str,
-    *,
-    system_prompt: str,
-    profile: str = "",
-    persona: str = "",
+    history: Sequence[ChatTurn], user_text: str, *, system_prompt: str, profile: str = ""
 ) -> list[tuple[str, str]]:
-    """The (role, text) messages of one LLM request: the system prompt, the persona
-    then the profile as further system messages when there are any, the history, the
-    current utterance.
+    """The (role, text) messages of one LLM request: the system prompt, the profile as
+    a second system message when there is one, the history, the current utterance.
     A turn without an answer gives a user message alone, and user messages that follow
     each other (the current utterance included) are joined, so the roles alternate."""
     messages = [(SYSTEM, system_prompt)]
-    messages.extend((SYSTEM, text) for text in (persona, profile) if text)
+    if profile:
+        messages.append((SYSTEM, profile))
     pending: list[str] = []  # utterances of the person not answered yet
     for turn in history:
         pending.append(turn.user_text)

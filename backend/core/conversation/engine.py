@@ -22,7 +22,7 @@ from backend.config import AppConfig
 from backend.core.contracts import (
     LLM, STT, TTS, Knowledge, LLMError, Memory, Persona, STTError, TTSError,
 )
-from backend.core.conversation.history import search_query
+from backend.core.conversation.history import search_query, system_prompt
 from backend.models import (
     PCM_SAMPLE_WIDTH,
     AudioEvent,
@@ -119,8 +119,8 @@ class ConversationEngine:
         persona: Optional[Persona] = None,
     ) -> None:
         """Without `knowledge`, the LLM answers the transcript alone; without `memory`,
-        it is told nothing about the person; without `persona`, it keeps the character
-        of the system prompt."""
+        it is told nothing about the person; without `persona`, it plays the default
+        persona."""
         self.config = config
         self._stt = stt
         self._llm = llm
@@ -252,9 +252,9 @@ class ConversationEngine:
         return passages
 
     async def _persona_prompt(self, user_id: Optional[str]) -> str:
-        """The personality the user gave the avatar, as the text given to the LLM. A
-        guest has none and nothing is read. None given, a slow or a failing read → "":
-        the avatar keeps the character of the system prompt, and the turn is not lost."""
+        """The personality the user gave the avatar, as it is written into the system
+        prompt. A guest has none and nothing is read. None given, a slow or a failing
+        read → "": the avatar plays the default persona, and the turn is not lost."""
         if self._persona is None or user_id is None:
             return ""
         with tracer.start_as_current_span("persona") as span:
@@ -380,7 +380,7 @@ class ConversationEngine:
         with detached_span(
             "llm",
             **{
-                "llm.system_prompt": self.config.SYSTEM_PROMPT,
+                "llm.system_prompt": system_prompt(self.config, persona),
                 "llm.persona": persona,
                 "llm.profile": profile,
                 "llm.history_turns": len(history),

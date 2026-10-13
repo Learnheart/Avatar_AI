@@ -2,8 +2,8 @@
 PersonaService — the personality a logged-in user gives the avatar.
 
 A persona is a dictionary of predefined fields (`PERSONA_FIELDS`), each one short line
-of text; any of them may be left out. The fields that are set are written into the text
-the LLM is given with each turn of that user; the text is cached per user and dropped
+of text; any of them may be left out. The fields that are set replace the default ones
+in the system prompt of each turn of that user; the text is cached per user and dropped
 when the user saves or removes their persona, so a turn reads from RAM and a change
 applies to the next turn.
 
@@ -20,6 +20,7 @@ from opentelemetry.trace import Span
 
 from backend.config import AppConfig
 from backend.core.contracts import LLM, LLMError, Persona, PersonaError
+from backend.core.conversation.history import persona_lines
 from backend.features.memory.memory import one_line
 from backend.features.memory.reading import as_document
 from backend.features.persona.extraction import InvalidPersonaAnswer, parse_fields
@@ -97,16 +98,11 @@ class PersonaService(Persona):
         return prompt
 
     def _render(self, fields: Mapping[str, str]) -> str:
-        """The fields that are set, in the order of PERSONA_FIELDS, each with its
-        label; "" when none is. A stored field that is no longer one is left out."""
-        listed = "\n".join(
-            self.config.PERSONA_PROMPT_FIELD.format(
-                label=self.config.PERSONA_FIELD_LABELS[name], value=fields[name]
-            )
-            for name in PERSONA_FIELDS
-            if name in fields
-        )
-        return self.config.PERSONA_PROMPT.format(fields=listed) if listed else ""
+        """The persona as the system prompt takes it: the fields the user set over the
+        default ones; "" when the user set none (the default persona). A stored field
+        that is no longer one is left out."""
+        known = {name: fields[name] for name in PERSONA_FIELDS if name in fields}
+        return persona_lines(self.config, known) if known else ""
 
     # ── The fields (the profile page) ─────────────────────────────────────
 

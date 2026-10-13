@@ -46,9 +46,9 @@ class LLM(ABC):
         """
         Stream the answer to one user utterance as text deltas (no reasoning text).
         `history` holds the earlier turns of the conversation, oldest first. `persona`
-        is the personality the person gave the avatar and `profile` what is known
-        about the person: each is a system message of its own after the fixed system
-        prompt, the persona first. No tools. Provider failures raise LLMError.
+        is the personality the person gave the avatar, written into the system prompt
+        ("" = the default persona); `profile` is what is known about the person, given
+        as a second system message. No tools. Provider failures raise LLMError.
         """
 
     @abstractmethod
@@ -168,6 +168,7 @@ class Persona(ABC):
     @abstractmethod
     async def prompt(self, user_id: str) -> str:
         """
-        The personality the user gave the avatar, as the text given to the LLM. None
-        given → "". Failures raise PersonaError.
+        The personality the user gave the avatar, as it is written into the system
+        prompt: their fields over the default ones. None given → "". Failures raise
+        PersonaError.
         """

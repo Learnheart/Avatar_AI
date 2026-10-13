@@ -12,7 +12,7 @@ from openai import AsyncOpenAI, OpenAIError
 
 from backend.config import AppConfig
 from backend.core.contracts import LLM, LLMError
-from backend.core.conversation.history import ASSISTANT, SYSTEM, USER, chat_messages
+from backend.core.conversation.history import ASSISTANT, SYSTEM, USER, chat_messages, system_prompt
 from backend.models import ChatTurn
 from backend.utils.errors import summarize_error
 
@@ -60,9 +60,8 @@ class OpenAIResponsesLLM(LLM):
         messages = chat_messages(
             history,
             user_text,
-            system_prompt=self.config.SYSTEM_PROMPT,
+            system_prompt=system_prompt(self.config, persona),
             profile=profile,
-            persona=persona,
         )
         try:
             stream = await self._client.responses.create(

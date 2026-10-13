@@ -3,9 +3,12 @@ from backend.core.conversation.history import (
     Conversation,
     TurnRecord,
     chat_messages,
+    persona_lines,
     search_query,
+    system_prompt,
 )
-from backend.models import ChatTurn
+from backend.config import AppConfig
+from backend.models import PERSONA_FIELDS, ChatTurn
 
 SYSTEM_PROMPT = "Bạn là trợ lý."
 
@@ -146,21 +149,55 @@ def test_the_profile_is_a_second_system_message():
     assert messages[:3] == [("system", SYSTEM_PROMPT), ("system", "Tên: Linh"), ("user", "một")]
 
 
-def test_the_persona_is_a_system_message_before_the_profile():
-    messages = _messages((), "hai", profile="Tên: Linh", persona="Tên trợ lý: Mai")
+# ── The persona in the system prompt ──────────────────────────────────────
 
-    assert messages == [
-        ("system", SYSTEM_PROMPT),
-        ("system", "Tên trợ lý: Mai"),
-        ("system", "Tên: Linh"),
-        ("user", "hai"),
+def test_the_default_persona_has_fields_of_the_persona_only():
+    config = AppConfig()
+
+    assert set(config.PERSONA_DEFAULT) <= set(PERSONA_FIELDS)
+    assert all(text.strip() for text in config.PERSONA_DEFAULT.values())
+
+
+def test_without_fields_the_persona_is_the_default_one_in_the_order_of_the_fields():
+    config = AppConfig()
+
+    assert persona_lines(config, {}).splitlines() == [
+        f"- Vai trò: {config.PERSONA_DEFAULT['role']}",
+        f"- Tính cách: {config.PERSONA_DEFAULT['personality']}",
+        f"- Cách trả lời: {config.PERSONA_DEFAULT['answer_style']}",
     ]
 
 
-def test_the_persona_alone_is_the_second_system_message():
-    messages = _messages((), "hai", persona="Tên trợ lý: Mai")
+def test_a_field_that_is_set_replaces_its_default_and_the_others_keep_theirs():
+    config = AppConfig()
 
-    assert messages == [("system", SYSTEM_PROMPT), ("system", "Tên trợ lý: Mai"), ("user", "hai")]
+    lines = persona_lines(config, {"personality": "Nhí nhảnh", "name": "Mai", "avoid": ""})
+
+    assert lines.splitlines() == [
+        "- Tên của trợ lý: Mai",
+        f"- Vai trò: {config.PERSONA_DEFAULT['role']}",
+        "- Tính cách: Nhí nhảnh",
+        f"- Cách trả lời: {config.PERSONA_DEFAULT['answer_style']}",
+    ]
+
+
+def test_the_system_prompt_holds_the_persona_it_is_given_or_the_default_one():
+    config = AppConfig()
+
+    assert system_prompt(config) == config.SYSTEM_PROMPT.format(persona=persona_lines(config, {}))
+    assert system_prompt(config, "- Tên của trợ lý: Mai") == config.SYSTEM_PROMPT.format(
+        persona="- Tên của trợ lý: Mai"
+    )
+    assert "Thân thiện" in system_prompt(config)
+    assert "{" not in system_prompt(config)
+
+
+def test_braces_in_a_persona_are_plain_text_in_the_system_prompt():
+    config = AppConfig()
+
+    assert "- Điều cần tránh: {persona} và {0}" in system_prompt(
+        config, persona_lines(config, {"avoid": "{persona} và {0}"})
+    )
 
 
 def test_a_turn_with_an_empty_answer_gives_a_user_message_alone_joined_with_the_next():

@@ -67,12 +67,13 @@ def persona(config, store, llm) -> PersonaService:
 
 
 def _lines(prompt: str) -> list[str]:
-    """The fields of the prompt, in their order: the block between the introduction
-    and the rules of PERSONA_PROMPT."""
-    if not prompt:
-        return []
-    _, fields, _ = prompt.split("\n\n", 2)
-    return fields.splitlines()
+    """The fields of the prompt, in their order."""
+    return prompt.splitlines()
+
+
+def _default(config: AppConfig, name: str) -> str:
+    """The line of a field the user left to its default."""
+    return f"- {config.PERSONA_FIELD_LABELS[name]}: {config.PERSONA_DEFAULT[name]}"
 
 
 # ── Texts ─────────────────────────────────────────────────────────────────
@@ -91,15 +92,19 @@ async def test_without_persona_the_prompt_is_empty(persona):
     assert await persona.prompt("linh") == ""
 
 
-async def test_the_prompt_lists_the_set_fields_in_their_order_with_their_labels(persona, config):
+async def test_the_prompt_lists_the_fields_in_their_order_the_set_ones_over_the_defaults(
+    persona, config
+):
     await persona.save("linh", {"answer_style": "Ngắn gọn", "name": "Mai", "role": "Gia sư"})
 
     prompt = await persona.prompt("linh")
 
     assert _lines(prompt) == [
-        "- Tên của trợ lý: Mai", "- Vai trò: Gia sư", "- Cách trả lời: Ngắn gọn",
+        "- Tên của trợ lý: Mai",
+        "- Vai trò: Gia sư",
+        _default(config, "personality"),
+        "- Cách trả lời: Ngắn gọn",
     ]
-    assert prompt == config.PERSONA_PROMPT.format(fields="\n".join(_lines(prompt)))
 
 
 async def test_the_prompt_is_read_once_then_answered_from_ram(persona, store):
@@ -126,7 +131,7 @@ async def test_a_save_and_a_clear_change_the_prompt_of_the_next_turn(persona):
     renamed = await persona.prompt("linh")
     await persona.clear("linh")
 
-    assert _lines(renamed) == ["- Tên của trợ lý: Lan"]
+    assert _lines(renamed)[0] == "- Tên của trợ lý: Lan"
     assert await persona.prompt("linh") == ""
 
 
@@ -140,13 +145,15 @@ async def test_one_user_s_persona_is_not_in_another_s_prompt(persona):
 async def test_braces_in_a_value_do_not_break_the_prompt(persona):
     await persona.save("linh", {"avoid": "Không dùng {fields} hay {0}"})
 
-    assert _lines(await persona.prompt("linh")) == ["- Điều cần tránh: Không dùng {fields} hay {0}"]
+    assert _lines(await persona.prompt("linh"))[-1] == "- Điều cần tránh: Không dùng {fields} hay {0}"
 
 
 async def test_a_stored_field_that_is_no_longer_one_is_left_out(persona, store):
     store.replace("linh", {"name": "Mai", "voice": "trầm"}, NOW)
 
-    assert _lines(await persona.prompt("linh")) == ["- Tên của trợ lý: Mai"]
+    prompt = await persona.prompt("linh")
+
+    assert _lines(prompt)[0] == "- Tên của trợ lý: Mai" and "trầm" not in prompt
     assert await persona.fields("linh") == {"name": "Mai"}
 
 
@@ -311,3 +318,9 @@ async def test_a_refused_reading_says_why_on_its_span(persona, llm, spans):
 
     (read,) = [span for span in spans.get_finished_spans() if span.name == "persona.read"]
     assert read.attributes["persona.outcome"] == "nothing"
+
+
+async def test_a_persona_of_unknown_fields_alone_is_the_default_one(persona, store):
+    store.replace("linh", {"voice": "trầm"}, NOW)
+
+    assert await persona.prompt("linh") == ""

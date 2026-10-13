@@ -646,7 +646,7 @@ async def test_an_empty_transcript_makes_no_memory_read(config):
 
 # ── Persona: the personality the user gave the avatar ─────────────────────
 
-PERSONA = "Tính cách của trợ lý:\n- Tên của trợ lý: Mai\n- Cách xưng hô: xưng em, gọi anh"
+PERSONA = "- Tên của trợ lý: Mai\n- Cách xưng hô: xưng em, gọi anh"
 
 
 class FakePersona(Persona):

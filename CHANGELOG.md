@@ -22,9 +22,10 @@ the rules are in `CLAUDE.md` / `AGENTS.md` §7.
   to paste a description and have it read into the fields, one input per field to type
   or correct, "Lưu" to store them and "Xoá tính cách" to go back to the default
   character.
-- `[persona]` `[llm]` The turn can carry a personality for the avatar: it is given to
-  the LLM as a system message of its own, after the fixed character and before what is
-  known about the person. Slow or failing, the turn is answered in the default character
+- `[persona]` `[llm]` The character of the avatar is a part of the system prompt that
+  can be filled in: the personality a person gave it replaces, field by field, the
+  default one (a friendly personal assistant answering in two or three sentences).
+  Slow or failing, the turn is answered in the default character
   (`PERSONA_TIMEOUT_SEC`, default 1.0).
 - `[orchestrator]` `[llm]` Short-term memory: inside one conversation the avatar sees
   the earlier turns, so a follow-up question is understood. A conversation opens at the
@@ -150,6 +151,9 @@ the rules are in `CLAUDE.md` / `AGENTS.md` §7.
 
 ### Changed
 
+- `[llm]` The system prompt is rewritten around the persona: the default character is
+  now its default role, personality and answer style, followed by rules that hold for
+  every persona (Vietnamese, words only, the person's own way of being addressed).
 - `[llm]` `[tts]` The avatar's answers carry no emoji: the language model is told to
   answer in words only, in the default character and under any personality, and an
   emoji it still writes is removed from the sentence before it is spoken, shown in the

@@ -13,6 +13,7 @@ from typing import Iterator
 
 import pytest
 
+from backend.core.conversation.history import system_prompt
 from backend.core.contracts import LLMError, MemoryServiceError
 from backend.features.accounts.store import UsersStore
 from backend.features.memory.imports import (
@@ -138,7 +139,7 @@ async def test_the_llm_is_given_the_import_prompt_and_the_text_of_the_file(impor
     ((system, user),) = llm.requests
     assert system == config.MEMORY_IMPORT_PROMPT.format(max_chars=config.MEMORY_ITEM_MAX_CHARS)
     assert "{" not in system.replace('[{"category"', "") and "200" in system
-    assert config.SYSTEM_PROMPT not in system
+    assert system_prompt(config) not in system
     assert user == config.MEMORY_IMPORT_DOCUMENT.format(text="\n\n".join(INTRODUCTION))
 
 

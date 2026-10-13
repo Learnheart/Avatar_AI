@@ -4,6 +4,7 @@ import pytest
 from openai import OpenAIError
 
 from backend.config import AppConfig
+from backend.core.conversation.history import system_prompt
 from backend.core.contracts import LLMError
 from backend.models import ChatTurn
 from backend.providers.catalog import create_llm
@@ -121,7 +122,7 @@ async def test_request_is_built_from_config(llm, config):
         "input": [
             {
                 "role": "system",
-                "content": [{"type": "input_text", "text": config.SYSTEM_PROMPT}],
+                "content": [{"type": "input_text", "text": system_prompt(config)}],
             },
             {"role": "user", "content": [{"type": "input_text", "text": "Xin chào"}]},
         ],
@@ -139,7 +140,7 @@ async def test_history_becomes_alternating_messages_before_the_utterance(llm, co
 
     # What the model said earlier is an `output_text` part; the rest stays `input_text`.
     assert llm._client.calls[0]["input"] == [
-        _part("system", config.SYSTEM_PROMPT),
+        _part("system", system_prompt(config)),
         _part("user", "Lãi suất?"),
         _part("assistant", "Năm phần trăm. Kỳ hạn sáu tháng.", "output_text"),
         _part("user", "còn\nmười hai tháng thì sao?"),
@@ -150,18 +151,17 @@ async def test_profile_is_a_second_system_message_after_the_system_prompt(llm, c
     [d async for d in llm.stream_answer("Xin chào", (), "Tên: Linh")]
 
     assert llm._client.calls[0]["input"] == [
-        _part("system", config.SYSTEM_PROMPT),
+        _part("system", system_prompt(config)),
         _part("system", "Tên: Linh"),
         _part("user", "Xin chào"),
     ]
 
 
-async def test_persona_is_a_system_message_between_the_system_prompt_and_the_profile(llm, config):
-    [d async for d in llm.stream_answer("Xin chào", (), "Tên: Linh", "Tên trợ lý: Mai")]
+async def test_persona_is_written_into_the_system_prompt_before_the_profile(llm, config):
+    [d async for d in llm.stream_answer("Xin chào", (), "Tên: Linh", "- Tên của trợ lý: Mai")]
 
     assert llm._client.calls[0]["input"] == [
-        _part("system", config.SYSTEM_PROMPT),
-        _part("system", "Tên trợ lý: Mai"),
+        _part("system", config.SYSTEM_PROMPT.format(persona="- Tên của trợ lý: Mai")),
         _part("system", "Tên: Linh"),
         _part("user", "Xin chào"),
     ]
@@ -239,7 +239,7 @@ async def test_complete_sends_the_given_system_text_and_returns_the_whole_answer
         _part("system", "Trích thông tin về người dùng."),
         _part("user", "Tôi tên là Linh."),
     ]
-    assert config.SYSTEM_PROMPT not in str(call["input"])
+    assert system_prompt(config) not in str(call["input"])
     assert call["stream"] is False
     assert call["model"] == "catalog.schema.model"
 

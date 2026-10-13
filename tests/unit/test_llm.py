@@ -5,6 +5,7 @@ from openai import OpenAIError
 
 from backend.providers.catalog import create_llm
 from backend.providers.llm import openai_compatible
+from backend.core.conversation.history import system_prompt
 from backend.core.contracts import LLMError
 from backend.models import ChatTurn
 from backend.providers.llm.openai_compatible import OpenAICompatibleLLM
@@ -100,7 +101,7 @@ async def test_request_is_built_from_config(llm, config):
     assert call["max_completion_tokens"] == config.LLM_MAX_TOKENS
     assert call["extra_body"] == {"reasoning_effort": "low", "include_reasoning": False}
     assert call["messages"] == [
-        {"role": "system", "content": config.SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt(config)},
         {"role": "user", "content": "Xin chào"},
     ]
 
@@ -111,7 +112,7 @@ async def test_history_becomes_alternating_messages_before_the_utterance(llm, co
     [d async for d in llm.stream_answer("mười hai tháng thì sao?", history)]
 
     assert llm._client.calls[0]["messages"] == [
-        {"role": "system", "content": config.SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt(config)},
         {"role": "user", "content": "Lãi suất?"},
         {"role": "assistant", "content": "Năm phần trăm. Kỳ hạn sáu tháng."},
         {"role": "user", "content": "còn\nmười hai tháng thì sao?"},
@@ -122,18 +123,17 @@ async def test_profile_is_a_second_system_message_after_the_system_prompt(llm, c
     [d async for d in llm.stream_answer("Xin chào", (), "Tên: Linh")]
 
     assert llm._client.calls[0]["messages"] == [
-        {"role": "system", "content": config.SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt(config)},
         {"role": "system", "content": "Tên: Linh"},
         {"role": "user", "content": "Xin chào"},
     ]
 
 
-async def test_persona_is_a_system_message_between_the_system_prompt_and_the_profile(llm, config):
-    [d async for d in llm.stream_answer("Xin chào", (), "Tên: Linh", "Tên trợ lý: Mai")]
+async def test_persona_is_written_into_the_system_prompt_before_the_profile(llm, config):
+    [d async for d in llm.stream_answer("Xin chào", (), "Tên: Linh", "- Tên của trợ lý: Mai")]
 
     assert llm._client.calls[0]["messages"] == [
-        {"role": "system", "content": config.SYSTEM_PROMPT},
-        {"role": "system", "content": "Tên trợ lý: Mai"},
+        {"role": "system", "content": config.SYSTEM_PROMPT.format(persona="- Tên của trợ lý: Mai")},
         {"role": "system", "content": "Tên: Linh"},
         {"role": "user", "content": "Xin chào"},
     ]
@@ -186,7 +186,7 @@ async def test_complete_sends_the_given_system_text_and_returns_the_whole_answer
         {"role": "system", "content": "Trích thông tin về người dùng."},
         {"role": "user", "content": "Tôi tên là Linh."},
     ]
-    assert config.SYSTEM_PROMPT not in str(call["messages"])
+    assert system_prompt(config) not in str(call["messages"])
     assert call["stream"] is False
     assert call["model"] == config.LLM_MODEL
 
