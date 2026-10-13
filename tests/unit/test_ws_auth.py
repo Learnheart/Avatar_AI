@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from backend.config import AppConfig
 from backend.main import create_app
 from backend.utils.database import DatabaseError
-from tests.unit.accounts_fakes import PASSWORD
+from tests.unit.accounts_fakes import create_account
 from tests.unit.fakes import END, START, audio_message, build_orchestrator, chunk
 
 
@@ -21,10 +21,8 @@ def client(config: AppConfig) -> Iterator[TestClient]:
         yield test_client
 
 
-def _register(client, username: str = "linh") -> dict:
-    response = client.post("/auth/register", json={"username": username, "password": PASSWORD})
-    assert response.status_code == 201
-    return response.json()
+def _register(client, email: str = "linh@example.com") -> dict:
+    return create_account(client, email)
 
 
 def _next(ws, *types: str) -> dict:

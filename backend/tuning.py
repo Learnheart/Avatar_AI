@@ -93,6 +93,14 @@ class Tuning:
     # ── Sign-in (who is a guest, who is a signed-in user) ───────────────
     # 0: accounts cannot be created at the kiosk.
     AUTH_ALLOW_REGISTRATION: int = env_int("AUTH_ALLOW_REGISTRATION", 1)
+    # An account is created once the code sent to its email address is given back:
+    # within this long, in at most this many tries; another code can be asked for
+    # after this long.
+    AUTH_OTP_TTL_MINUTES: float = env_float("AUTH_OTP_TTL_MINUTES", 10.0)
+    AUTH_OTP_MAX_ATTEMPTS: int = env_int("AUTH_OTP_MAX_ATTEMPTS", 5)
+    AUTH_OTP_RESEND_SEC: float = env_float("AUTH_OTP_RESEND_SEC", 60.0)
+    # Max wait for the SMTP server when a mail is sent.
+    SMTP_TIMEOUT_SEC: float = env_float("SMTP_TIMEOUT_SEC", 10.0)
     # Shortest password a local account accepts.
     AUTH_PASSWORD_MIN_CHARS: int = env_int("AUTH_PASSWORD_MIN_CHARS", 8)
     # A session is kept until it was not used (no request, no turn) for this long, or
@@ -103,8 +111,8 @@ class Tuning:
     # 1: the session also ends when the person leaves the kiosk or goes silent (their
     # conversation closed for `absence` or `idle`).
     AUTH_LOGOUT_ON_LEAVE: int = env_int("AUTH_LOGOUT_ON_LEAVE", 0)
-    # Failed sign-ins on one user name before it is held, and the window they are
-    # counted in (also how long the name is held).
+    # Failed sign-ins on one email before it is held, and the window they are counted
+    # in (also how long it is held).
     AUTH_LOGIN_MAX_ATTEMPTS: int = env_int("AUTH_LOGIN_MAX_ATTEMPTS", 5)
     AUTH_LOGIN_WINDOW_MINUTES: float = env_float("AUTH_LOGIN_WINDOW_MINUTES", 10.0)
     # How often the session of the connected page is looked at: once it has expired

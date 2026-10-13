@@ -1,8 +1,12 @@
 """
 HTTP routes of the sign-in, used by `frontend/src/auth/`.
 
-  POST   /auth/register   {"username", "password", "display_name"?} → 201 + a session
-  POST   /auth/login      {"username", "password"} → a session
+  POST   /auth/register   {"email", "password", "display_name"?} → 202
+                          {"email", "expires_in_sec", "resend_in_sec"}: a code was
+                          sent to the email, no account exists yet
+  POST   /auth/register/verify   {"email", "code"} → 201 + a session: the account is
+                          created; 401 a wrong code, 410 no code waits (ask again)
+  POST   /auth/login      {"email", "password"} → a session
   POST   /auth/logout     → 204, with or without a valid token
   GET    /auth/session    → {"user": {"id", "display_name"} | null, "expires_at"}
   GET    /auth/providers  → {"providers": [...], "registration": bool}
@@ -33,10 +37,14 @@ from pydantic import BaseModel, ConfigDict
 from backend.config import AppConfig
 from backend.features.accounts.accounts import (
     AccountService,
+    CodeExpired,
+    CodeJustSent,
+    CodeNotSent,
+    EmailTaken,
     InvalidAccount,
     RegistrationClosed,
     TooManyAttempts,
-    UsernameTaken,
+    WrongCode,
     WrongCredentials,
 )
 from backend.features.accounts.identity import bearer_token, current_user_id
@@ -62,16 +70,24 @@ class NewAccount(BaseModel):
     """Body of register. Any other field is refused."""
     model_config = ConfigDict(extra="forbid")
 
-    username: str
+    email: str
     password: str
     display_name: Optional[str] = None
+
+
+class EmailCode(BaseModel):
+    """Body of register/verify: the code that was sent to the email."""
+    model_config = ConfigDict(extra="forbid")
+
+    email: str
+    code: str
 
 
 class SignIn(BaseModel):
     """Body of login. Any other field is refused."""
     model_config = ConfigDict(extra="forbid")
 
-    username: str
+    email: str
     password: str
 
 
@@ -89,8 +105,16 @@ def _answering() -> Iterator[None]:
         yield
     except RegistrationClosed as e:
         raise HTTPException(403, str(e)) from e
-    except UsernameTaken as e:
+    except EmailTaken as e:
         raise HTTPException(409, str(e)) from e
+    except CodeJustSent as e:
+        raise HTTPException(429, str(e), headers={"Retry-After": str(e.seconds)}) from e
+    except WrongCode as e:
+        raise HTTPException(401, str(e)) from e
+    except CodeExpired as e:
+        raise HTTPException(410, str(e)) from e
+    except CodeNotSent as e:
+        raise HTTPException(502, "The code could not be sent") from e
     except LastWayToSignIn as e:
         raise HTTPException(409, str(e)) from e
     except InvalidAccount as e:
@@ -148,10 +172,18 @@ def create_auth_router(config: AppConfig) -> APIRouter:
 
     # ── Local accounts and the session ────────────────────────────────────
 
-    @router.post("/register", status_code=201)
+    @router.post("/register", status_code=202)
     async def register(request: Request, new: NewAccount) -> dict:
+        with _answering():
+            sent = await asyncio.to_thread(
+                accounts(request).start_registration, new.email, new.password, new.display_name
+            )
+        return sent.to_dict()
+
+    @router.post("/register/verify", status_code=201)
+    async def verify(request: Request, given: EmailCode) -> dict:
         def create() -> dict:
-            created = accounts(request).register(new.username, new.password, new.display_name)
+            created = accounts(request).verify_registration(given.email, given.code)
             return open_session(request, created.id)
 
         with _answering():
@@ -160,7 +192,7 @@ def create_auth_router(config: AppConfig) -> APIRouter:
     @router.post("/login")
     async def login(request: Request, credentials: SignIn) -> dict:
         def check() -> dict:
-            user_id = accounts(request).login(credentials.username, credentials.password)
+            user_id = accounts(request).login(credentials.email, credentials.password)
             return open_session(request, user_id)
 
         with _answering():

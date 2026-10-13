@@ -131,6 +131,11 @@ def test_invalid_values_fail_validation(overrides):
         {"AUTH_LOGIN_WINDOW_MINUTES": 0},
         {"AUTH_SESSION_CHECK_SEC": 0},
         {"AUTH_PROVIDER_TIMEOUT_SEC": 0},
+        {"AUTH_OTP_TTL_MINUTES": 0},
+        {"AUTH_OTP_MAX_ATTEMPTS": 0},
+        {"AUTH_OTP_RESEND_SEC": 0},
+        {"SMTP_TIMEOUT_SEC": 0},
+        {"MAIL_BACKEND": "pigeon"},
         {"PERSONA_TIMEOUT_SEC": float("nan")},
         {"PERSONA_TIMEOUT_SEC": float("inf")},
         {"PERSONA_FIELD_MAX_CHARS": 0},
@@ -176,6 +181,31 @@ def test_invalid_conversation_settings_fail_validation(overrides):
 def test_a_sign_in_provider_needs_its_secret_and_the_two_addresses(overrides, missing):
     with pytest.raises(ValueError, match=missing):
         AppConfig(GROQ_API_KEY="test-key", **overrides).validate()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "named"),
+    [
+        ({"MAIL_BACKEND": "smtp"}, "SMTP_HOST"),
+        ({"MAIL_BACKEND": "smtp", "SMTP_HOST": "smtp.example.com"}, "SMTP_FROM"),
+        ({"MAIL_BACKEND": "smtp", "SMTP_HOST": "smtp.example.com",
+          "SMTP_FROM": "avatar@example.com", "SMTP_SECURITY": "tls13"}, "SMTP_SECURITY"),
+    ],
+)
+def test_sending_by_smtp_needs_a_server_and_a_sender(overrides, named):
+    with pytest.raises(ValueError, match=named):
+        AppConfig(GROQ_API_KEY="test-key", **overrides).validate()
+
+
+def test_a_configured_smtp_server_is_accepted_and_its_password_is_not_shown():
+    config = AppConfig(
+        GROQ_API_KEY="test-key", MAIL_BACKEND="smtp", SMTP_HOST="smtp.example.com",
+        SMTP_FROM="avatar@example.com", SMTP_USERNAME="avatar", SMTP_PASSWORD="hunter22",
+    )
+
+    config.validate()
+    assert "hunter22" not in repr(config)
+    assert AppConfig(GROQ_API_KEY="test-key").MAIL_BACKEND == "log"
 
 
 def test_a_configured_sign_in_provider_is_accepted_and_its_secret_is_not_shown():

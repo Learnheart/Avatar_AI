@@ -1,9 +1,12 @@
 """
-Sign-in against the real backend: a person creates an account, presents its session on
-the WebSocket and is answered as that user (their avatar's persona), then signs out on
-the same connection and is answered as a guest. The backend runs on a database of its
-own, with no configured user: the session token decides.
+Sign-in against the real backend: a person creates an account with the code sent to
+their email, presents its session on the WebSocket and is answered as that user (their
+avatar's persona), then signs out on the same connection and is answered as a guest.
+The backend runs on a database of its own, with no configured user (the session token
+decides) and with the mails written to its log, where the test reads the code.
 """
+import json
+import re
 from typing import AsyncIterator, Iterator
 
 import httpx
@@ -11,6 +14,7 @@ import pytest
 
 from tests.e2e.helpers import E2E_MARKS
 from tests.e2e.test_real_turn import (
+    BACKEND_LOGS,
     END_TO_END_BUDGET_SEC,
     FIRST_AUDIO_BUDGET_SEC,
     Session,
@@ -22,7 +26,7 @@ from tests.e2e.test_real_turn import (
 pytestmark = E2E_MARKS
 
 NAME = "Bông"
-ACCOUNT = {"username": "e2e-linh", "password": "mật khẩu của bài test"}
+ACCOUNT = {"email": "e2e-linh@example.com", "password": "mật khẩu của bài test"}
 
 
 @pytest.fixture(scope="module")
@@ -30,6 +34,7 @@ def ws_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     data_dir = tmp_path_factory.mktemp("sign-in-data")
     yield from run_backend(tmp_path_factory, {
         "AUTH_DEV_USER_ID": "",
+        "MAIL_BACKEND": "log",
         "DATABASE_URL": f"sqlite:///{data_dir / 'app.db'}",
         "OBJECT_STORE_DIR": str(data_dir / "objects"),
     })
@@ -49,6 +54,15 @@ async def _present(session: Session, token) -> dict:
     return told
 
 
+def _mailed_code(ws_url: str, email: str) -> str:
+    """The code of the last mail the backend wrote to its log for this address."""
+    mails = []
+    for line in BACKEND_LOGS[ws_url].read_text().splitlines():
+        if "MAIL_BACKEND=log" in line and email in line:
+            mails.append(json.loads(line)["body"])
+    return re.search(r"\b(\d{6})\b", mails[-1]).group(1)
+
+
 def _named(text: str) -> bool:
     return NAME.lower() in text.lower()
 
@@ -58,7 +72,12 @@ async def test_a_signed_in_person_is_answered_as_themselves_and_a_guest_is_not(
 ):
     api = ws_url.replace("ws://", "http://").removesuffix("/ws")
     async with httpx.AsyncClient(timeout=60) as http:
-        registered = await http.post(f"{api}/auth/register", json=ACCOUNT)
+        asked = await http.post(f"{api}/auth/register", json=ACCOUNT)
+        assert asked.status_code == 202, asked.text
+        assert (await http.post(f"{api}/auth/login", json=ACCOUNT)).status_code == 401  # not yet
+        registered = await http.post(f"{api}/auth/register/verify", json={
+            "email": ACCOUNT["email"], "code": _mailed_code(ws_url, ACCOUNT["email"]),
+        })
         assert registered.status_code == 201, registered.text
         signed_in = registered.json()
         headers = {"Authorization": f"Bearer {signed_in['token']}"}

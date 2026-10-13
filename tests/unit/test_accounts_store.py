@@ -40,13 +40,13 @@ def test_an_account_creates_its_user_and_its_credentials(store, users):
     assert store.add_account(_user(), "linh", "hash-1") is True
 
     found = store.get_credentials("linh")
-    assert (found.username, found.user_id, found.password_hash) == ("linh", "u1", "hash-1")
+    assert (found.email, found.user_id, found.password_hash) == ("linh", "u1", "hash-1")
     assert (found.failed_attempts, found.first_failure_at) == (0, None)
     assert users.get("u1").display_name == "Linh"
     assert store.has_credentials("u1") and not store.has_credentials("u2")
 
 
-def test_a_taken_user_name_creates_nothing(store, users):
+def test_a_taken_email_creates_nothing(store, users):
     store.add_account(_user(), "linh", "hash-1")
 
     assert store.add_account(_user("u2", "Another"), "linh", "hash-2") is False
@@ -55,11 +55,11 @@ def test_a_taken_user_name_creates_nothing(store, users):
     assert users.get("u2") is None and users.count() == 1
 
 
-def test_an_unknown_user_name_has_no_credentials(store):
+def test_an_unknown_email_has_no_credentials(store):
     assert store.get_credentials("nobody") is None
 
 
-def test_the_failures_of_a_user_name_are_counted_and_reset(store):
+def test_the_failures_of_an_email_are_counted_and_reset(store):
     store.add_account(_user(), "linh", "hash-1")
 
     store.set_failures("linh", 3, START)

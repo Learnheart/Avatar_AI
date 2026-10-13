@@ -32,7 +32,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from backend.config import AppConfig
+from backend.config import MAIL_LOG, AppConfig
 from backend.core.contracts import LLM, Knowledge, Memory, Persona
 from backend.core.conversation.engine import ConversationEngine
 from backend.core.orchestrator.ws_manager import session_message
@@ -62,6 +62,7 @@ from backend.utils import telemetry
 from backend.utils.capture import CaptureSpans, CaptureStore
 from backend.utils.database import Database, DatabaseError
 from backend.utils.logging import configure_logging, get_logger
+from backend.utils.mailer import create_mailer
 from backend.utils.object_store import ObjectStore
 
 logger = get_logger("main")
@@ -167,7 +168,12 @@ def create_app(
         app.state.users = UsersStore(database)
         accounts = AccountsStore(database)
         app.state.sessions = SessionService(config, accounts)
-        app.state.accounts = AccountService(config, accounts)
+        app.state.accounts = AccountService(config, accounts, create_mailer(config))
+        if config.MAIL_BACKEND == MAIL_LOG:
+            logger.warning({
+                "msg": "MAIL_BACKEND=log: the codes that prove an email address are "
+                       "written to this log, not sent. Set MAIL_BACKEND=smtp to send them",
+            })
         app.state.sign_in = ExternalSignIn(config, accounts)
         # The token of the connected page: the kiosk serves one connection.
         app.state.ws_token = None

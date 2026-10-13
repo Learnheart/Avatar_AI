@@ -34,6 +34,10 @@ FIRST_AUDIO_BUDGET_SEC = 3.5
 END_TO_END_BUDGET_SEC = 10.0
 
 
+# The log file of each backend started by `run_backend`, by the URL of its WebSocket.
+BACKEND_LOGS: dict[str, Path] = {}
+
+
 def run_backend(
     tmp_path_factory: pytest.TempPathFactory, settings: Optional[dict[str, str]] = None
 ) -> Iterator[str]:
@@ -72,7 +76,9 @@ def run_backend(
             if time.monotonic() > deadline:
                 pytest.fail(f"backend not ready in time:\n{log_path.read_text()[-4000:]}")
             time.sleep(1)
-        yield f"ws://127.0.0.1:{port}/ws"
+        url = f"ws://127.0.0.1:{port}/ws"
+        BACKEND_LOGS[url] = log_path
+        yield url
     finally:
         process.terminate()
         try:

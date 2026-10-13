@@ -28,6 +28,10 @@ LOCAL_HASH = "local_hash"
 # Embedding backend of a local Ollama server.
 OLLAMA = "ollama"
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+# How a mail is sent: to the backend log (nothing leaves the machine), or by SMTP.
+MAIL_LOG, MAIL_SMTP = "log", "smtp"
+# How the connection to the SMTP server is protected.
+SMTP_STARTTLS, SMTP_SSL, SMTP_PLAIN = "starttls", "ssl", "none"
 
 
 @dataclass
@@ -130,6 +134,18 @@ class AppConfig(Tuning, Prompts):
     # Development and tests: the id of the user every connection and request belongs
     # to, without sign-in. Empty = the session token decides (no token = a guest).
     AUTH_DEV_USER_ID: str = env_str("AUTH_DEV_USER_ID", "")
+    # How the code that proves an email address is sent: `log` writes the mail to the
+    # backend log (a machine without a mail server; it proves nothing about who owns
+    # the address), `smtp` sends it.
+    MAIL_BACKEND: str = env_str("MAIL_BACKEND", MAIL_LOG, normalize=str.lower)
+    SMTP_HOST: str = env_str("SMTP_HOST", "")
+    SMTP_PORT: int = env_int("SMTP_PORT", 587)
+    SMTP_USERNAME: str = env_str("SMTP_USERNAME", "")
+    SMTP_PASSWORD: str = env_str("SMTP_PASSWORD", repr=False)
+    # The address the mails come from.
+    SMTP_FROM: str = env_str("SMTP_FROM", "")
+    # starttls (port 587), ssl (port 465) or none.
+    SMTP_SECURITY: str = env_str("SMTP_SECURITY", SMTP_STARTTLS, normalize=str.lower)
     # External providers. One whose client id is empty is not offered. The application
     # is registered at the provider, with `<AUTH_PUBLIC_URL>/auth/<provider>/callback`
     # as its redirect URI.
@@ -230,7 +246,14 @@ class AppConfig(Tuning, Prompts):
             raise ValueError("MEMORY_PROMPT_MAX_ITEMS must be at least 1.")
         if self.MEMORY_ITEM_MAX_CHARS < 1:
             raise ValueError("MEMORY_ITEM_MAX_CHARS must be at least 1.")
-        for key in ("AUTH_PASSWORD_MIN_CHARS", "AUTH_LOGIN_MAX_ATTEMPTS"):
+        if self.MAIL_BACKEND not in (MAIL_LOG, MAIL_SMTP):
+            raise ValueError(f"Invalid MAIL_BACKEND: {self.MAIL_BACKEND}")
+        if self.MAIL_BACKEND == MAIL_SMTP:
+            if not (self.SMTP_HOST and self.SMTP_FROM):
+                raise ValueError("SMTP_HOST and SMTP_FROM are required when MAIL_BACKEND=smtp.")
+            if self.SMTP_SECURITY not in (SMTP_STARTTLS, SMTP_SSL, SMTP_PLAIN):
+                raise ValueError(f"Invalid SMTP_SECURITY: {self.SMTP_SECURITY}")
+        for key in ("AUTH_PASSWORD_MIN_CHARS", "AUTH_LOGIN_MAX_ATTEMPTS", "AUTH_OTP_MAX_ATTEMPTS"):
             if getattr(self, key) < 1:
                 raise ValueError(f"{key} must be at least 1.")
         for key in (
@@ -239,6 +262,9 @@ class AppConfig(Tuning, Prompts):
             "AUTH_LOGIN_WINDOW_MINUTES",
             "AUTH_SESSION_CHECK_SEC",
             "AUTH_PROVIDER_TIMEOUT_SEC",
+            "AUTH_OTP_TTL_MINUTES",
+            "AUTH_OTP_RESEND_SEC",
+            "SMTP_TIMEOUT_SEC",
         ):
             value = getattr(self, key)
             if not (math.isfinite(value) and value > 0):

@@ -110,9 +110,10 @@ class User:
 
 @dataclass
 class Credentials:
-    """The local account of a user: a user name and a hashed password, with the failed
-    sign-ins counted since `first_failure_at`."""
-    username: str  # lower case
+    """The local account of a user: the email they sign in with, proved by a code when
+    the account was created, and a hashed password, with the failed sign-ins counted
+    since `first_failure_at`."""
+    email: str  # lower case
     user_id: str
     password_hash: str
     failed_attempts: int = 0

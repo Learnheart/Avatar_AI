@@ -6,8 +6,10 @@ provider sends it back with a code, the code is exchanged for an access token, a
 provider is asked once who the person is. Nothing of the provider is kept after that: no
 access token, no refresh token. An identity is the pair (provider, the person's id
 there), never an email; it is attached to a user created with it, or, when a signed-in
-user asked for it, to their account. Two accounts are never merged because their emails
-match.
+user asked for it, to their account. One email has one account: an identity whose email
+the provider says it has verified, and which is the email of a local account (proved
+there by a code), signs that account in and is attached to it. Nothing else is merged
+by email.
 
 What is in flight (a flow that was started, a link that was asked for, a sign-in the
 page has not collected yet) lives in RAM for a minute or a few: this is one process. A
@@ -27,6 +29,7 @@ from urllib.parse import urlencode
 import httpx
 
 from backend.config import AppConfig
+from backend.features.accounts.accounts import normal_email
 from backend.features.accounts.store import AccountsStore
 from backend.features.memory.memory import one_line
 from backend.models import Identity, User
@@ -208,7 +211,7 @@ class ExternalSignIn:
         if error or not code:
             raise SignInFailed(DENIED, error or "no code")
 
-        subject, name, email = await self._who(found, code, flow.verifier)
+        subject, name, email, verified = await self._who(found, code, flow.verifier)
         now = self._clock()
         if flow.link_user_id is not None:
             identity = Identity(provider, subject, flow.link_user_id, email, now)
@@ -221,6 +224,13 @@ class ExternalSignIn:
             return Outcome(linked=provider)
 
         user_id = await asyncio.to_thread(self._store.identity_user, provider, subject)
+        if user_id is None and email and verified:
+            # The same address, proved on both sides: the same person.
+            local = await asyncio.to_thread(self._store.get_credentials, normal_email(email))
+            if local is not None:
+                identity = Identity(provider, subject, local.user_id, email, now)
+                user_id = await asyncio.to_thread(self._store.add_identity, identity)
+                logger.info({"msg": "Identity joined the account of its email", "provider": provider})
         if user_id is None:
             shown = (one_line(name or "") or provider.capitalize())[:_DISPLAY_NAME_MAX_CHARS]
             user = User(id=uuid.uuid4().hex, display_name=shown, created_at=now, last_seen_at=now)
@@ -240,9 +250,12 @@ class ExternalSignIn:
             return None
         return left[0]
 
-    async def _who(self, provider: Provider, code: str, verifier: str) -> tuple[str, str, Optional[str]]:
+    async def _who(
+        self, provider: Provider, code: str, verifier: str
+    ) -> tuple[str, str, Optional[str], bool]:
         """Ask the provider who the code stands for: (their id there, their name, their
-        email when given). The access token is used once and kept nowhere."""
+        email when given, whether the provider says it verified that email). The access
+        token is used once and kept nowhere."""
         timeout = self.config.AUTH_PROVIDER_TIMEOUT_SEC
         try:
             async with httpx.AsyncClient(timeout=timeout, transport=self._transport) as http:
@@ -276,6 +289,7 @@ class ExternalSignIn:
             str(subject),
             name if isinstance(name, str) else "",
             one_line(email) if isinstance(email, str) and email.strip() else None,
+            info.get("email_verified") is True,
         )
 
     # ── The identities of a signed-in user ────────────────────────────────

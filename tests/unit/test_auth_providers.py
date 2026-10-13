@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from backend.config import AppConfig
 from backend.main import create_app
-from tests.unit.accounts_fakes import PASSWORD
+from tests.unit.accounts_fakes import PASSWORD, create_account
 from tests.unit.fakes import build_orchestrator
 
 PAGE = "http://kiosk.test:3000"
@@ -274,10 +274,8 @@ def test_an_answer_without_an_identity_is_refused(client, provider):
 
 # ── Linking ───────────────────────────────────────────────────────────────
 
-def _local_account(client, username: str = "linh") -> dict:
-    response = client.post("/auth/register", json={"username": username, "password": PASSWORD})
-    assert response.status_code == 201
-    return response.json()
+def _local_account(client, email: str = "local@example.com") -> dict:
+    return create_account(client, email)
 
 
 def _link(client, session: dict, code: str, name: str = "google") -> str:
@@ -365,3 +363,49 @@ def test_the_only_way_to_sign_in_cannot_be_unlinked(client):
     _link(client, session, "code-fb", "facebook")
     assert client.delete("/auth/identities/google", headers=_bearer(session)).status_code == 204
     assert client.delete("/auth/identities/facebook", headers=_bearer(session)).status_code == 409
+
+
+# ── One email, one account ────────────────────────────────────────────────
+
+def test_a_verified_email_of_a_local_account_signs_that_account_in(client, provider):
+    provider.people["code-linh"]["email_verified"] = True
+    local = _local_account(client, "Linh@Example.com")
+
+    by_google = _sign_in(client)
+
+    assert by_google["user"] == local["user"]
+    assert client.app.state.users.count() == 1
+    linked = client.get("/auth/identities", headers=_bearer(local)).json()["identities"]
+    assert [found["provider"] for found in linked] == ["google"]
+    assert _sign_in(client)["user"] == local["user"]  # by its identity from now on
+
+
+@pytest.mark.parametrize("verified", [False, None, "true", 1])
+def test_an_email_the_provider_did_not_verify_joins_no_account(client, provider, verified):
+    if verified is not None:
+        provider.people["code-linh"]["email_verified"] = verified
+    local = _local_account(client, "linh@example.com")
+
+    by_google = _sign_in(client)
+
+    assert by_google["user"]["id"] != local["user"]["id"]
+    assert client.get("/auth/identities", headers=_bearer(local)).json()["identities"] == []
+
+
+def test_a_verified_email_without_a_local_account_creates_a_user(client, provider):
+    provider.people["code-linh"]["email_verified"] = True
+    _local_account(client, "someone-else@example.com")
+
+    by_google = _sign_in(client)
+
+    assert by_google["user"]["display_name"] == "Khánh Linh"
+    assert client.app.state.users.count() == 2
+
+
+def test_a_facebook_email_joins_no_account(client, provider):
+    provider.people["code-fb"]["email"] = "linh@example.com"
+    local = _local_account(client, "linh@example.com")
+
+    by_facebook = _sign_in(client, "code-fb", "facebook")
+
+    assert by_facebook["user"]["id"] != local["user"]["id"]

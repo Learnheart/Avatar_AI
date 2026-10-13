@@ -255,6 +255,16 @@ class Prompts:
     # PERSONA_IMPORT_PROMPT names. The tags are removed from the text itself first.
     PERSONA_IMPORT_DOCUMENT: str = "<mo_ta>\n{text}\n</mo_ta>"
 
+    # The mail that carries the code proving an email address when an account is
+    # created. `{code}` is the code, `{minutes}` how long it is valid.
+    AUTH_CODE_MAIL_SUBJECT: str = "Mã xác nhận tài khoản Magic Mirror"
+    AUTH_CODE_MAIL_BODY: str = (
+        "Xin chào,\n\n"
+        "Mã xác nhận để tạo tài khoản Magic Mirror của bạn là: {code}\n\n"
+        "Mã có hiệu lực trong {minutes} phút. Nếu bạn không yêu cầu tạo tài khoản, hãy bỏ "
+        "qua thư này: không có tài khoản nào được tạo khi chưa nhập mã.\n"
+    )
+
     # Spoken when the LLM fails or answers nothing, instead of staying silent.
     LLM_FALLBACK_TEXT: str = (
         "Xin lỗi, tôi chưa thể trả lời ngay lúc này. Bạn vui lòng thử lại sau nhé."

@@ -33,11 +33,11 @@ users = Table(
     Column("last_seen_at", UTCDateTime, nullable=False),
 )
 
-# A local account: the user name is not the user id, and lives here only.
+# A local account: one per email address, which is not the user id and lives here only.
 credentials = Table(
     "credentials",
     metadata,
-    Column("username", String, primary_key=True),
+    Column("email", String, primary_key=True),
     Column("user_id", String, ForeignKey(users.c.id), nullable=False, unique=True),
     # scrypt, with its salt and its parameters (features/accounts/passwords.py).
     Column("password_hash", String, nullable=False),
@@ -106,24 +106,24 @@ class AccountsStore:
 
     def __init__(self, database: Database) -> None:
         self._database = database
-        # Two creations of the same user name or identity at once would both insert it.
+        # Two creations of the same email or identity at once would both insert it.
         self._lock = threading.Lock()
 
     # ── Local accounts ────────────────────────────────────────────────────
 
-    def add_account(self, user: User, username: str, password_hash: str) -> bool:
+    def add_account(self, user: User, email: str, password_hash: str) -> bool:
         """Create the user and their local account. False, and nothing written, when
-        the user name is taken."""
+        the email has an account."""
         with self._lock, self._database.begin() as connection:
             taken = connection.execute(
-                select(credentials.c.username).where(credentials.c.username == username)
+                select(credentials.c.email).where(credentials.c.email == email)
             ).first()
             if taken is not None:
                 return False
             connection.execute(insert(users).values(**vars(user)))
             connection.execute(
                 insert(credentials).values(
-                    username=username,
+                    email=email,
                     user_id=user.id,
                     password_hash=password_hash,
                     failed_attempts=0,
@@ -132,14 +132,14 @@ class AccountsStore:
             )
         return True
 
-    def get_credentials(self, username: str) -> Optional[Credentials]:
+    def get_credentials(self, email: str) -> Optional[Credentials]:
         query = select(
-            credentials.c.username,
+            credentials.c.email,
             credentials.c.user_id,
             credentials.c.password_hash,
             credentials.c.failed_attempts,
             credentials.c.first_failure_at,
-        ).where(credentials.c.username == username)
+        ).where(credentials.c.email == email)
         with self._database.begin() as connection:
             row = connection.execute(query).first()
         return Credentials(**row._mapping) if row else None
@@ -147,18 +147,18 @@ class AccountsStore:
     def has_credentials(self, user_id: str) -> bool:
         with self._database.begin() as connection:
             return connection.execute(
-                select(credentials.c.username).where(credentials.c.user_id == user_id)
+                select(credentials.c.email).where(credentials.c.user_id == user_id)
             ).first() is not None
 
     def set_failures(
-        self, username: str, failed_attempts: int, first_failure_at: Optional[datetime]
+        self, email: str, failed_attempts: int, first_failure_at: Optional[datetime]
     ) -> None:
-        """The failed sign-ins counted on a user name, and since when; 0 and None once
+        """The failed sign-ins counted on an email, and since when; 0 and None once
         a sign-in went through or the window has passed."""
         with self._database.begin() as connection:
             connection.execute(
                 update(credentials)
-                .where(credentials.c.username == username)
+                .where(credentials.c.email == email)
                 .values(failed_attempts=failed_attempts, first_failure_at=first_failure_at)
             )
 
