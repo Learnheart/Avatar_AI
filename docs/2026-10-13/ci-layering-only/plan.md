@@ -57,10 +57,13 @@ On the branch `ci/backend-quality-gate`:
 
 ## To-do
 
-- [ ] `ruff.toml` reduced to the default rules
-- [ ] File-size test removed from `tests/unit/test_code_shape.py`
-- [ ] `# noqa: C901` comments removed
-- [ ] Workflow, `requirements-dev.txt`, `CLAUDE.md` / `AGENTS.md` wording
-- [ ] `ruff check` and the unit tests pass on the branch
-- [ ] Trial merge of `feature/conversation-memory`: result recorded here
+- [x] `ruff.toml` reduced to the default rules
+- [x] File-size test removed from `tests/unit/test_code_shape.py`
+- [x] `# noqa: C901` comments removed
+- [x] Workflow, `requirements-dev.txt`, `CLAUDE.md` / `AGENTS.md` wording
+- [x] `ruff check` and the unit tests pass on the branch
+- [x] Trial merge of `feature/conversation-memory` (2026-10-13, at `ccc02cf`): no
+      conflict; 1364 unit tests pass, the layering tests included; `ruff check` reports
+      one finding of the default rules, an unused import in
+      `tests/unit/test_auth_providers.py`, fixed on that branch
 - [ ] Human verification
