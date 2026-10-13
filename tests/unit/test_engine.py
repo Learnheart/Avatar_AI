@@ -4,7 +4,9 @@ from typing import AsyncIterator
 import pytest
 
 from backend.config import AppConfig
-from backend.core.conversation.engine import ConversationEngine, split_sentences
+from backend.core.conversation.engine import (
+    ConversationEngine, split_sentences, without_emoji,
+)
 from backend.core.contracts import (
     LLM, STT, TTS, Knowledge, KnowledgeError, LLMError, Memory, MemoryServiceError, Persona,
     PersonaError, STTError, TTSError,
@@ -749,3 +751,78 @@ async def test_an_empty_transcript_makes_no_persona_read(config):
     await _collect(engine, user_id="user-7")
 
     assert persona.user_ids == []
+
+
+# ── Emoji: written by the model, never spoken ─────────────────────────────
+
+@pytest.mark.parametrize(
+    ("written", "spoken"),
+    [
+        ("Trời đẹp quá nhỉ 😊", "Trời đẹp quá nhỉ"),
+        ("Trời đẹp quá nhỉ 😊 Anh có kế hoạch gì chưa?", "Trời đẹp quá nhỉ Anh có kế hoạch gì chưa?"),
+        ("Em nhớ rõ nè chị! 💕", "Em nhớ rõ nè chị!"),
+        ("Nghe đáng yêu ghê ha 😊?", "Nghe đáng yêu ghê ha?"),
+        ("Tuyệt😊vời", "Tuyệt vời"),
+        ("🎉 Chúc mừng anh, xong rồi ✅.", "Chúc mừng anh, xong rồi."),
+        ("Chào anh 👋🏽, em là Bông 👩‍💻 ở 🇻🇳 đây.", "Chào anh, em là Bông ở đây."),
+        ("Bấm phím 1️⃣ rồi chờ ⏰ ❤️ ⭐ nhé.", "Bấm phím 1 rồi chờ nhé."),
+        ("😊💕🎉", ""),
+    ],
+)
+def test_without_emoji_removes_them_and_leaves_the_sentence_clean(written, spoken):
+    assert without_emoji(written) == spoken
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Lãi suất kỳ hạn sáu tháng là 5,5% một năm.",
+        "Dạ, em chào chị Linh ạ! Chị cần gì không?",
+        "Số 1.000.000 đồng — tức là một triệu (đã gồm thuế); gọi 1900 1234…",
+        "Ngữ điệu: à á ả ã ạ, ư ứ ừ ử ữ ự, đ Đ.",
+        "  hai  khoảng trắng  ",
+        "",
+    ],
+)
+def test_without_emoji_returns_a_text_without_emoji_as_given(text):
+    assert without_emoji(text) == text
+
+
+async def test_emoji_of_the_answer_are_not_spoken_shown_or_remembered(config):
+    llm = FakeLLM(["Trời đẹp quá nhỉ 😊 ", "Anh có kế hoạch gì chưa? 💕"])
+    tts = FakeTTS()
+    engine = _engine(config, FakeSTT(), llm, tts)
+
+    events = await _collect(engine)
+
+    assert _texts(events) == ["Trời đẹp quá nhỉ Anh có kế hoạch gì chưa?"]
+    assert tts.spoken == ["Trời đẹp quá nhỉ Anh có kế hoạch gì chưa?"]
+
+
+async def test_an_emoji_cut_between_two_deltas_is_removed_whole(config):
+    llm = FakeLLM(["Chào anh 👩", "\u200d💻. ", "Em là Bông 1\ufe0f", "\u20e3."])
+    tts = FakeTTS()
+    engine = _engine(config, FakeSTT(), llm, tts)
+
+    await _collect(engine)
+
+    assert tts.spoken == ["Chào anh.", "Em là Bông 1."]
+
+
+async def test_a_sentence_of_emoji_alone_is_not_spoken(config):
+    llm = FakeLLM(["Dạ vâng ạ. ", "😊💕. ", "🎉"])
+    tts = FakeTTS()
+    engine = _engine(config, FakeSTT(), llm, tts)
+
+    events = await _collect(engine)
+
+    assert tts.spoken == ["Dạ vâng ạ."]
+    assert isinstance(events[-1], DoneEvent)
+
+
+async def test_an_answer_of_emoji_alone_speaks_the_fallback_text(config):
+    engine = _engine(config, FakeSTT(), FakeLLM(["😊"]), FakeTTS())
+
+    events = await _collect(engine)
+
+    assert _texts(events) == [config.LLM_FALLBACK_TEXT]

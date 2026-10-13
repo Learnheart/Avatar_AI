@@ -150,6 +150,10 @@ the rules are in `CLAUDE.md` / `AGENTS.md` §7.
 
 ### Changed
 
+- `[llm]` `[tts]` The avatar's answers carry no emoji: the language model is told to
+  answer in words only, in the default character and under any personality, and an
+  emoji it still writes is removed from the sentence before it is spoken, shown in the
+  transcript window or remembered.
 - `[stt]` Whisper is asked for the detailed response (`verbose_json`) instead of the
   text alone.
 

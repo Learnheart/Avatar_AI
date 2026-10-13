@@ -162,8 +162,9 @@ Then the docs: `CLAUDE.md` / `AGENTS.md`, `docs/ARCHITECTURE.md`,
       measured turn the STT took 1.9 s and the first sentence of the LLM 1.6 s; the same
       gate fails on Databricks without the persona (`../../2026-10-12/knowledge-base/plan.md`).
       Not measured on Groq
-- [ ] Seen in the real run, to decide: with a playful persona the model writes emoji
-      in its answers ("😊", "💕"), which go to the TTS as text
+- [x] Seen in the real run: with a playful persona the model writes emoji in its
+      answers ("😊", "💕"), which go to the TTS as text — handled in
+      `../no-emoji-in-speech/plan.md`
 - [x] The block in a real browser (headless Chrome driven over CDP, 2026-10-13, on the
       real app and routes with a temporary database, a fake orchestrator and a scripted
       LLM): the six fields shown; a description read into three of them and nothing

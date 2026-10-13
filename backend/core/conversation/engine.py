@@ -59,6 +59,29 @@ def split_sentences(text: str) -> tuple[list[str], str]:
     return sentences, text[start:]
 
 
+# What is drawn and never pronounced: the pictographs (flags and skin tones included),
+# the symbol and dingbat blocks, and the characters that only build emoji (variation
+# selector, zero width joiner, keycap, tags), with the spaces around a run of them.
+_EMOJI = re.compile(
+    r"\s*(?:["
+    "\U0001F000-\U0001FAFF"
+    "\u2300-\u23FF\u2600-\u27BF\u2B00-\u2BFF"
+    "\uFE0F\u200D\u20E3\U000E0020-\U000E007F"
+    r"]+\s*)+"
+)
+_SPACE_BEFORE_PUNCTUATION = re.compile(r"\s+(?=[.,!?…;:])")
+
+
+def without_emoji(text: str) -> str:
+    """The text as it can be spoken: every run of emoji becomes one space, and the
+    space this leaves before a punctuation mark or at an end is closed. A text without
+    emoji is returned as given."""
+    cleaned = _EMOJI.sub(" ", text)
+    if cleaned == text:
+        return text
+    return _SPACE_BEFORE_PUNCTUATION.sub("", cleaned).strip()
+
+
 def _speakable(sentence: str) -> bool:
     """False for fragments with nothing to pronounce (stray punctuation, list dashes)."""
     return any(ch.isalnum() for ch in sentence)
@@ -342,9 +365,9 @@ class ConversationEngine:
     async def _answer_sentences(
         self, user_text: str, history: Sequence[ChatTurn], profile: str, persona: str
     ) -> AsyncIterator[str]:
-        """Stream the LLM answer as speakable sentences. `profile` is what is known
-        about the person and `persona` the personality they gave the avatar ("" =
-        nothing)."""
+        """Stream the LLM answer as speakable sentences, without the emoji the model
+        may have written. `profile` is what is known about the person and `persona` the
+        personality they gave the avatar ("" = nothing)."""
         # LLM_TIMEOUT_SEC bounds the wait for each delta, first token included.
         deltas = _bounded(
             self._llm.stream_answer(user_text, history, profile, persona),
@@ -374,10 +397,10 @@ class ConversationEngine:
                         answer.append(delta)
                         buffer += delta
                         done, buffer = split_sentences(buffer)
-                        for sentence in filter(_speakable, done):
+                        for sentence in filter(_speakable, map(without_emoji, done)):
                             yield sentence
 
-                tail = buffer.strip()
+                tail = without_emoji(buffer.strip())
                 if _speakable(tail):
                     yield tail
             finally:

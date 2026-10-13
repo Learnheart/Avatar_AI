@@ -65,7 +65,13 @@ summary: The avatar's answers carry no emoji — the LLM is told not to write an
 
 ## To-do
 
-- [ ] The filter and the two prompt sentences with unit tests, `CHANGELOG.md`
-- [ ] Real run: answers of the model under a playful persona, before and after the
-      filter
+- [x] The filter and the two prompt sentences with unit tests, `CHANGELOG.md`
+- [x] Real run (2026-10-13, Databricks LLM, asked directly of the model): before the
+      instruction, two answers out of seven under a persona ended with an emoji ("😊",
+      "💕"). With the instruction, six questions under a playful persona ("Vui vẻ, nhí
+      nhảnh, hay pha trò") and the same six in the default character: no emoji in any
+      of the twelve answers, so the filter had nothing to remove; it is covered by the
+      unit tests. Not measured on Groq
+- [ ] Seen in that run, to decide: asked "Ai đặt tên cho bạn vậy?" in the default
+      character, the model names itself and its maker instead of the avatar
 - [ ] Human verification

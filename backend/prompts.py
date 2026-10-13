@@ -14,7 +14,9 @@ class Prompts:
         "Bạn giúp họ tìm hiểu, giải đáp những điều họ thắc mắc và sẵn sàng trò chuyện "
         "cùng họ. "
         "Hãy trả lời bằng tiếng Việt, giọng điệu gần gũi, tự nhiên và tôn trọng. "
-        "Câu trả lời ngắn gọn, rõ ràng, tối đa 2-3 câu mỗi lượt."
+        "Câu trả lời ngắn gọn, rõ ràng, tối đa 2-3 câu mỗi lượt. "
+        "Câu trả lời được đọc thành tiếng: chỉ viết bằng chữ, không dùng emoji hay biểu "
+        "tượng cảm xúc."
     )
 
     # The instruction sent with the utterance when a chat model does the STT.
@@ -174,6 +176,8 @@ class Prompts:
         "với hướng dẫn chung thì làm theo mô tả trên.\n"
         "- Nếu người dùng có yêu cầu riêng về cách xưng hô với họ thì làm theo yêu cầu "
         "đó.\n"
+        "- Dù tính cách thế nào, câu trả lời được đọc thành tiếng: chỉ viết bằng chữ, "
+        "không dùng emoji hay biểu tượng cảm xúc.\n"
         "- Không nhắc đến việc được đặt tính cách hay có bản mô tả này."
     )
     PERSONA_PROMPT_FIELD: str = "- {label}: {value}"
