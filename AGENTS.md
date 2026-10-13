@@ -222,7 +222,7 @@ docs/
 
 ruff.toml                      # lint rules of the backend (§5)
 .github/workflows/
-  backend-ci.yml               # on every push: ruff check + backend unit tests
+  backend-ci.yml               # on a merge request and on main: ruff check + backend unit tests
 ```
 
 Layering rules:
@@ -307,7 +307,7 @@ cd frontend && npm test && npm run build                 # frontend unit tests +
 RUN_E2E=1 .venv/bin/python -m pytest tests/e2e -q -s     # real turn (costs Groq calls)
 ```
 
-The first two also run on GitHub Actions on every push
+The first two also run on GitHub Actions on every merge request, and on `main`
 (`.github/workflows/backend-ci.yml`).
 
 ## §6. Definition of Done

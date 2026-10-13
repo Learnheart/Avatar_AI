@@ -42,6 +42,11 @@ is misplaced; splitting it to pass a number does not make it better placed.
 - The rules of §4 "Keeping the code small" stay: they are about not writing what is not
   needed, not about a number of lines.
 - The earlier plan is not rewritten; this plan supersedes its size limits.
+- **The gate runs on a merge request** (`pull_request`), on the result of merging it
+  into its target, and once more on a push to `main`. It no longer runs on every push
+  of every branch: a branch is checked when it asks to be merged. A merge request is
+  therefore checked even when its branch was cut before the workflow existed, as
+  long as it merges without conflict.
 
 ## Implementation approach
 
@@ -66,4 +71,5 @@ On the branch `ci/backend-quality-gate`:
       conflict; 1364 unit tests pass, the layering tests included; `ruff check` reports
       one finding of the default rules, an unused import in
       `tests/unit/test_auth_providers.py`, fixed on that branch
+- [x] Workflow triggered by a merge request and by a push to `main`
 - [ ] Human verification

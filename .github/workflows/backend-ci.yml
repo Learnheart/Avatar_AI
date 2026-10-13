@@ -3,14 +3,20 @@
 # CLAUDE.md §5; no secret, no model provider, no camera.
 name: Backend CI
 
-on: push
+# On a merge request: the checks run on the result of merging it into its target. A push
+# to main runs them once more on what was actually merged; a push to any other branch
+# runs nothing until it has a merge request.
+on:
+  pull_request:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
   group: backend-ci-${{ github.ref }}
-  # A newer push replaces the run of its branch; a run on main is never cancelled.
+  # A newer push replaces the run of its merge request; a run on main is never cancelled.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
