@@ -105,7 +105,7 @@ cover as much logic as possible with unit tests.
 | **Conversation — TTS** | **ZeroTTS** (open-source, tiếng Việt) | Text → audio tiếng Việt; chạy local real-time trên CPU, có streaming |
 | **Knowledge base** | sqlite-vec (SQLite extension) + embedding qua `EMBEDDING_BACKEND` (`local_hash` \| `openai_compatible` \| `databricks` \| `ollama`), backup qua `EMBEDDING_BACKEND_BACKUP`; pypdf, python-docx | Upload tài liệu (txt, md, csv, pdf, docx) → chunk → vector; tra cứu đoạn liên quan cho mỗi câu hỏi trước khi gọi LLM |
 | **Application database** | SQLAlchemy Core trên `DATABASE_URL` (file SQLite local; PostgreSQL khi deploy) | Lưu user, memory (những điều avatar nhớ về từng user) và các turn của cuộc trò chuyện chưa được đọc; bảng được tạo lúc startup, chưa có migration tool |
-| **Sign-in (accounts)** | logic nội bộ trên application database; scrypt (thư viện chuẩn) cho mật khẩu; OAuth 2 + PKCE qua httpx cho Google / Facebook | Hai chế độ: guest (mặc định) và user đã đăng nhập. Tài khoản local là email + password, chỉ được tạo sau khi nhập đúng mã 6 số gửi về email đó (`MAIL_BACKEND` = `smtp`, hoặc `log` để ghi mã ra log khi không có mail server); một email một tài khoản. Hoặc Google / Facebook, liên kết được về cùng một user. Đăng nhập mở một session: token ngẫu nhiên, database chỉ giữ hash; session được giữ và hết hạn theo `AUTH_SESSION_IDLE_MINUTES` / `AUTH_SESSION_MAX_HOURS` (tuỳ chọn `AUTH_LOGOUT_ON_LEAVE`). `AUTH_DEV_USER_ID` vẫn dùng cho dev / test |
+| **Sign-in (accounts)** | logic nội bộ trên application database; scrypt (thư viện chuẩn) cho mật khẩu; OAuth 2 + PKCE qua httpx cho Google / Facebook | Hai chế độ: guest (mặc định) và user đã đăng nhập. Tài khoản local là email + password, chỉ được tạo sau khi nhập đúng mã 6 số gửi về email đó, password được gửi kèm cùng lúc với mã (`MAIL_BACKEND` = `smtp`, hoặc `log` để ghi mã ra log khi không có mail server; số mail gửi mã bị giới hạn theo `AUTH_OTP_*`); một email một tài khoản. Hoặc Google / Facebook, liên kết được về cùng một user; một lần đăng nhập qua provider chỉ kết thúc ở đúng trang đã bắt đầu nó (trang giữ một verifier), và việc liên kết do trang đang đăng nhập xác nhận. Đăng nhập mở một session: token ngẫu nhiên, database chỉ giữ hash; session được giữ và hết hạn theo `AUTH_SESSION_IDLE_MINUTES` / `AUTH_SESSION_MAX_HOURS` (tuỳ chọn `AUTH_LOGOUT_ON_LEAVE`). `AUTH_DEV_USER_ID` vẫn dùng cho dev / test |
 | **Memory** | logic nội bộ trên application database; import và cuộc trò chuyện đã đóng được đọc bằng một lần gọi LLM ngoài turn (`LLM.complete`) | Hồ sơ của user đã đăng nhập (các memory item `active`) đưa vào LLM mỗi turn; import file / đoạn văn tự giới thiệu → memory item; cuộc trò chuyện đã đóng → memory item `pending` (đề xuất) chờ user duyệt hoặc từ chối, sở thích / tính cách được nhắc lại ở cuộc trò chuyện sau thì tự `active`; turn đã lưu bị xoá sau khi đọc; guest không có memory |
 | **Persona** | logic nội bộ trên application database; đoạn mô tả dán vào được đọc bằng một lần gọi LLM ngoài turn (`LLM.complete`) | Tính cách user đã đăng nhập đặt cho avatar: một dict các trường định nghĩa trước (`name`, `role`, `addressing`, `personality`, `answer_style`, `avoid`), được ghi vào chỗ `{persona}` của `SYSTEM_PROMPT` mỗi turn: trường nào user khai báo thì thay giá trị mặc định (`PERSONA_DEFAULT`) của trường đó, trường còn lại giữ mặc định; không bắt buộc, guest dùng persona mặc định |
 | **Object store** | thư mục local `OBJECT_STORE_DIR` (thay được bằng S3-compatible) | Giữ nguyên bản gốc của file user import; chủ sở hữu chỉ ghi trong application database |
@@ -121,7 +121,7 @@ cover as much logic as possible with unit tests.
 | Audio | Web Audio API (AudioWorklet + AnalyserNode) | Thu mic (PCM 16kHz), phát audio, đo loudness cho lip-sync |
 | Lip-sync | logic thuần (RMS → blendshape mồm) | Amplitude-driven, bám audio đang phát |
 | Knowledge panel | DOM thuần + fetch (`VITE_API_URL`) | Upload / liệt kê / xoá tài liệu tri thức; tick chọn tài liệu avatar được dùng để trả lời |
-| Sign-in | DOM thuần + fetch (`VITE_API_URL`), `localStorage` | Hiển thị chế độ (Khách / tên user) cạnh nút "Hồ sơ"; form đăng nhập / tạo tài khoản và nút đăng nhập với Google / Facebook cho guest; khối "Tài khoản liên kết"; giữ token của session và gửi kèm mọi request và trên WebSocket |
+| Sign-in | DOM thuần + fetch (`VITE_API_URL`), `localStorage` | Hiển thị chế độ (Khách / tên user) cạnh nút "Hồ sơ"; form đăng nhập / tạo tài khoản (password chỉ được gửi cùng với mã) và nút đăng nhập với Google / Facebook cho guest (trang giữ verifier trong `sessionStorage`); khối "Tài khoản liên kết"; giữ token của session và gửi kèm mọi request và trên WebSocket; chỉ bỏ token khi backend nói token đó không mở session nào; đổi người thì xoá những gì của người trước trên trang |
 | Profile page ("Hồ sơ") | DOM thuần + fetch (`VITE_API_URL`) | Xem / thêm / sửa / xoá những điều avatar nhớ về user; duyệt / từ chối những điều avatar thu thập được từ cuộc trò chuyện; khối "Tính cách của avatar": dán mô tả để LLM tách thành các trường, sửa từng trường, lưu / xoá |
 
 ### External (cloud)
@@ -305,8 +305,8 @@ Layering rules:
 - The memory reaches the turn through the `Memory` contract only: for a logged-in user
   the engine asks it for the profile before the LLM and answers without it when it is
   empty, slow or failing; a guest's turn reads nothing. Who the user is comes from
-  `current_user_id()` (`features/accounts/identity.py`) and nowhere else: `main.py`
-  resolves it and hands it to the orchestrator, the core never does (see sign-in below).
+  the accounts (`features/accounts/`) and nowhere else: `main.py` resolves it and
+  hands it to the orchestrator, the core never does (see sign-in below).
 - What a logged-in user says is gathered outside the turn. The orchestrator tells the
   memory about each recorded turn and about the close of the conversation
   (`Memory.record_turn`, `Memory.close_conversation`), for a logged-in user only and
@@ -320,27 +320,42 @@ Layering rules:
   an item meanwhile (its changes are written relative to the row, in one transaction),
   and the conversations of one user are read one at a time. The stored turns are
   deleted once read, and after `MEMORY_TRANSCRIPT_TTL_DAYS` whatever happened.
-- A person is a guest or a signed-in user, and nothing else. Who they are still comes
-  from `current_user_id()` only: `AUTH_DEV_USER_ID` when it is set (development,
-  tests), otherwise the session token the page presents, in `Authorization: Bearer` on
-  HTTP and in an `auth` message on the WebSocket. A token that opens no session (none,
-  unknown, revoked, expired) is a guest, never an error; a database failing while it
-  is resolved is a guest too. `main.py` resolves the token and tells the orchestrator a
-  user id (`Orchestrator.set_user`): the core never sees a token. `auth` is the first
-  frame of a page; changing the user of an open connection closes the conversation.
+- A person is a guest or a signed-in user, and nothing else. Who they are is
+  `AUTH_DEV_USER_ID` when it is set (development, tests), otherwise the session token
+  the page presents, in `Authorization: Bearer` on HTTP and in an `auth` message on the
+  WebSocket. An HTTP route asks `current_user_id()` and nothing else; for a connection,
+  `main.py` asks it for the configured user and then the session service for the
+  token, because it has to tell a guest from a refused token. A token that opens no
+  session (none, unknown, revoked, expired) is a guest, never an error; a database
+  failing while it is resolved is a guest too. `main.py` resolves the token and tells
+  the orchestrator a user id (`Orchestrator.set_user`): the core never sees a token.
+  `auth` is the first frame of a page and carries an `id`; each one is answered by a
+  `session` naming it (`reply_to`) with a `status` (`signed_in`, `guest`, `rejected`,
+  `unresolved` when the database failed, `ended` when the backend ended the session).
+  The page drops its token only for `rejected` or `ended`, and only when the message
+  names the last `auth` it sent, carrying the token it still holds. The token of the
+  connection, the orchestrator's user and that message change under one lock in
+  `main.py`. Changing the user of an open connection closes the conversation.
 - A session is a random token of which the database keeps the SHA-256 only. It is kept
   until it was not used for `AUTH_SESSION_IDLE_MINUTES` or is `AUTH_SESSION_MAX_HOURS`
   old (checked on every use, never stored), is revoked by a sign-out, and with
   `AUTH_LOGOUT_ON_LEAVE` when the orchestrator closes the user's conversation for
-  `absence` or `idle`. A turn counts as a use; looking at a session does not.
+  `absence` or `idle`. A turn counts as a use; looking at a session does not. Sessions
+  that are over are deleted at startup and every `AUTH_SESSION_CLEANUP_MINUTES`.
 - A local account is an email address and a password (scrypt,
   `features/accounts/passwords.py`), created in two steps: a six-digit code is sent to
   the address (`backend/utils/mailer.py`, `MAIL_BACKEND`) and the account exists once
-  the code is given back; what waits for its code is held in RAM, hashed. One email has
-  one account. An identity at an external provider is the pair (provider, id there),
-  never an email; it is linked to a user by that signed-in user, or by itself when the
-  provider says it verified an email that is the email of a local account. Nothing
-  else is merged by email. Nothing of a provider is kept but who the person is. A
+  the code is given back, together with the password: the first step carries the
+  address only. What waits for its code is the code alone, held in RAM, hashed, as are
+  the counts that limit the mails (`AUTH_OTP_WINDOW_MINUTES`, `AUTH_OTP_MAX_CODES`,
+  `AUTH_OTP_MAX_MAILS`); a sign-in attempt is counted in the database before the
+  password is looked at. One email has one account. An identity at an external
+  provider is the pair (provider, id there), never an email; it is linked to a user by
+  that signed-in user, whose page confirms what the provider proved (the callback
+  attaches nothing), or by itself when the provider says it verified an email that is
+  the email of a local account. Nothing else is merged by email. A sign-in at a
+  provider is started with the challenge of a verifier the page keeps, and its
+  hand-off code is redeemed only with that verifier. Nothing of a provider is kept but who the person is. A
   password, a session token and a provider's access token never reach a log, a span or
   the capture; with `MAIL_BACKEND=log`, and only then, the mail carrying a code is
   written to the log instead of being sent.

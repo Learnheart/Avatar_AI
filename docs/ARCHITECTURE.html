@@ -122,7 +122,8 @@
 <li><a href="#s4-2">4.2 The response branch (text → voice → avatar motion)</a></li>
 <li><a href="#s4-3">4.3 Knowledge: from an uploaded file to an answer</a></li>
 <li><a href="#s4-4">4.4 Memory: how a spoken fact becomes (or does not become) a memory</a></li>
-<li><a href="#s4-5">4.5 When something fails</a></li>
+<li><a href="#s4-5">4.5 Sign-in: from a guest to a signed-in user, and back</a></li>
+<li><a href="#s4-6">4.6 When something fails</a></li>
 </ol>
 </li>
 <li><a href="#deployment">5. Deployment</a></li>
@@ -325,7 +326,7 @@ documents the user has uploaded.</p>
 <tr>
 <td>Sign-in <span class="tag built">MVP 2 · built</span></td>
 <td>Who is a guest and who is a signed-in user</td>
-<td>A person is a guest by default and signs in on the page with an account kept here (an email address and a password, stored hashed; the account exists once a code sent to that address is given back, so one email has one account) or with a Google or Facebook account, which can be linked to the same user. Signing in opens a session that is kept across restarts of the browser and ends when it was not used for a set time or is too old; optionally also when the person leaves the kiosk. Only who the person is is read from an external account</td>
+<td>A person is a guest by default and signs in on the page with an account kept here (an email address and a password, stored hashed; the account exists once a code sent to that address is given back together with the password, so one email has one account) or with a Google or Facebook account, which can be linked to the same user; a sign-in at a provider ends only in the page that started it. Signing in opens a session that is kept across restarts of the browser and ends when it was not used for a set time or is too old; optionally also when the person leaves the kiosk. Only who the person is is read from an external account</td>
 </tr>
 <tr>
 <td>Avatar personality <span class="tag built">MVP 2 · built</span></td>
@@ -532,13 +533,13 @@ its speech.</p>
 <tbody>
 <tr>
 <td>browser → backend</td>
-<td><code>auth</code> (the session of the page, or none)</td>
+<td><code>auth</code> (a number, and the session of the page or none)</td>
 <td>Who the page is: the first message of a page, and sent again when the person signs in or out. A page that sends none is a guest's</td>
 </tr>
 <tr>
 <td>backend → browser</td>
-<td><code>session</code> (the user, or none)</td>
-<td>Whether the connection is a signed-in user's or a guest's: the answer to every <code>auth</code>, and sent unasked when the backend ends the session</td>
+<td><code>session</code> (the user or none, the number of the <code>auth</code> it answers, a status)</td>
+<td>Whether the connection is a signed-in user's or a guest's, and why (signed in, guest, rejected, unresolved, ended): the answer to every <code>auth</code>, and sent unasked when the backend ends the session</td>
 </tr>
 </tbody>
 </table>
@@ -681,11 +682,12 @@ flowchart TB
   conversation, so nothing a guest said follows the user who signs in afterwards.</li>
 <li><strong>An external account only says who the person is</strong> <span class="tag built">built</span>. Google and Facebook
   are asked once for the person's identity and nothing of theirs is kept. An identity
-  is linked to an account by a signed-in person, or by itself where the address was
-  proved on both sides: here by a code, there by a provider that says it verified it.</li>
+  is linked to an account by a signed-in person, who confirms it from their own page,
+  or by itself where the address was proved on both sides: here by a code, there by a
+  provider that says it verified it.</li>
 <li><strong>An account proves its email</strong> <span class="tag built">built</span>. The account is created only when the code
-  sent to the address comes back, so nobody holds an account in someone else's name
-  and one address has one account. Sending is a setting: a real mail server in a
+  sent to the address comes back, and its password is given at that moment, so nobody
+  holds an account in someone else's name and one address has one account. Sending is a setting: a real mail server in a
   deployment, the backend's own log on a machine that has none.</li>
 <li><strong>Three ways into long-term memory, with different trust</strong> <span class="tag built">built</span>. What a person
   types, and what is extracted from a description they import, is used at once. What
@@ -835,7 +837,257 @@ flowchart TD
 <li><strong>Memory never costs the turn.</strong> Reading the profile is instant; saving turns and
   extracting facts happen after the audio has been sent.</li>
 </ul>
-<h3 id="s4-5">4.5 When something fails</h3>
+<h3 id="s4-5">4.5 Sign-in: from a guest to a signed-in user, and back <span class="tag built">built</span></h3>
+<p>Signing in decides whose memory and whose avatar personality a conversation uses, so
+it is drawn here in full. Whatever the way in, the outcome is the same: a session, of
+which the page holds a random token and the system only its fingerprint.</p>
+<p><strong>An account kept here: an email address proved by a code, then a password.</strong></p>
+<figure class="diagram"><pre class="mermaid">
+sequenceDiagram
+    autonumber
+    actor P as Person
+    participant F as Page (browser)
+    participant A as Sign-in (backend)
+    participant M as Mail
+    participant D as Application database
+
+    Note over P,D: A new account
+    P->>F: email and password, create an account
+    F->>A: the email address only
+    Note over A: checks the wait and the mail limits, keeps the code (hashed) in its own memory
+    A->>M: a six-digit code to that address
+    A-->>F: code sent, and how long it lasts
+    Note over F: the password waits in the memory of the page, no longer than the code lasts
+    M-->>P: the code
+    P->>F: the code
+    F->>A: email, code and password together
+    alt the code is the one that was sent
+        A->>D: create the user and the account (password hashed), open a session
+        A-->>F: session token, user
+    else a wrong code
+        A-->>F: refused, one try used (after a few, a new code has to be asked for)
+    end
+
+    Note over P,D: Later, signing in with the password
+    P->>F: email and password
+    F->>A: email and password
+    A->>D: count one attempt on this email, before the password is looked at
+    alt attempts left, and the password is right
+        A->>D: forget the attempts, open a session
+        A-->>F: session token, user
+    else a wrong email or a wrong password
+        A-->>F: refused, with the same answer for both
+    else too many attempts in the window
+        A-->>F: held until the window has passed, whatever the password
+    end
+</pre></figure>
+<ul>
+<li><strong>Whoever reads the mailbox sets the password.</strong> The first step carries the address
+  and nothing else; the password travels with the code. Somebody else asking for the
+  same address can only replace the code, which goes to the owner of the mailbox.</li>
+<li><strong>An attempt is paid for before it is checked.</strong> The count of sign-in attempts is
+  raised in the database in one step, so attempts made at the same moment are all
+  counted; a success clears it.</li>
+</ul>
+<p><strong>Google or Facebook: the result goes to the page that started, and to no other.</strong></p>
+<figure class="diagram"><pre class="mermaid">
+sequenceDiagram
+    autonumber
+    actor P as Person
+    participant F as Page (browser)
+    participant A as Sign-in (backend)
+    participant G as Google or Facebook
+    participant D as Application database
+
+    Note over P,D: Signing in
+    P->>F: sign in with Google
+    Note over F: makes a random verifier and keeps it in this tab only
+    F->>A: start, with the fingerprint of the verifier
+    Note over A: holds the flow in its own memory, with a state bound to this browser, its own secret for the provider (PKCE) and the fingerprint
+    A-->>F: sent to the provider
+    F->>G: the person signs in there and agrees
+    G-->>F: sent back, with a code
+    F->>A: the code and the state
+    A->>G: exchange the code, ask once who this is
+    G-->>A: id at the provider, name, email
+    A->>D: find the identity, or create the user
+    A-->>F: back to the page with a one-time hand-off code (one minute)
+    F->>A: the hand-off code and the verifier
+    alt the verifier matches the fingerprint
+        A->>D: open a session
+        A-->>F: session token, user
+    else another page, or no verifier
+        A-->>F: refused, and the hand-off code is spent
+    end
+
+    Note over P,D: Linking a provider to the account one is signed in to
+    F->>A: ask to link, with the session token
+    A-->>F: a one-time ticket naming this user
+    F->>G: the same flow at the provider, started with the ticket
+    G-->>F: sent back, with a code
+    F->>A: the code and the state
+    Note over A: attaches nothing yet, keeps the proved identity for one minute
+    A-->>F: back to the page with a one-time link code
+    F->>A: confirm the link code, with the session token
+    alt the token is of the user the ticket was given to
+        A->>D: attach the identity to that user
+        A-->>F: linked
+    else another user, a guest, or a code that is over
+        A-->>F: refused, nothing is attached
+    end
+</pre></figure>
+<ul>
+<li><strong>A link made by somebody else does nothing.</strong> A hand-off code opened in another
+  browser signs nobody in, because that browser has no verifier; a link code attaches
+  nothing unless the signed-in page of the user who asked confirms it.</li>
+<li><strong>Nothing of the provider is kept</strong> but who the person is: no access to their Google
+  or Facebook account remains after the question is answered.</li>
+</ul>
+<p><strong>The session on the connection the conversation runs on.</strong></p>
+<figure class="diagram"><pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant F as Page (browser)
+    participant W as Connection wiring (backend)
+    participant S as Sessions (backend)
+    participant O as Orchestrator
+    participant D as Application database
+
+    Note over F,D: The page says who it is: on connecting, and whenever it signs in or out
+    F->>W: auth, numbered, with the token it holds or none
+    W->>S: whose token is this
+    S->>D: find the fingerprint, check the two time limits
+    S-->>W: a user, nobody, or no answer (the database failed)
+    W->>O: the user of this connection is this id, or a guest (never a token)
+    Note over O: a change of user closes the conversation in progress
+    W-->>F: session, naming that auth, with a status
+    alt signed in
+        Note over F: shows the user
+    else guest (no token was presented)
+        Note over F: stays a guest
+    else rejected (the token opens no session)
+        Note over F: drops the token, becomes a guest
+    else unresolved (the database failed)
+        Note over F: keeps the token, talks as a guest for now, presents the token again after a delay
+    end
+
+    Note over F,D: How a session is over
+    opt the person signs out
+        F->>S: end the session of this token
+        F->>W: auth, numbered, with no token
+        W->>O: a guest
+        W-->>F: session, status guest
+    end
+    opt not used for too long, or too old (looked at now and then)
+        W->>S: is the session of this connection still open
+        S-->>W: no
+        W->>O: a guest
+        W-->>F: session, status ended, naming the auth that opened it
+    end
+    opt the person left the kiosk or went silent (only when switched on)
+        O->>W: the conversation of the user closed, and why
+        W->>S: end the session of this connection
+        W->>O: a guest
+        W-->>F: session, status ended, naming the auth that opened it
+    end
+    Note over F: the page drops its token only when the message names the last auth it sent, that auth carried the token it holds now, and the status is rejected or ended
+</pre></figure>
+<ul>
+<li><strong>Every question has its own answer.</strong> Each <code>auth</code> carries a number and each
+  <code>session</code> names the one it answers, so a late answer (to the <code>auth</code> of page load,
+  or about the token of the person before) cannot undo a sign-in that just finished.</li>
+<li><strong>A failing database signs nobody out.</strong> "I could not check" and "this token is not
+  valid" are different answers; only the second makes the page forget its token.</li>
+<li><strong>One change at a time.</strong> The token the connection holds, the user the Orchestrator
+  answers and what the page was last told are changed together, one change after the
+  other, so two changes close together cannot leave them disagreeing.</li>
+<li><strong>The core never sees a token.</strong> Sessions are resolved by the wiring around the
+  Orchestrator, which is told a user id or a guest and nothing more.</li>
+</ul>
+<p><strong>What a change of person clears.</strong> A sign-in, a sign-out and a session that is over
+are all a change of person:</p>
+<ul>
+<li><strong>In the backend:</strong> the turn that is running is cancelled and the conversation in
+  progress is closed; the next utterance opens a new one for whoever is there now, so
+  nothing said by one person follows the next.</li>
+<li><strong>On the page:</strong> the conversation window is emptied; the sign-in form forgets the
+  email, the password, the code and its messages (the waiting password is also
+  forgotten when its code expires); the linked accounts, the remembered facts and the
+  avatar's personality on screen are removed and read again for the new person.</li>
+<li><strong>Requests still in flight:</strong> an answer that arrives for the person before is shown
+  to nobody, and a late refusal of the previous person's token does not sign the next
+  person out.</li>
+</ul>
+<p><strong>What is limited, and where the limit is kept.</strong> A limit kept in the database holds
+whatever the number of backend processes; one kept in the memory of the process is lost
+by a restart, which only means asking again.</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>What is limited</th>
+<th>The limit</th>
+<th>Where it is kept</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sign-in attempts on one email</td>
+<td>A few per window, right password or not; counted before the password is checked, so
+attempts made at the same moment are all counted</td>
+<td>Database</td>
+</tr>
+<tr>
+<td>Guessing a code</td>
+<td>A few wrong tries per code, and asking for a new code does not give new tries; a
+code lasts minutes; guesses on one address are bounded by codes per window × tries
+per code</td>
+<td>Memory of the process</td>
+</tr>
+<tr>
+<td>Mails carrying a code</td>
+<td>A wait between two codes for one address, a number of codes per address per window,
+and a number of mails to all addresses per window; of the requests made at the same
+moment, one sends a mail</td>
+<td>Memory of the process</td>
+</tr>
+<tr>
+<td>A sign-in or a link at a provider</td>
+<td>A started flow lasts minutes; the ticket, the hand-off code and the link code are
+good once and for one minute, and only for the page (or the user) that started</td>
+<td>Memory of the process; the verifier, in the tab of the page</td>
+</tr>
+<tr>
+<td>A session</td>
+<td>Ends when not used for a set time or when too old, checked on every use; sessions
+that are over are deleted at startup and at a regular interval</td>
+<td>Database (the fingerprint of the token only)</td>
+</tr>
+<tr>
+<td>Removing a linked provider</td>
+<td>Never the last way to sign in, also when two removals arrive together</td>
+<td>Database (one transaction)</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Known limits.</strong></p>
+<ul>
+<li><strong>One backend process, one connected page.</strong> Codes, mail counts and provider flows
+  wait in the memory of one process, and the backend follows the session of a single
+  connection. Several processes, or two tabs signed in as different people, are not
+  handled.</li>
+<li><strong>Sign-in with a provider needs a page served over https, or from localhost.</strong> Only
+  there does the browser let the page compute the fingerprint of its verifier; elsewhere
+  the page does not start the flow. The providers ask the same of the address they send
+  the browser back to.</li>
+<li><strong>The mail limits can be used against registration.</strong> A flood of requests closes the
+  creation of accounts for one window; a limit per client belongs to a reverse proxy in
+  front of the backend.</li>
+<li><strong>Not yet run against the real services.</strong> A real mail server, Google and Facebook
+  have not been exercised; the flow is covered by unit tests and a local run.</li>
+</ul>
+<h3 id="s4-6">4.6 When something fails</h3>
 <div class="table-wrap">
 <table>
 <thead>
@@ -884,7 +1136,7 @@ flowchart TD
 <tr>
 <td>Sign-in (the session is unknown, over, or the database fails while it is checked)</td>
 <td>The avatar answers them as a guest</td>
-<td>The connection is kept; the page is told it is a guest's</td>
+<td>The connection is kept; the page is told it is a guest's and why. It forgets its session only when told the session is unknown or over; after a database failure it keeps it and asks again</td>
 </tr>
 <tr>
 <td>The mail carrying the code of a new account cannot be sent</td>
@@ -1191,6 +1443,13 @@ is one row here. A change of the overall architecture also has a record in <code
 <td>Accounts kept here are an email address proved by a code sent to it, one account per email (before: a user name); a Google account whose verified email is that of such an account signs it in. A mail server, when configured, sends the code. From the first manual test: the head has a slow motion of its own and no longer copies the person; the documents and the conversation fold away</td>
 <td><a href="adr/0002-mvp-2-architecture.md">0002</a></td>
 <td><code>docs/2026-10-13/sign-in/</code>, <code>docs/2026-10-13/manual-test-fixes/</code></td>
+</tr>
+<tr>
+<td>2026-10-13</td>
+<td>v2</td>
+<td>The sign-in flow drawn in the Dataflow part (4.5): a new account (the password is given with the code, no longer before it), sign-in with a password and its attempt limit, Google / Facebook bound to the page that started and a link confirmed by the signed-in page, the numbered <code>auth</code> answered by a <code>session</code> with a status, how a session ends, what a change of person clears, what is limited and where, the known limits. "When something fails" becomes 4.6</td>
+<td><a href="adr/0002-mvp-2-architecture.md">0002</a></td>
+<td><code>docs/2026-10-13/auth-hardening/</code></td>
 </tr>
 </tbody>
 </table>
