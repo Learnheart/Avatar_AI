@@ -17,7 +17,11 @@ from tests.unit.fakes import build_orchestrator
 REPO_ROOT = Path(__file__).resolve().parents[2]
 NOW = datetime(2026, 10, 12, 8, 0, tzinfo=timezone.utc)
 # The stores written against the application database (not the sqlite-vec index).
-STORES = ("backend/features/accounts/store.py", "backend/features/memory/store.py")
+STORES = (
+    "backend/features/accounts/store.py",
+    "backend/features/memory/store.py",
+    "backend/features/persona/store.py",
+)
 
 
 def _tables(url: str) -> set[str]:
@@ -28,13 +32,16 @@ def _tables(url: str) -> set[str]:
         engine.dispose()
 
 
+TABLES = {"users", "memory_items", "imports", "conversations", "turns", "persona_fields"}
+
+
 def test_startup_creates_the_tables_in_an_empty_file(config, tmp_path):
     assert not (tmp_path / "app.db").exists()
 
     with TestClient(create_app(config, build_orchestrator(config))):
         pass
 
-    assert _tables(config.DATABASE_URL) == {"users", "memory_items", "imports", "conversations", "turns"}
+    assert _tables(config.DATABASE_URL) == TABLES
 
 
 def test_a_second_start_changes_nothing_and_keeps_the_data(config):
@@ -45,7 +52,7 @@ def test_a_second_start_changes_nothing_and_keeps_the_data(config):
         user = client.app.state.users.get("linh")
 
     assert (user.display_name, user.created_at) == ("Linh", NOW)
-    assert _tables(config.DATABASE_URL) == {"users", "memory_items", "imports", "conversations", "turns"}
+    assert _tables(config.DATABASE_URL) == TABLES
 
 
 def test_an_unreachable_database_fails_startup_with_the_reason(config, tmp_path):

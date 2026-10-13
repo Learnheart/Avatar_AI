@@ -9,6 +9,11 @@ the rules are in `CLAUDE.md` / `AGENTS.md` §7.
 
 ### Added
 
+- `[persona]` A signed-in person can give the avatar a personality: a few named fields
+  (name, role, way of addressing, personality, answer style, what to avoid), each a
+  short line of at most `PERSONA_FIELD_MAX_CHARS` (default 300) characters, kept per
+  person and followed by every answer to them from the next turn on. New routes
+  `GET`, `PUT` and `DELETE /persona`; a guest gets `401` and the default character.
 - `[persona]` `[llm]` The turn can carry a personality for the avatar: it is given to
   the LLM as a system message of its own, after the fixed character and before what is
   known about the person. Slow or failing, the turn is answered in the default character

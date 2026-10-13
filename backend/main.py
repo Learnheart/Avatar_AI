@@ -9,6 +9,8 @@ Endpoints:
                      (`backend/features/knowledge/api.py`)
   /memory/...      — what the avatar remembers about the logged-in user
                      (`backend/features/memory/api.py`)
+  /persona         — the personality the logged-in user gives the avatar
+                     (`backend/features/persona/api.py`)
 
 Startup: validate config → telemetry (+ capture) → open the application database (its
          missing tables are created) → open the knowledge base → build modules
@@ -28,7 +30,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.config import AppConfig
-from backend.core.contracts import LLM, Knowledge, Memory
+from backend.core.contracts import LLM, Knowledge, Memory, Persona
 from backend.core.conversation.engine import ConversationEngine
 from backend.features.accounts.identity import current_user_id
 from backend.features.accounts.store import UsersStore
@@ -40,6 +42,9 @@ from backend.features.memory.consolidation import MemoryConsolidation
 from backend.features.memory.imports import MemoryImports
 from backend.features.memory.memory import MemoryService
 from backend.features.memory.store import MemoryStore
+from backend.features.persona.api import create_persona_router
+from backend.features.persona.persona import PersonaService
+from backend.features.persona.store import PersonaStore
 from backend.providers.catalog import create_embedder, create_llm, create_stt, create_tts
 from backend.core.orchestrator import Orchestrator
 from backend.core.perception.camera import Camera
@@ -84,12 +89,18 @@ def build_imports(
     )
 
 
+def build_persona(config: AppConfig, database: Database) -> PersonaService:
+    """The persona on the application database."""
+    return PersonaService(config, PersonaStore(database))
+
+
 def build_orchestrator(
     config: AppConfig,
     knowledge: Knowledge,
     memory: Memory,
     llm: LLM,
     capture: Optional[CaptureStore] = None,
+    persona: Optional[Persona] = None,
 ) -> Orchestrator:
     """Wire the real modules together, on the LLM the app built."""
     engine = ConversationEngine(
@@ -99,6 +110,7 @@ def build_orchestrator(
         tts=create_tts(config),
         knowledge=knowledge,
         memory=memory,
+        persona=persona,
     )
     return Orchestrator(
         config,
@@ -150,12 +162,14 @@ def create_app(
         llm = create_llm(config)
         app.state.memory = memory or build_memory(config, database, llm)
         app.state.imports = build_imports(config, database, llm, app.state.memory)
+        app.state.persona = build_persona(config, database)
         try:
             app.state.knowledge = knowledge or build_knowledge(config)
             await app.state.knowledge.start()
             try:
                 app.state.orchestrator = orchestrator or build_orchestrator(
-                    config, app.state.knowledge, app.state.memory, llm, capture
+                    config, app.state.knowledge, app.state.memory, llm, capture,
+                    persona=app.state.persona,
                 )
                 app.state.started_at = time.monotonic()
                 await app.state.orchestrator.start()
@@ -192,6 +206,7 @@ def create_app(
     )
     app.include_router(create_knowledge_router(config))
     app.include_router(create_memory_router(config))
+    app.include_router(create_persona_router(config))
 
     @app.get("/health")
     async def health() -> JSONResponse:

@@ -32,22 +32,23 @@ def test_python_m_backend_main_serves_on_the_configured_host_and_port(monkeypatc
 
 # ── Wiring: what main.py hands to the engine ──────────────────────────────
 
-def test_the_real_engine_is_given_the_knowledge_base_and_the_memory(config):
+def test_the_real_engine_is_given_the_knowledge_base_the_memory_and_the_persona(config):
     """The modules are built, not loaded: no model, no camera, no network."""
-    knowledge, memory, llm = object(), object(), object()
+    knowledge, memory, llm, persona = object(), object(), object(), object()
 
-    orchestrator = main.build_orchestrator(config, knowledge, memory, llm)
+    orchestrator = main.build_orchestrator(config, knowledge, memory, llm, persona=persona)
 
     assert orchestrator._engine._knowledge is knowledge
     assert orchestrator._engine._memory is memory
+    assert orchestrator._engine._persona is persona
     assert orchestrator._engine._llm is llm
 
 
 def test_startup_builds_the_orchestrator_on_the_memory_of_the_app(config, monkeypatch):
     built = {}
 
-    def build(config, knowledge, memory, llm, capture=None):
-        built.update(knowledge=knowledge, memory=memory, llm=llm)
+    def build(config, knowledge, memory, llm, capture=None, persona=None):
+        built.update(knowledge=knowledge, memory=memory, llm=llm, persona=persona)
         return fakes.build_orchestrator(config)
 
     monkeypatch.setattr(main, "build_orchestrator", build)
@@ -56,6 +57,8 @@ def test_startup_builds_the_orchestrator_on_the_memory_of_the_app(config, monkey
         assert built["memory"] is client.app.state.memory
         assert built["knowledge"] is client.app.state.knowledge
         assert isinstance(built["memory"], main.MemoryService)
+        assert built["persona"] is client.app.state.persona
+        assert isinstance(built["persona"], main.PersonaService)
         # One LLM for the turns, the imports and the reading of the conversations: they
         # share the state of its backup.
         assert built["llm"] is not None and client.app.state.imports._llm is built["llm"]

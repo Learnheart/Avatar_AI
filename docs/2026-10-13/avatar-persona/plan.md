@@ -139,7 +139,7 @@ Then the docs: `CLAUDE.md` / `AGENTS.md`, `docs/ARCHITECTURE.md`,
 
 - [x] Slice 1 — the persona in the turn (contract, messages, backends, engine, texts,
       keys) with unit tests
-- [ ] Slice 2 — store, service and the `GET` / `PUT` / `DELETE /persona` routes with
+- [x] Slice 2 — store, service and the `GET` / `PUT` / `DELETE /persona` routes with
       unit tests
 - [ ] Slice 3 — reading a pasted description (`POST /persona/read`) with unit tests
 - [ ] Slice 4 — the "Tính cách của avatar" block on the profile page with unit tests,
