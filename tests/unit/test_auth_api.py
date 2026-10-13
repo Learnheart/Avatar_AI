@@ -14,6 +14,7 @@ from tests.unit.fakes import build_orchestrator
 
 EMAIL = "linh@example.com"
 LINH = {"email": EMAIL, "password": PASSWORD, "display_name": "Khánh Linh"}
+ASK = {"email": EMAIL}  # body of register: the account itself comes with the code
 
 
 @pytest.fixture
@@ -121,32 +122,56 @@ def test_the_end_of_the_session_given_to_the_page_follows_the_config(client, con
 @pytest.mark.parametrize(
     ("body", "status"),
     [
-        ({"email": "not an email", "password": PASSWORD}, 422),
-        ({"email": EMAIL, "password": "short"}, 422),
-        ({"email": EMAIL}, 422),
-        ({"username": "linh", "password": PASSWORD}, 422),
-        ({"email": EMAIL, "password": PASSWORD, "admin": True}, 422),
+        ({"email": "not an email"}, 422),
+        ({}, 422),
+        ({"username": "linh"}, 422),
+        ({"email": EMAIL, "admin": True}, 422),
+        # The password is given with the code, not here.
+        ({"email": EMAIL, "password": PASSWORD}, 422),
+        ({"email": EMAIL, "display_name": "Khánh Linh"}, 422),
     ],
 )
-def test_an_account_that_cannot_be_created_answers_422(client, body, status):
+def test_a_code_that_cannot_be_asked_for_answers_422(client, body, status):
     mailer = capture_mail(client)
 
     assert client.post("/auth/register", json=body).status_code == status
     assert client.app.state.users.count() == 0 and mailer.sent == []
 
 
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"password": "short"},
+        {"password": PASSWORD, "display_name": "x" * 65},
+        {},  # no password
+        {"password": PASSWORD, "admin": True},
+    ],
+)
+def test_an_account_that_cannot_be_created_answers_422_and_uses_no_try(client, config, fields):
+    config.AUTH_OTP_MAX_ATTEMPTS = 1
+    mailer = capture_mail(client)
+    client.post("/auth/register", json=ASK)
+    code = {"email": EMAIL, "code": mailer.code()}
+
+    refused = client.post("/auth/register/verify", json={**code, **fields})
+
+    assert refused.status_code == 422 and client.app.state.users.count() == 0
+    created = client.post("/auth/register/verify", json={**code, "password": PASSWORD})
+    assert created.status_code == 201  # the code still stands
+
+
 def test_an_email_that_has_an_account_answers_409_and_gets_no_code(client):
     _register(client)
     mailer = capture_mail(client)
 
-    assert client.post("/auth/register", json=LINH).status_code == 409
+    assert client.post("/auth/register", json=ASK).status_code == 409
     assert len(mailer.sent) == 1
 
 
 def test_registration_switched_off_answers_403_and_is_not_offered(client, config):
     config.AUTH_ALLOW_REGISTRATION = 0
 
-    assert client.post("/auth/register", json=LINH).status_code == 403
+    assert client.post("/auth/register", json=ASK).status_code == 403
     assert client.get("/auth/providers").json() == {"providers": [], "registration": False}
 
 
@@ -271,7 +296,7 @@ def test_a_failing_database_answers_502_without_its_text(client):
 def test_asking_for_an_account_sends_a_code_and_signs_nobody_in(client):
     mailer = capture_mail(client)
 
-    response = client.post("/auth/register", json=LINH)
+    response = client.post("/auth/register", json=ASK)
 
     assert response.status_code == 202
     assert response.json() == {"email": EMAIL, "expires_in_sec": 600, "resend_in_sec": 60}
@@ -283,64 +308,108 @@ def test_asking_for_an_account_sends_a_code_and_signs_nobody_in(client):
 
 def test_the_code_creates_the_account_and_signs_the_person_in(client):
     mailer = capture_mail(client)
-    client.post("/auth/register", json=LINH)
+    client.post("/auth/register", json=ASK)
 
-    response = client.post("/auth/register/verify", json={"email": EMAIL, "code": mailer.code()})
+    response = client.post("/auth/register/verify", json={**LINH, "code": mailer.code()})
 
     assert response.status_code == 201
     assert set(response.json()) == {"token", "user", "expires_at"}
+    assert response.json()["user"]["display_name"] == "Khánh Linh"
     assert client.get("/memory/items", headers=_bearer(response.json())).status_code == 200
+
+
+def test_the_account_has_the_password_given_with_the_code(client):
+    """Somebody else asked for the address too: only the one who reads the mailbox
+    can give the code back, and theirs is the password."""
+    mailer = capture_mail(client)
+    client.post("/auth/register", json=ASK)
+    client.app.state.accounts._pending.clear()  # the wait before another code is over
+    client.post("/auth/register", json=ASK)
+
+    created = client.post(
+        "/auth/register/verify", json={"email": EMAIL, "code": mailer.code(), "password": PASSWORD}
+    )
+
+    assert created.status_code == 201 and client.app.state.users.count() == 1
+    assert client.post("/auth/login", json={"email": EMAIL, "password": PASSWORD}).status_code == 200
 
 
 def test_a_wrong_code_answers_401_then_410_once_it_was_tried_too_often(client, config):
     config.AUTH_OTP_MAX_ATTEMPTS = 2
     mailer = capture_mail(client)
-    client.post("/auth/register", json=LINH)
+    client.post("/auth/register", json=ASK)
     code = mailer.code()
     wrong = "000000" if code != "000000" else "111111"
 
     tries = [
-        client.post("/auth/register/verify", json={"email": EMAIL, "code": wrong}).status_code
+        client.post("/auth/register/verify", json={**LINH, "code": wrong}).status_code
         for _ in range(3)
     ]
-    late = client.post("/auth/register/verify", json={"email": EMAIL, "code": code})
+    late = client.post("/auth/register/verify", json={**LINH, "code": code})
 
     assert tries == [401, 401, 410]
     assert late.status_code == 410 and client.app.state.users.count() == 0
 
 
 def test_a_code_for_an_email_that_asked_for_none_answers_410(client):
-    response = client.post("/auth/register/verify", json={"email": EMAIL, "code": "123456"})
+    response = client.post("/auth/register/verify", json={**LINH, "code": "123456"})
 
     assert response.status_code == 410
 
 
 def test_asking_again_too_soon_answers_429_with_the_wait(client):
     mailer = capture_mail(client)
-    client.post("/auth/register", json=LINH)
+    client.post("/auth/register", json=ASK)
 
-    again = client.post("/auth/register", json=LINH)
+    again = client.post("/auth/register", json=ASK)
 
     assert again.status_code == 429
     assert 1 <= int(again.headers["retry-after"]) <= 60
     assert len(mailer.sent) == 1
 
 
+def test_too_many_codes_for_one_address_answer_429_with_the_wait(client, config):
+    config.AUTH_OTP_MAX_CODES, config.AUTH_OTP_WINDOW_MINUTES = 1, 60
+    mailer = capture_mail(client)
+    client.post("/auth/register", json=ASK)
+    # The wait before another code is over; the mail is still counted.
+    client.app.state.accounts._pending.clear()
+
+    refused = client.post("/auth/register", json=ASK)
+
+    assert refused.status_code == 429
+    assert 3500 <= int(refused.headers["retry-after"]) <= 3600
+    assert len(mailer.sent) == 1
+
+
+def test_too_many_mails_for_all_addresses_answer_429_with_the_wait(client, config):
+    config.AUTH_OTP_MAX_MAILS, config.AUTH_OTP_WINDOW_MINUTES = 2, 60
+    mailer = capture_mail(client)
+    for name in ("an", "binh"):
+        assert client.post("/auth/register", json={"email": f"{name}@example.com"}).status_code == 202
+
+    refused = client.post("/auth/register", json=ASK)
+
+    assert refused.status_code == 429
+    assert 3500 <= int(refused.headers["retry-after"]) <= 3600
+    assert len(mailer.sent) == 2
+
+
 def test_a_code_that_cannot_be_sent_answers_502_and_can_be_asked_again(client):
     mailer = capture_mail(client)
     mailer.down = True
 
-    failed = client.post("/auth/register", json=LINH)
+    failed = client.post("/auth/register", json=ASK)
     mailer.down = False
 
     assert failed.status_code == 502 and "SMTP" not in failed.text
-    assert client.post("/auth/register", json=LINH).status_code == 202
+    assert client.post("/auth/register", json=ASK).status_code == 202
 
 
 def test_by_default_the_code_is_written_to_the_log_and_the_start_says_so(config, caplog):
     with caplog.at_level(logging.WARNING):
         with TestClient(create_app(config, build_orchestrator(config))) as client:
-            client.post("/auth/register", json=LINH)
+            client.post("/auth/register", json=ASK)
 
     written = [record.msg for record in caplog.records if record.name.endswith("mailer")]
     assert [mail["to"] for mail in written] == [EMAIL]

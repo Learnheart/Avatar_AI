@@ -11,14 +11,21 @@ the provider says it has verified, and which is the email of a local account (pr
 there by a code), signs that account in and is attached to it. Nothing else is merged
 by email.
 
-What is in flight (a flow that was started, a link that was asked for, a sign-in the
-page has not collected yet) lives in RAM for a minute or a few: this is one process. A
-provider whose client id is not configured does not exist here.
+A flow ends in the page that started it, and in no other. A sign-in is started with a
+challenge, the SHA-256 of a secret the page keeps: the code the callback leaves is
+exchanged for a session only with that secret, so a link made by somebody else signs
+nobody in. A link attaches nothing at the callback: the proved identity waits until the
+page confirms it with the session of the user who asked for it.
+
+What is in flight (a flow that was started, a link that was asked for, a sign-in or a
+proved identity the page has not collected yet) lives in RAM for a minute or a few:
+this is one process. A provider whose client id is not configured does not exist here.
 """
 import asyncio
 import base64
 import hashlib
 import hmac
+import re
 import secrets
 import uuid
 from dataclasses import dataclass
@@ -30,7 +37,7 @@ import httpx
 
 from backend.config import AppConfig
 from backend.features.accounts.accounts import normal_email
-from backend.features.accounts.store import AccountsStore
+from backend.features.accounts.store import LAST_WAY, NOT_LINKED, AccountsStore
 from backend.features.memory.memory import one_line
 from backend.models import Identity, User
 from backend.utils.logging import get_logger
@@ -46,9 +53,12 @@ _HANDOVER_TTL = timedelta(minutes=1)
 
 _DISPLAY_NAME_MAX_CHARS = 64
 
-# Why a sign-in did not go through, as the page is told (`#auth_error=<reason>`).
-STATE, DENIED, PROVIDER_FAILED = "state", "denied", "provider"
-LINKED_ELSEWHERE, ALREADY_LINKED, LINK_EXPIRED = "linked_elsewhere", "already_linked", "link_expired"
+# What the page gives to start a sign-in: the SHA-256 of its secret, base64url without
+# padding.
+_PAGE_CHALLENGE = re.compile(r"[A-Za-z0-9_-]{43}")
+
+# Why a flow did not go through, as the page is told (`#auth_error=<reason>`).
+STATE, DENIED, PROVIDER_FAILED, LINK_EXPIRED = "state", "denied", "provider", "link_expired"
 
 
 class UnknownProvider(Exception):
@@ -67,6 +77,23 @@ class LastWayToSignIn(Exception):
     """The identity is the only way the user has to sign in: it cannot be detached."""
 
 
+class ChallengeRequired(Exception):
+    """A sign-in was started without the challenge that binds it to its page."""
+
+
+class LinkExpired(Exception):
+    """No proved identity waits under that code: unknown, used or too old."""
+
+
+class LinkNotYours(Exception):
+    """The proved identity waits for another user than the one confirming it."""
+
+
+class IdentityTaken(Exception):
+    """The identity belongs to another user, or the user has another identity of that
+    provider already: nothing was attached."""
+
+
 @dataclass(frozen=True)
 class Provider:
     name: str
@@ -80,18 +107,39 @@ class Provider:
 
 @dataclass(frozen=True)
 class Outcome:
-    """How a flow ended: `code` is what the page exchanges for a session (a sign-in),
-    `linked` the provider that was attached to the account of a signed-in user."""
+    """How a flow ended, as a code left for the page: `code` is what it exchanges for a
+    session (a sign-in), `link` what a signed-in user confirms to attach the identity
+    that was proved to their account."""
     code: Optional[str] = None
-    linked: Optional[str] = None
+    link: Optional[str] = None
 
 
 @dataclass(frozen=True)
 class _Flow:
     provider: str
-    verifier: str
+    verifier: str                 # PKCE, between this backend and the provider
     link_user_id: Optional[str]
-    started_at: datetime
+    challenge: Optional[str]      # of the page that started a sign-in
+    at: datetime
+
+
+@dataclass(frozen=True)
+class _SignIn:
+    """A sign-in that waits for its page."""
+    user_id: str
+    challenge: str
+    at: datetime
+
+
+@dataclass(frozen=True)
+class _ProvedIdentity:
+    """An identity the provider vouched for, that waits to be confirmed by the user
+    who asked to link it."""
+    provider: str
+    subject: str
+    email: Optional[str]
+    user_id: str
+    at: datetime
 
 
 def configured_providers(config: AppConfig) -> dict[str, Provider]:
@@ -119,7 +167,7 @@ def _utc_now() -> datetime:
 
 def _challenge(verifier: str) -> str:
     """The PKCE challenge of a verifier: its SHA-256, base64url without padding."""
-    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    digest = hashlib.sha256(verifier.encode("utf-8")).digest()
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
@@ -138,7 +186,8 @@ class ExternalSignIn:
         self._clock = clock
         self._flows: dict[str, _Flow] = {}                      # by `state`
         self._tickets: dict[str, tuple[str, datetime]] = {}     # → (user id, asked at)
-        self._codes: dict[str, tuple[str, datetime]] = {}       # → (user id, left at)
+        self._codes: dict[str, _SignIn] = {}                    # by hand-off code
+        self._links: dict[str, _ProvedIdentity] = {}            # by link code
 
     def providers(self) -> list[str]:
         """The names of the providers that can be used, in a fixed order."""
@@ -160,10 +209,15 @@ class ExternalSignIn:
         self._tickets[ticket] = (user_id, self._clock())
         return ticket
 
-    def start(self, provider: str, ticket: Optional[str] = None) -> tuple[str, str]:
+    def start(
+        self, provider: str, ticket: Optional[str] = None, challenge: Optional[str] = None
+    ) -> tuple[str, str]:
         """Where to send the browser, and the `state` to bind to it (a cookie): the
-        callback must come back with both. Raises UnknownProvider, or SignInFailed
-        when `ticket` is not a valid one."""
+        callback must come back with both. A sign-in needs `challenge`, the SHA-256
+        (base64url) of the secret its page will exchange the result with; a link needs
+        `ticket` and no challenge, since its result is confirmed with the session.
+        Raises UnknownProvider, ChallengeRequired, or SignInFailed when `ticket` is not
+        a valid one."""
         found = self._provider(provider)
         self._forget_old()
         link_user_id = None
@@ -171,9 +225,11 @@ class ExternalSignIn:
             asked = self._tickets.pop(ticket, None)
             if asked is None:
                 raise SignInFailed(LINK_EXPIRED)
-            link_user_id = asked[0]
+            link_user_id, challenge = asked[0], None
+        elif not challenge or not _PAGE_CHALLENGE.fullmatch(challenge):
+            raise ChallengeRequired(provider)
         state, verifier = secrets.token_urlsafe(24), secrets.token_urlsafe(48)
-        self._flows[state] = _Flow(provider, verifier, link_user_id, self._clock())
+        self._flows[state] = _Flow(provider, verifier, link_user_id, challenge, self._clock())
         query = urlencode({
             "response_type": "code",
             "client_id": found.client_id,
@@ -197,14 +253,15 @@ class ExternalSignIn:
         error: Optional[str] = None,
     ) -> Outcome:
         """End the flow the provider sent the browser back from. `bound_state` is the
-        state the browser that started the flow was given. Raises UnknownProvider or
-        SignInFailed; nothing is created then."""
+        state the browser that started the flow was given. A link attaches nothing
+        here: the identity is kept until the user confirms it (`confirm_link`). Raises
+        UnknownProvider or SignInFailed; nothing is created then."""
         found = self._provider(provider)
         flow = self._flows.pop(state or "", None)
         if (
             flow is None
             or flow.provider != provider
-            or self._clock() - flow.started_at > _FLOW_TTL
+            or self._clock() - flow.at > _FLOW_TTL
             or not hmac.compare_digest(state or "", bound_state or "")
         ):
             raise SignInFailed(STATE)
@@ -214,14 +271,9 @@ class ExternalSignIn:
         subject, name, email, verified = await self._who(found, code, flow.verifier)
         now = self._clock()
         if flow.link_user_id is not None:
-            identity = Identity(provider, subject, flow.link_user_id, email, now)
-            owner = await asyncio.to_thread(self._store.add_identity, identity)
-            if owner is None:
-                raise SignInFailed(ALREADY_LINKED)
-            if owner != flow.link_user_id:
-                raise SignInFailed(LINKED_ELSEWHERE)
-            logger.info({"msg": "Identity linked", "provider": provider, "user_id": owner})
-            return Outcome(linked=provider)
+            link = secrets.token_urlsafe(24)
+            self._links[link] = _ProvedIdentity(provider, subject, email, flow.link_user_id, now)
+            return Outcome(link=link)
 
         user_id = await asyncio.to_thread(self._store.identity_user, provider, subject)
         if user_id is None and email and verified:
@@ -230,7 +282,17 @@ class ExternalSignIn:
             if local is not None:
                 identity = Identity(provider, subject, local.user_id, email, now)
                 user_id = await asyncio.to_thread(self._store.add_identity, identity)
-                logger.info({"msg": "Identity joined the account of its email", "provider": provider})
+                if user_id is not None:
+                    logger.info(
+                        {"msg": "Identity joined the account of its email", "provider": provider}
+                    )
+                else:
+                    # That account signs in with another identity of this provider.
+                    logger.info({
+                        "msg": "The account of this email already has an identity of this "
+                               "provider: a separate account is created",
+                        "provider": provider,
+                    })
         if user_id is None:
             shown = (one_line(name or "") or provider.capitalize())[:_DISPLAY_NAME_MAX_CHARS]
             user = User(id=uuid.uuid4().hex, display_name=shown, created_at=now, last_seen_at=now)
@@ -239,16 +301,44 @@ class ExternalSignIn:
             user_id = await asyncio.to_thread(self._store.add_identity, identity, user)
             logger.info({"msg": "Account created", "provider": provider, "user_id": user_id})
         handover = secrets.token_urlsafe(24)
-        self._codes[handover] = (user_id, self._clock())
+        # A sign-in flow was started with a challenge (`start`).
+        self._codes[handover] = _SignIn(user_id, flow.challenge or "", self._clock())
         return Outcome(code=handover)
 
-    def exchange(self, code: str) -> Optional[str]:
-        """The id of the user a callback left a sign-in for, once and within a minute;
-        None for an unknown, used or expired code."""
+    def exchange(self, code: str, verifier: Optional[str]) -> Optional[str]:
+        """The id of the user a callback left a sign-in for, once and within a minute,
+        for the page that started the flow: `verifier` is the secret whose challenge
+        the flow was started with. None for an unknown, used or expired code and for
+        another verifier; the code is spent whatever the answer."""
         left = self._codes.pop(code, None)
-        if left is None or self._clock() - left[1] > _HANDOVER_TTL:
+        if left is None or self._clock() - left.at > _HANDOVER_TTL:
             return None
-        return left[0]
+        if not left.challenge or not hmac.compare_digest(
+            _challenge(verifier or "").encode("ascii"), left.challenge.encode("ascii")
+        ):
+            logger.warning({"msg": "Sign-in collected with another verifier, refused"})
+            return None
+        return left.user_id
+
+    async def confirm_link(self, code: str, user_id: str) -> str:
+        """Attach the identity a link flow proved to the account of `user_id`, who
+        presents the code the callback left; the provider that was attached. Once and
+        within a minute. Raises LinkExpired, LinkNotYours when the flow was started by
+        another user, IdentityTaken; nothing is attached then."""
+        proved = self._links.pop(code, None)
+        if proved is None or self._clock() - proved.at > _HANDOVER_TTL:
+            raise LinkExpired("no identity waits under that code")
+        if proved.user_id != user_id:
+            logger.warning({"msg": "Link confirmed by another user, refused", "provider": proved.provider})
+            raise LinkNotYours("that link was asked for by another user")
+        identity = Identity(proved.provider, proved.subject, user_id, proved.email, self._clock())
+        owner = await asyncio.to_thread(self._store.add_identity, identity)
+        if owner is None:
+            raise IdentityTaken(f"another '{proved.provider}' account is linked already")
+        if owner != user_id:
+            raise IdentityTaken(f"that '{proved.provider}' account belongs to another user")
+        logger.info({"msg": "Identity linked", "provider": proved.provider, "user_id": user_id})
+        return proved.provider
 
     async def _who(
         self, provider: Provider, code: str, verifier: str
@@ -300,15 +390,10 @@ class ExternalSignIn:
     async def unlink(self, user_id: str, provider: str) -> bool:
         """Detach the user's identity at the provider; False when they have none.
         Raises LastWayToSignIn when nothing else signs them in."""
-        def detach() -> bool:
-            linked = self._store.list_identities(user_id)
-            if not any(identity.provider == provider for identity in linked):
-                return False
-            if len(linked) == 1 and not self._store.has_credentials(user_id):
-                raise LastWayToSignIn(f"'{provider}' is the only way left to sign in")
-            return self._store.delete_identity(user_id, provider)
-
-        return await asyncio.to_thread(detach)
+        detached = await asyncio.to_thread(self._store.detach_identity, user_id, provider)
+        if detached == LAST_WAY:
+            raise LastWayToSignIn(f"'{provider}' is the only way left to sign in")
+        return detached != NOT_LINKED
 
     # ── Internals ─────────────────────────────────────────────────────────
 
@@ -323,8 +408,16 @@ class ExternalSignIn:
         now = self._clock()
         self._flows = {
             state: flow for state, flow in self._flows.items()
-            if now - flow.started_at <= _FLOW_TTL
+            if now - flow.at <= _FLOW_TTL
         }
-        for kept in (self._tickets, self._codes):
-            for key in [key for key, (_, at) in kept.items() if now - at > _HANDOVER_TTL]:
-                del kept[key]
+        self._tickets = {
+            ticket: asked for ticket, asked in self._tickets.items()
+            if now - asked[1] <= _HANDOVER_TTL
+        }
+        self._codes = {
+            code: left for code, left in self._codes.items() if now - left.at <= _HANDOVER_TTL
+        }
+        self._links = {
+            code: proved for code, proved in self._links.items()
+            if now - proved.at <= _HANDOVER_TTL
+        }

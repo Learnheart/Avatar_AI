@@ -8,6 +8,7 @@ import asyncio
 import base64
 import time
 import uuid
+from enum import Enum
 from typing import Optional
 
 from fastapi import WebSocket
@@ -56,11 +57,25 @@ def conversation_message(conversation_id: Optional[str]) -> dict:
     return {"type": "conversation", "conversation_id": conversation_id}
 
 
-def session_message(user: Optional[dict]) -> dict:
+class SessionStatus(str, Enum):
+    """Why the connection is in the mode a `session` message tells: the closed set of
+    its `status`."""
+    SIGNED_IN = "signed_in"    # the token opened a session: `user` is set
+    GUEST = "guest"            # no token was presented
+    REJECTED = "rejected"      # the token opens no session
+    UNRESOLVED = "unresolved"  # the database failed: a guest for now, the token may be good
+    ENDED = "ended"            # the server ended the session of the connection
+
+
+def session_message(
+    user: Optional[dict], reply_to: Optional[str], status: SessionStatus
+) -> dict:
     """The mode the connection is in: the signed-in user ({"id", "display_name"}), or
     None for a guest. Answers every `auth` of the client, and is sent unasked when the
-    server ends the session."""
-    return {"type": "session", "user": user}
+    server ends the session. `reply_to` is the `id` of the `auth` frame it answers (for
+    `ended`, of the frame that opened the session that ended), None when that frame
+    carried none: the page tells an answer to what it presented last from a late one."""
+    return {"type": "session", "user": user, "reply_to": reply_to, "status": status.value}
 
 
 def interrupt_message() -> dict:

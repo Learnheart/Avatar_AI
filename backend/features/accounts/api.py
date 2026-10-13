@@ -1,23 +1,36 @@
 """
 HTTP routes of the sign-in, used by `frontend/src/auth/`.
 
-  POST   /auth/register   {"email", "password", "display_name"?} → 202
+  POST   /auth/register   {"email"} → 202
                           {"email", "expires_in_sec", "resend_in_sec"}: a code was
-                          sent to the email, no account exists yet
-  POST   /auth/register/verify   {"email", "code"} → 201 + a session: the account is
-                          created; 401 a wrong code, 410 no code waits (ask again)
+                          sent to the email, no account exists yet; 429 with
+                          `Retry-After` when a code was just sent or too many were
+  POST   /auth/register/verify   {"email", "code", "password", "display_name"?} → 201
+                          + a session: the account is created, with the password given
+                          here; 401 a wrong code, 410 no code waits (ask again), 422 a
+                          password or a name that cannot be accepted (no try is used)
   POST   /auth/login      {"email", "password"} → a session
   POST   /auth/logout     → 204, with or without a valid token
   GET    /auth/session    → {"user": {"id", "display_name"} | null, "expires_at"}
   GET    /auth/providers  → {"providers": [...], "registration": bool}
 
   POST   /auth/{provider}/link      → {"url"}: where a signed-in user starts a flow that
-                                      attaches the provider to their account
-  GET    /auth/{provider}/start     → 302 to the provider (`?ticket=` from the link)
-  GET    /auth/{provider}/callback  → 302 to the page, with `#auth_code=`,
-                                      `#auth_linked=` or `#auth_error=`
-  POST   /auth/exchange   {"code"} → a session, for the code the callback left
+                                      proves an identity to attach to their account
+  GET    /auth/{provider}/start     → 302 to the provider. A sign-in is started with
+                                      `?challenge=`, the base64url SHA-256 of a secret
+                                      the page keeps (400 without); a link, with the
+                                      `?ticket=` of the route above
+  GET    /auth/{provider}/callback  → 302 to the page, with `#auth_code=` (a sign-in),
+                                      `#auth_link=` (a link) or `#auth_error=`
+  POST   /auth/exchange   {"code", "verifier"} → a session, for the code the callback
+                          left and the secret of the page that started; 401 otherwise,
+                          and the code is spent
   GET    /auth/identities → {"identities": [{"provider", "email", "created_at"}]}
+  POST   /auth/identities {"code"} → {"provider"}: the identity a link flow proved is
+                          attached to the signed-in user who asked for it; 401 no
+                          session, 403 the flow of another user, 409 the identity is
+                          another user's (or one of that provider is linked already),
+                          410 an unknown or expired code
   DELETE /auth/identities/{provider} → 204
 
 A session is {"token", "user": {"id", "display_name"}, "expires_at"}. The token is read
@@ -44,13 +57,18 @@ from backend.features.accounts.accounts import (
     InvalidAccount,
     RegistrationClosed,
     TooManyAttempts,
+    TooManyCodes,
     WrongCode,
     WrongCredentials,
 )
 from backend.features.accounts.identity import bearer_token, current_user_id
 from backend.features.accounts.providers import (
+    ChallengeRequired,
     ExternalSignIn,
+    IdentityTaken,
     LastWayToSignIn,
+    LinkExpired,
+    LinkNotYours,
     SignInFailed,
     UnknownProvider,
 )
@@ -67,20 +85,21 @@ _STATE_COOKIE_MAX_AGE_SEC = 600
 
 
 class NewAccount(BaseModel):
-    """Body of register. Any other field is refused."""
+    """Body of register: the email a code is sent to. Any other field is refused."""
     model_config = ConfigDict(extra="forbid")
 
     email: str
-    password: str
-    display_name: Optional[str] = None
 
 
 class EmailCode(BaseModel):
-    """Body of register/verify: the code that was sent to the email."""
+    """Body of register/verify: the code that was sent to the email, and the account
+    it creates. Any other field is refused."""
     model_config = ConfigDict(extra="forbid")
 
     email: str
     code: str
+    password: str
+    display_name: Optional[str] = None
 
 
 class SignIn(BaseModel):
@@ -92,7 +111,16 @@ class SignIn(BaseModel):
 
 
 class Handover(BaseModel):
-    """Body of exchange: the code the callback left for the page."""
+    """Body of exchange: the code the callback left for the page, and the secret whose
+    challenge the page started the flow with. A missing secret is a wrong one."""
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    verifier: Optional[str] = None
+
+
+class ProvedLink(BaseModel):
+    """Body of the confirmation of a link: the code the callback left for the page."""
     model_config = ConfigDict(extra="forbid")
 
     code: str
@@ -107,7 +135,7 @@ def _answering() -> Iterator[None]:
         raise HTTPException(403, str(e)) from e
     except EmailTaken as e:
         raise HTTPException(409, str(e)) from e
-    except CodeJustSent as e:
+    except (CodeJustSent, TooManyCodes) as e:
         raise HTTPException(429, str(e), headers={"Retry-After": str(e.seconds)}) from e
     except WrongCode as e:
         raise HTTPException(401, str(e)) from e
@@ -176,14 +204,16 @@ def create_auth_router(config: AppConfig) -> APIRouter:
     async def register(request: Request, new: NewAccount) -> dict:
         with _answering():
             sent = await asyncio.to_thread(
-                accounts(request).start_registration, new.email, new.password, new.display_name
+                accounts(request).start_registration, new.email
             )
         return sent.to_dict()
 
     @router.post("/register/verify", status_code=201)
     async def verify(request: Request, given: EmailCode) -> dict:
         def create() -> dict:
-            created = accounts(request).verify_registration(given.email, given.code)
+            created = accounts(request).verify_registration(
+                given.email, given.code, given.password, given.display_name
+            )
             return open_session(request, created.id)
 
         with _answering():
@@ -232,11 +262,16 @@ def create_auth_router(config: AppConfig) -> APIRouter:
 
     # ── External providers ────────────────────────────────────────────────
 
+    # The state of a flow travels over TLS only, wherever the backend is served so.
+    secure_cookie = config.AUTH_PUBLIC_URL.lower().startswith("https://")
+
     def back_to_page(fragment: str) -> RedirectResponse:
         """Send the browser back to the page with what happened in the fragment (never
         sent to a server), and forget the state of the flow."""
         response = RedirectResponse(f"{config.AUTH_PAGE_URL}/#{fragment}", status_code=302)
-        response.delete_cookie(_STATE_COOKIE, path="/auth")
+        response.delete_cookie(
+            _STATE_COOKIE, path="/auth", httponly=True, samesite="lax", secure=secure_cookie
+        )
         return response
 
     @router.post("/{provider}/link")
@@ -247,16 +282,23 @@ def create_auth_router(config: AppConfig) -> APIRouter:
         return {"url": f"{config.AUTH_PUBLIC_URL}/auth/{provider}/start?ticket={quote(ticket)}"}
 
     @router.get("/{provider}/start")
-    async def start(request: Request, provider: str, ticket: Optional[str] = None) -> Response:
+    async def start(
+        request: Request,
+        provider: str,
+        ticket: Optional[str] = None,
+        challenge: Optional[str] = None,
+    ) -> Response:
         try:
             with _answering():
-                url, state = sign_in(request).start(provider, ticket)
+                url, state = sign_in(request).start(provider, ticket, challenge)
+        except ChallengeRequired as e:
+            raise HTTPException(400, "A sign-in is started with a challenge") from e
         except SignInFailed as e:
             return back_to_page(f"auth_error={e.reason}")
         response = RedirectResponse(url, status_code=302)
         response.set_cookie(
             _STATE_COOKIE, state, max_age=_STATE_COOKIE_MAX_AGE_SEC, path="/auth",
-            httponly=True, samesite="lax",
+            httponly=True, samesite="lax", secure=secure_cookie,
         )
         return response
 
@@ -275,13 +317,13 @@ def create_auth_router(config: AppConfig) -> APIRouter:
         except SignInFailed as e:
             logger.warning({"msg": "External sign-in refused", "provider": provider, "reason": e.reason, "detail": str(e)})
             return back_to_page(f"auth_error={e.reason}")
-        if outcome.linked:
-            return back_to_page(f"auth_linked={outcome.linked}")
+        if outcome.link:
+            return back_to_page(f"auth_link={quote(outcome.link)}")
         return back_to_page(f"auth_code={quote(outcome.code or '')}")
 
     @router.post("/exchange")
     async def exchange(request: Request, handover: Handover) -> dict:
-        user_id = sign_in(request).exchange(handover.code)
+        user_id = sign_in(request).exchange(handover.code, handover.verifier)
         if user_id is None:
             raise HTTPException(401, "Unknown or expired code")
         with _answering():
@@ -292,6 +334,23 @@ def create_auth_router(config: AppConfig) -> APIRouter:
         with _answering():
             linked = await sign_in(request).identities(user_id)
         return {"identities": [identity.to_dict() for identity in linked]}
+
+    @router.post("/identities")
+    async def confirm_link(
+        request: Request, proved: ProvedLink, user_id: str = Depends(user)
+    ) -> dict:
+        """Attach the identity a link flow proved: only the signed-in user the flow
+        was started for can, so a link made by somebody else attaches nothing."""
+        try:
+            with _answering():
+                provider = await sign_in(request).confirm_link(proved.code, user_id)
+        except LinkExpired as e:
+            raise HTTPException(410, "Unknown or expired code") from e
+        except LinkNotYours as e:
+            raise HTTPException(403, "That link was asked for by another user") from e
+        except IdentityTaken as e:
+            raise HTTPException(409, str(e)) from e
+        return {"provider": provider}
 
     @router.delete("/identities/{provider}", status_code=204)
     async def unlink(request: Request, provider: str, user_id: str = Depends(user)) -> Response:

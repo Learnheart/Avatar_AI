@@ -191,6 +191,17 @@ the rules are in `CLAUDE.md` / `AGENTS.md` §7.
   `memory.consolidate`, with the transcript read, the operations the LLM answered, what
   was stored and the outcome.
 
+- `[accounts]` Mails carrying a code are limited: one address gets `AUTH_OTP_MAX_CODES`
+  (5) codes and all addresses together `AUTH_OTP_MAX_MAILS` (30) mails per
+  `AUTH_OTP_WINDOW_MINUTES` (60); past either, `POST /auth/register` answers `429` with
+  `Retry-After`. Counted in the memory of the backend process.
+- `[accounts]` Sessions that are over are deleted from the database every
+  `AUTH_SESSION_CLEANUP_MINUTES` (60) while the backend runs, not only at startup.
+- `[accounts]` `[expression]` After a database failure the page keeps its session and
+  presents it again after `VITE_AUTH_RETRY_MS` (5000 ms) instead of becoming a guest.
+- `[stt]` `STT_HALLUCINATION_MAX_REST_WORDS` (3): how many other words a sentence may
+  hold beside a phrase Whisper invents and still be cut as invented.
+
 ### Changed
 
 - `[shared]` The architecture document is now one HTML page, `docs/ARCHITECTURE.html`
@@ -210,6 +221,29 @@ the rules are in `CLAUDE.md` / `AGENTS.md` §7.
   "Tài liệu" button and the "Hội thoại" header show an arrow, open and close their
   list, and the page remembers how each was left.
 
+- `[accounts]` **Breaking:** the password of a new account is given with the code:
+  `POST /auth/register` takes `{"email"}` only and `POST /auth/register/verify` takes
+  `{"email", "code", "password", "display_name"?}` (`422` for a password or a name
+  that cannot be accepted, without using a try). The page still asks for both on one
+  form.
+- `[accounts]` **Breaking:** a sign-in with Google or Facebook ends only in the page
+  that started it: `GET /auth/{provider}/start` needs `?challenge=` (`400` without) and
+  `POST /auth/exchange` takes `{"code", "verifier"}`. The page needs https or
+  localhost for it.
+- `[accounts]` **Breaking:** linking a provider is confirmed by the signed-in page: the
+  callback attaches nothing and returns `#auth_link=<code>` (before:
+  `#auth_linked=<provider>`), which the page gives to the new `POST /auth/identities`
+  (`401`, `403` another user's link, `409` already linked, `410` expired).
+- `[accounts]` `[orchestrator]` **Breaking:** the WebSocket message `auth` carries an
+  `id`, and `session` carries `reply_to` (the `auth` it answers) and a `status`:
+  `signed_in`, `guest`, `rejected`, `unresolved` (the database failed) or `ended`.
+- `[accounts]` The cookie that holds the state of a provider sign-in is `Secure` when
+  `AUTH_PUBLIC_URL` is https.
+- `[stt]` The list of sentences Whisper invents holds only phrases that speak of a
+  video or its audience ("like và đăng ký kênh", "đăng ký kênh để ủng hộ", "không bỏ lỡ
+  những video", "phụ đề được thực hiện bởi"); a verb with "kênh" alone ("đăng ký kênh",
+  "ủng hộ kênh") is no longer listed, because a bank has channels too.
+
 ### Fixed
 
 - `[expression]` The head no longer copies every movement of the person in front of the
@@ -217,8 +251,37 @@ the rules are in `CLAUDE.md` / `AGENTS.md` §7.
   thinking. Following the person is an option of the page that is off
   (`HEAD_FOLLOWS_PERSON` in `frontend/src/config.js`).
 - `[stt]` A sentence Whisper invents on short or unclear audio ("Cảm ơn các bạn đã theo
-  dõi và ủng hộ cho kênh…", "đăng ký kênh", "thanks for watching") is no longer
+  dõi và ủng hộ cho kênh…", "đăng ký kênh nhé", "thanks for watching") is no longer
   answered as if the person had said it: the turn ends as for silence.
+- `[accounts]` Somebody asking for an account on an address they do not own can no
+  longer set its password: the account gets the password typed with the code, by
+  whoever reads the mailbox.
+- `[accounts]` The limits hold under requests made at the same moment: sign-in
+  attempts are all counted (a wrong guess is charged before the password is checked),
+  one mail is sent for one address, and asking for a new code does not give new tries.
+- `[accounts]` Two removals of linked accounts made at the same moment can no longer
+  remove the last way to sign in.
+- `[accounts]` `[orchestrator]` A sign-in and the end of a session close together no
+  longer leave the page, the backend and the avatar disagreeing about who is signed
+  in.
+- `[accounts]` `[expression]` The page no longer forgets a good session: a late answer
+  to the `auth` of page load, or a database failure, used to sign out a person who had
+  just signed in.
+- `[accounts]` `[expression]` `[memory]` `[persona]` Nothing of the previous person
+  stays on the page after a sign-out or a change of user: the email and password in
+  the form, the linked accounts, and late answers of profile, personality or account
+  requests; a late refusal of the previous session no longer signs the next person out.
+- `[accounts]` `[expression]` A session that is over on the linked-account actions now
+  reads "Phiên đăng nhập đã hết, vui lòng đăng nhập lại" and makes the page a guest,
+  instead of "Sai email hoặc mật khẩu".
+- `[stt]` The filter for sentences Whisper invents no longer swallows real speech: only
+  a sentence that is an invented phrase and little else is cut, the rest of what the
+  person said is answered ("Tôi muốn đăng ký kênh SMS Banking" is heard again).
+- `[orchestrator]` `[llm]` A turn larger than the whole history budget no longer
+  empties the earlier turns given to the LLM: it is not kept, and the others stay.
+- `[tts]` Symbols with a spoken form are read aloud instead of deleted (➕ "cộng", ➖
+  "trừ", ✖ "nhân", ➗ "chia"; an arrow becomes a pause), and an emoji written with a
+  variation selector ("▶️") no longer leaves a leftover character.
 
 ## [0.1.0] - 2026-10-12
 

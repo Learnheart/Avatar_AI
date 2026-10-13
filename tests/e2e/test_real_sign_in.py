@@ -46,11 +46,15 @@ async def session(ws_url: str) -> AsyncIterator[Session]:
         yield client
 
 
-async def _present(session: Session, token) -> dict:
-    """Say who the page is; the mode the backend answers."""
+async def _present(session: Session, token, frame_id: str) -> dict:
+    """Say who the page is, in an `auth` frame with this `id`; the `session` message
+    that answers that frame."""
     asked = len(session.messages)
-    await session.send({"type": "auth", "token": token})
-    _, _, told = await session.wait_for(lambda m: m["type"] == "session", timeout=10, after=asked)
+    await session.send({"type": "auth", "token": token, "id": frame_id})
+    _, _, told = await session.wait_for(
+        lambda m: m["type"] == "session" and m.get("reply_to") == frame_id,
+        timeout=10, after=asked,
+    )
     return told
 
 
@@ -72,11 +76,11 @@ async def test_a_signed_in_person_is_answered_as_themselves_and_a_guest_is_not(
 ):
     api = ws_url.replace("ws://", "http://").removesuffix("/ws")
     async with httpx.AsyncClient(timeout=60) as http:
-        asked = await http.post(f"{api}/auth/register", json=ACCOUNT)
+        asked = await http.post(f"{api}/auth/register", json={"email": ACCOUNT["email"]})
         assert asked.status_code == 202, asked.text
         assert (await http.post(f"{api}/auth/login", json=ACCOUNT)).status_code == 401  # not yet
         registered = await http.post(f"{api}/auth/register/verify", json={
-            "email": ACCOUNT["email"], "code": _mailed_code(ws_url, ACCOUNT["email"]),
+            **ACCOUNT, "code": _mailed_code(ws_url, ACCOUNT["email"]),
         })
         assert registered.status_code == 201, registered.text
         signed_in = registered.json()
@@ -85,14 +89,17 @@ async def test_a_signed_in_person_is_answered_as_themselves_and_a_guest_is_not(
         saved = await http.put(f"{api}/persona", headers=headers, json={"fields": {"name": NAME}})
         assert saved.status_code == 200, saved.text
 
-        assert (await _present(session, None))["user"] is None
+        told = await _present(session, None, "auth-1")
+        assert (told["user"], told["status"]) == (None, "guest")
         guest_text, _, _ = await ask(session, name_question_pcm)
 
-        assert (await _present(session, signed_in["token"]))["user"] == signed_in["user"]
+        told = await _present(session, signed_in["token"], "auth-2")
+        assert (told["user"], told["status"]) == (signed_in["user"], "signed_in")
         user_text, first_audio, end_to_end = await ask(session, name_question_pcm)
 
         assert (await http.post(f"{api}/auth/logout", headers=headers)).status_code == 204
-        assert (await _present(session, signed_in["token"]))["user"] is None  # it is over
+        told = await _present(session, signed_in["token"], "auth-3")  # it is over
+        assert (told["user"], told["status"]) == (None, "rejected")
         after_text, _, _ = await ask(session, name_question_pcm)
 
     print(

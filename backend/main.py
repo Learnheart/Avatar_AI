@@ -35,7 +35,7 @@ from fastapi.responses import JSONResponse
 from backend.config import MAIL_LOG, AppConfig
 from backend.core.contracts import LLM, Knowledge, Memory, Persona
 from backend.core.conversation.engine import ConversationEngine
-from backend.core.orchestrator.ws_manager import session_message
+from backend.core.orchestrator.ws_manager import SessionStatus, session_message
 from backend.features.accounts.accounts import AccountService
 from backend.features.accounts.api import create_auth_router
 from backend.features.accounts.identity import current_user_id
@@ -175,8 +175,9 @@ def create_app(
                        "written to this log, not sent. Set MAIL_BACKEND=smtp to send them",
             })
         app.state.sign_in = ExternalSignIn(config, accounts)
-        # The token of the connected page: the kiosk serves one connection.
-        app.state.ws_token = None
+        # The session of the connected page (its token, its user, the `auth` frame
+        # that opened it): the kiosk serves one connection.
+        app.state.ws_token = app.state.ws_user_id = app.state.ws_auth_id = None
         try:
             await asyncio.to_thread(app.state.sessions.delete_ended)
         except DatabaseError as e:
@@ -201,6 +202,7 @@ def create_app(
                 app.state.orchestrator.on_conversation_closed = conversation_closed
                 await app.state.orchestrator.start()
                 watching = asyncio.create_task(watch_session(), name="session-watch")
+                cleaning = asyncio.create_task(delete_ended_sessions(), name="session-cleanup")
                 # In the background, so that the start does not wait for the LLM: what
                 # an earlier run left unread of the conversations.
                 gathering = asyncio.create_task(
@@ -213,7 +215,8 @@ def create_app(
                 finally:
                     gathering.cancel()
                     watching.cancel()
-                    await asyncio.gather(gathering, watching, return_exceptions=True)
+                    cleaning.cancel()
+                    await asyncio.gather(gathering, watching, cleaning, return_exceptions=True)
 
                 logger.info({"msg": "Avatar AI shutting down"})
                 await app.state.orchestrator.stop()
@@ -250,25 +253,49 @@ def create_app(
         })
 
     # ── Who is behind the connection ──────────────────────────────────────
+    #
+    # Three things say who it is: the token kept here (`app.state.ws_token`), the user
+    # the orchestrator answers, and the last `session` message the page was sent. Every
+    # change of them is made under `who`, from the look at the token to the message, so
+    # that two changes close together cannot leave them disagreeing.
+    who = asyncio.Lock()
 
-    async def user_of(token: Optional[str], *, used: bool = True) -> Optional[str]:
-        """Who is behind the connection; None for a guest. `used` notes the session as
-        used now; looking at it does not. A failing database does not refuse the
-        connection: the person talks as a guest, without the memory."""
-        def read() -> Optional[str]:
+    async def resolve(token: Optional[str], *, used: bool = True) -> tuple[Optional[str], SessionStatus]:
+        """Who is behind the connection (None for a guest), and why. `used` notes the
+        session as used now; looking at it does not. A failing database does not
+        refuse the connection: the person talks as a guest, without the memory, and
+        the answer is UNRESOLVED, not REJECTED: their token may be a good one."""
+        def read() -> tuple[Optional[str], SessionStatus]:
+            # AUTH_DEV_USER_ID first: that user has no session, whatever is presented.
+            configured = current_user_id(config, app.state.users)
+            if configured is not None:
+                return configured, SessionStatus.SIGNED_IN
+            if not token:
+                return None, SessionStatus.GUEST
             if used:
-                return current_user_id(
-                    config, app.state.users, sessions=app.state.sessions, token=token
-                )
-            return current_user_id(config, app.state.users) or app.state.sessions.user_of(token)
+                opened = app.state.sessions.resolve(token)
+                user_id = opened[0] if opened else None
+            else:
+                user_id = app.state.sessions.user_of(token)
+            if user_id is None:
+                return None, SessionStatus.REJECTED
+            return user_id, SessionStatus.SIGNED_IN
 
         try:
             return await asyncio.to_thread(read)
         except DatabaseError as e:
             logger.error({"msg": "User lookup failed, connecting as a guest", "error": str(e)})
-            return None
+            return None, SessionStatus.UNRESOLVED
 
-    async def tell_session(user_id: Optional[str]) -> None:
+    def remember(token: Optional[str], user_id: Optional[str], frame_id: Optional[str]) -> None:
+        """The session of the connection: its token, its user, and the `auth` frame
+        that opened it. All None for a guest, and for the configured user, who has no
+        session to end."""
+        app.state.ws_token, app.state.ws_user_id, app.state.ws_auth_id = token, user_id, frame_id
+
+    async def tell_session(
+        user_id: Optional[str], reply_to: Optional[str], status: SessionStatus
+    ) -> None:
         """Tell the page the mode its connection is in."""
         user = None
         if user_id is not None:
@@ -277,25 +304,37 @@ def create_app(
             except DatabaseError:
                 found = None
             user = {"id": user_id, "display_name": found.display_name if found else user_id}
-        await app.state.orchestrator.ws_manager.send(session_message(user))
+        await app.state.orchestrator.ws_manager.send(session_message(user, reply_to, status))
 
-    async def set_connection_user(token: Optional[str], *, answer: bool = True) -> None:
+    async def set_connection_user(
+        token: Optional[str], frame_id: Optional[str] = None, *, answer: bool = True
+    ) -> None:
         """The page presented a token, or none: the connection is that user's, or a
         guest's, from now on. The orchestrator is told a user id, never a token.
-        `answer`: tell the page the mode it is in now, as every `auth` is answered."""
-        user_id = await user_of(token)
-        app.state.ws_token = token if user_id is not None else None
-        await app.state.orchestrator.set_user(user_id)
-        if answer:
-            await tell_session(user_id)
+        `frame_id` is the `id` of the `auth` frame; `answer`: tell the page the mode it
+        is in now, as every `auth` is answered."""
+        async with who:
+            user_id, status = await resolve(token)
+            if user_id is not None and token and not config.AUTH_DEV_USER_ID.strip():
+                remember(token, user_id, frame_id)
+            else:
+                remember(None, None, None)
+            await app.state.orchestrator.set_user(user_id)
+            if answer:
+                await tell_session(user_id, frame_id, status)
 
-    async def end_connection_session() -> None:
-        """The session of the connection is over: the page is told, the avatar answers
-        a guest. With AUTH_DEV_USER_ID there is no session to end."""
-        app.state.ws_token = None
-        user_id = await user_of(None)
-        await app.state.orchestrator.set_user(user_id)
-        await tell_session(user_id)
+    async def end_connection_session(token: str) -> None:
+        """The session `token` opened is over: the page is told, with the frame that
+        opened it, and the avatar answers a guest. Nothing happens when the connection
+        no longer holds that token: the page signed out or in as somebody else
+        meanwhile, and that later change stands."""
+        async with who:
+            if app.state.ws_token != token:
+                return
+            opened_by = app.state.ws_auth_id
+            remember(None, None, None)
+            await app.state.orchestrator.set_user(None)
+            await tell_session(None, opened_by, SessionStatus.ENDED)
 
     async def session_used(user_id: str) -> None:
         """A turn of the signed-in user was recorded: their session was used."""
@@ -306,13 +345,16 @@ def create_app(
     async def conversation_closed(user_id: str, reason: str) -> None:
         """A conversation of the signed-in user closed. With AUTH_LOGOUT_ON_LEAVE, a
         person who left or went silent is signed out; a new conversation they asked
-        for, or a change of user, signs nobody out."""
+        for, or a change of user, signs nobody out. Neither does the conversation of
+        somebody the connection is no longer the session of."""
         token = app.state.ws_token
-        if token is None or not config.AUTH_LOGOUT_ON_LEAVE or reason not in ("absence", "idle"):
+        if token is None or app.state.ws_user_id != user_id:
+            return
+        if not config.AUTH_LOGOUT_ON_LEAVE or reason not in ("absence", "idle"):
             return
         await asyncio.to_thread(app.state.sessions.revoke, token)
         logger.info({"msg": "Signed out on leaving", "reason": reason})
-        await end_connection_session()
+        await end_connection_session(token)
 
     async def watch_session() -> None:
         """While a signed-in page is connected, look at its session now and then: once
@@ -327,24 +369,41 @@ def create_app(
             except DatabaseError as e:
                 logger.error({"msg": "Session check failed", "error": str(e)})
                 continue
-            connected = app.state.orchestrator.ws_manager.is_connected
-            if still is None and connected and app.state.ws_token == token:
+            if still is None and app.state.orchestrator.ws_manager.is_connected:
                 logger.info({"msg": "Session of the connection is over"})
-                await end_connection_session()
+                await end_connection_session(token)
 
-    def auth_token(raw: str) -> tuple[bool, Optional[str]]:
-        """Whether the frame is an `auth` message, and the token it presents (None = a
-        guest). Every other frame is the orchestrator's."""
+    async def delete_ended_sessions() -> None:
+        """Now and then, delete the sessions that are over: they would otherwise stay
+        until the next start. A failing database is tried again at the next round."""
+        while True:
+            await asyncio.sleep(config.AUTH_SESSION_CLEANUP_MINUTES * 60)
+            try:
+                deleted = await asyncio.to_thread(app.state.sessions.delete_ended)
+            except DatabaseError as e:
+                logger.error({"msg": "Ended sessions were not deleted", "error": str(e)})
+                continue
+            if deleted:
+                logger.info({"msg": "Ended sessions deleted", "count": deleted})
+
+    def auth_frame(raw: str) -> tuple[bool, Optional[str], Optional[str]]:
+        """Whether the frame is an `auth` message, the token it presents (None = a
+        guest) and its `id` (None when it has none). Every other frame is the
+        orchestrator's."""
         if '"auth"' not in raw:
-            return False, None
+            return False, None, None
         try:
             message = json.loads(raw)
         except ValueError:
-            return False, None
+            return False, None, None
         if not isinstance(message, dict) or message.get("type") != "auth":
-            return False, None
-        token = message.get("token")
-        return True, token if isinstance(token, str) and token else None
+            return False, None, None
+        token, frame_id = message.get("token"), message.get("id")
+        return (
+            True,
+            token if isinstance(token, str) and token else None,
+            frame_id if isinstance(frame_id, str) else None,
+        )
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket) -> None:
@@ -352,19 +411,24 @@ def create_app(
         # A page that reconnects (a reload, a network drop) is taken for the user of
         # the session it had, so that their conversation stays open; it says who it is
         # with its first frame. A page that starts with anything else is a guest.
-        remembered = await user_of(app.state.ws_token, used=False)
-        if remembered is None:
-            app.state.ws_token = None
-        session_id = await orch.handle_connect(websocket, remembered)
+        async with who:
+            token = app.state.ws_token
+            remembered, _ = await resolve(token, used=False)
+            # The frame that opened the session was of the page before this one.
+            if remembered is not None and token:
+                remember(token, remembered, None)
+            else:
+                remember(None, None, None)
+            session_id = await orch.handle_connect(websocket, remembered)
         logger.info({"msg": "WebSocket connected", "session_id": session_id})
 
         try:
             said_who = False
             while True:
                 raw = await websocket.receive_text()
-                is_auth, token = auth_token(raw)
+                is_auth, token, frame_id = auth_frame(raw)
                 if is_auth:
-                    await set_connection_user(token)
+                    await set_connection_user(token, frame_id)
                 else:
                     if not said_who:
                         await set_connection_user(None, answer=False)

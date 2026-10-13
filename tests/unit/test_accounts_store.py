@@ -1,12 +1,16 @@
 """Credentials, identities and sessions in the application database, on a real SQLite
 file."""
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import timedelta
 from typing import Iterator
 
 import pytest
 
-from backend.features.accounts.store import AccountsStore, UsersStore
+from backend.features.accounts.store import (
+    DETACHED, LAST_WAY, NOT_LINKED, AccountsStore, UsersStore,
+)
 from backend.models import Identity, Session, User
 from tests.unit.accounts_fakes import START, open_stores
 
@@ -43,7 +47,6 @@ def test_an_account_creates_its_user_and_its_credentials(store, users):
     assert (found.email, found.user_id, found.password_hash) == ("linh", "u1", "hash-1")
     assert (found.failed_attempts, found.first_failure_at) == (0, None)
     assert users.get("u1").display_name == "Linh"
-    assert store.has_credentials("u1") and not store.has_credentials("u2")
 
 
 def test_a_taken_email_creates_nothing(store, users):
@@ -59,16 +62,67 @@ def test_an_unknown_email_has_no_credentials(store):
     assert store.get_credentials("nobody") is None
 
 
-def test_the_failures_of_an_email_are_counted_and_reset(store):
+WINDOW = timedelta(minutes=10)
+
+
+def test_the_attempts_on_an_email_are_counted_and_cleared(store):
     store.add_account(_user(), "linh", "hash-1")
 
-    store.set_failures("linh", 3, START)
+    charged = [store.charge_attempt("linh", START + timedelta(minutes=n), WINDOW, 5) for n in range(3)]
     counted = store.get_credentials("linh")
-    store.set_failures("linh", 0, None)
+    store.clear_attempts("linh")
 
+    assert charged == [True] * 3
     assert (counted.failed_attempts, counted.first_failure_at) == (3, START)
     cleared = store.get_credentials("linh")
     assert (cleared.failed_attempts, cleared.first_failure_at) == (0, None)
+
+
+def test_an_attempt_past_the_limit_is_refused_and_not_counted(store):
+    store.add_account(_user(), "linh", "hash-1")
+
+    charged = [store.charge_attempt("linh", START, WINDOW, 2) for _ in range(4)]
+
+    assert charged == [True, True, False, False]
+    assert store.get_credentials("linh").failed_attempts == 2
+
+
+def test_the_count_restarts_once_the_window_of_the_first_attempt_has_passed(store):
+    store.add_account(_user(), "linh", "hash-1")
+    for _ in range(2):
+        store.charge_attempt("linh", START, WINDOW, 2)
+    almost = START + WINDOW - timedelta(seconds=1)
+
+    assert store.charge_attempt("linh", almost, WINDOW, 2) is False
+    assert store.charge_attempt("linh", START + WINDOW, WINDOW, 2) is True
+
+    counted = store.get_credentials("linh")
+    assert (counted.failed_attempts, counted.first_failure_at) == (1, START + WINDOW)
+
+
+def test_an_attempt_is_charged_to_its_email_only(store):
+    store.add_account(_user(), "linh", "hash-1")
+    store.add_account(_user("u2", "An"), "an", "hash-2")
+
+    assert store.charge_attempt("nobody", START, WINDOW, 2) is False
+    assert store.charge_attempt("linh", START, WINDOW, 2) is True
+
+    assert store.get_credentials("an").failed_attempts == 0
+
+
+def test_attempts_charged_at_the_same_moment_are_all_counted(store):
+    store.add_account(_user(), "linh", "hash-1")
+    ready = threading.Barrier(32)
+
+    def charge(_) -> bool:
+        ready.wait()
+        return store.charge_attempt("linh", START, WINDOW, 5)
+
+    with ThreadPoolExecutor(max_workers=32) as pool:
+        charged = list(pool.map(charge, range(32)))
+
+    assert charged.count(True) == 5
+    assert store.get_credentials("linh").failed_attempts == 5
 
 
 # ── Identities ────────────────────────────────────────────────────────────
@@ -121,13 +175,17 @@ def test_the_same_subject_at_two_providers_is_two_identities(store):
 
 
 def test_an_identity_is_detached_from_its_user_only(store):
-    store.add_identity(_identity(), _user())
+    store.add_account(_user(), "linh", "hash-1")  # a password remains to sign in with
+    store.add_identity(_identity())
     store.add_identity(_identity("u2", subject="g-2"), _user("u2"))
 
-    assert store.delete_identity("u1", "facebook") is False
-    assert store.delete_identity("u1", "google") is True
+    assert store.detach_identity("u1", "facebook") == NOT_LINKED
+    assert store.detach_identity("u1", "google") == DETACHED
 
     assert store.list_identities("u1") == []
+    assert store.identity_user("google", "g-2") == "u2"
+    # The only way the other user has to sign in is not taken from them.
+    assert store.detach_identity("u2", "google") == LAST_WAY
     assert store.identity_user("google", "g-2") == "u2"
 
 

@@ -4,7 +4,7 @@ at external providers) and their open sessions. All the SQL of the accounts is h
 written against SQLAlchemy Core. Every method blocks; call them off the event loop.
 """
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import (
@@ -13,9 +13,11 @@ from sqlalchemy import (
     Integer,
     String,
     Table,
+    case,
     delete,
     func,
     insert,
+    literal,
     or_,
     select,
     update,
@@ -57,6 +59,9 @@ identities = Table(
     Column("email", String),
     Column("created_at", UTCDateTime, nullable=False),
 )
+
+# How `AccountsStore.detach_identity` ended.
+DETACHED, NOT_LINKED, LAST_WAY = "detached", "not_linked", "last_way"
 
 # An open sign-in. The id is the SHA-256 of the token: the token is not stored.
 sessions = Table(
@@ -144,22 +149,36 @@ class AccountsStore:
             row = connection.execute(query).first()
         return Credentials(**row._mapping) if row else None
 
-    def has_credentials(self, user_id: str) -> bool:
+    def charge_attempt(self, email: str, now: datetime, window: timedelta, limit: int) -> bool:
+        """Count one sign-in attempt on the email, before its password is looked at.
+        False, and nothing counted, when `limit` attempts were counted within `window`
+        already (or the email has no account). The count restarts at 1 once the window
+        of the first of them has passed. One statement: attempts made at the same
+        moment cannot all read the count before any of them writes it."""
+        passed = or_(
+            credentials.c.first_failure_at.is_(None),
+            credentials.c.first_failure_at <= now - window,
+        )
+        since = literal(now, UTCDateTime)
         with self._database.begin() as connection:
-            return connection.execute(
-                select(credentials.c.email).where(credentials.c.user_id == user_id)
-            ).first() is not None
+            charged = connection.execute(
+                update(credentials)
+                .where(credentials.c.email == email)
+                .where(or_(passed, credentials.c.failed_attempts < limit))
+                .values(
+                    failed_attempts=case((passed, 1), else_=credentials.c.failed_attempts + 1),
+                    first_failure_at=case((passed, since), else_=credentials.c.first_failure_at),
+                )
+            )
+        return charged.rowcount > 0
 
-    def set_failures(
-        self, email: str, failed_attempts: int, first_failure_at: Optional[datetime]
-    ) -> None:
-        """The failed sign-ins counted on an email, and since when; 0 and None once
-        a sign-in went through or the window has passed."""
+    def clear_attempts(self, email: str) -> None:
+        """Forget the attempts counted on the email: a sign-in went through."""
         with self._database.begin() as connection:
             connection.execute(
                 update(credentials)
                 .where(credentials.c.email == email)
-                .values(failed_attempts=failed_attempts, first_failure_at=first_failure_at)
+                .values(failed_attempts=0, first_failure_at=None)
             )
 
     # ── Identities at external providers ──────────────────────────────────
@@ -207,15 +226,33 @@ class AccountsStore:
         with self._database.begin() as connection:
             return [Identity(**row._mapping) for row in connection.execute(query)]
 
-    def delete_identity(self, user_id: str, provider: str) -> bool:
-        """Detach the user's identity at the provider; False when they have none."""
-        with self._database.begin() as connection:
-            deleted = connection.execute(
+    def detach_identity(self, user_id: str, provider: str) -> str:
+        """Detach the user's identity at the provider unless it is the only way they
+        have to sign in: DETACHED, NOT_LINKED (they have none there) or LAST_WAY
+        (nothing written). The look and the deletion are one transaction, the user's
+        row locked for it: two detachments at once cannot each see the other's
+        identity as the way that remains."""
+        with self._lock, self._database.begin() as connection:
+            connection.execute(
+                select(users.c.id).where(users.c.id == user_id).with_for_update()
+            )
+            linked = connection.execute(
+                select(identities.c.provider).where(identities.c.user_id == user_id)
+            ).scalars().all()
+            if provider not in linked:
+                return NOT_LINKED
+            if len(linked) == 1:
+                password = connection.execute(
+                    select(credentials.c.email).where(credentials.c.user_id == user_id)
+                ).first()
+                if password is None:
+                    return LAST_WAY
+            connection.execute(
                 delete(identities).where(
                     (identities.c.user_id == user_id) & (identities.c.provider == provider)
                 )
             )
-        return deleted.rowcount > 0
+        return DETACHED
 
     # ── Sessions ──────────────────────────────────────────────────────────
 

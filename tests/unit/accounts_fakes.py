@@ -61,8 +61,11 @@ def capture_mail(client) -> CapturingMailer:
 def create_account(client, email: str = "linh@example.com", **fields) -> dict:
     """Create an account over HTTP, code included; the session of the new user."""
     mailer = capture_mail(client)
-    asked = client.post("/auth/register", json={"email": email, "password": PASSWORD, **fields})
+    asked = client.post("/auth/register", json={"email": email})
     assert asked.status_code == 202, asked.text
-    created = client.post("/auth/register/verify", json={"email": email, "code": mailer.code(email)})
+    created = client.post(
+        "/auth/register/verify",
+        json={"email": email, "code": mailer.code(email), "password": PASSWORD, **fields},
+    )
     assert created.status_code == 201, created.text
     return created.json()
