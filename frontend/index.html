@@ -489,6 +489,23 @@
     .profile-import-question { margin-top: 6px; line-height: 1.45; }
     .profile-import-choices { display: flex; flex-wrap: wrap; gap: 8px; }
 
+    /* Persona: a description to read, then one input per field */
+    #persona-read-form { display: flex; flex-direction: column; gap: 10px; }
+    #persona-description { flex: none; min-height: 96px; line-height: 1.45; resize: vertical; }
+    #persona-description:disabled,
+    .persona-field .profile-input:disabled { opacity: 0.4; cursor: default; }
+    #persona-read { align-self: flex-end; }
+
+    #persona-message { min-height: 18px; margin: 14px 0; font-size: 13px; color: #00c864; }
+    #persona-message.error { color: #ff6b6b; }
+    #persona-message.busy { color: #ffb400; animation: profile-busy 1.2s ease-in-out infinite; }
+
+    #persona-fields { gap: 16px 28px; }
+    .persona-field { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+    .persona-field label { font-size: 13px; font-weight: 600; }
+
+    #persona-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+
     /* Narrow window: one group per row. */
     @media (max-width: 820px) {
       #profile-page { padding: 20px 12px; }
@@ -585,13 +602,14 @@
   </div>
 
   <!-- Profile page: what the avatar knows about the person (groups filled by
-       src/memory/profile-page.js) -->
+       src/memory/profile-page.js) and the personality they give it
+       (src/persona/persona-panel.js) -->
   <dialog id="profile-page" aria-labelledby="profile-title">
     <div id="profile-content">
       <div id="profile-header">
         <div>
           <h1 id="profile-title">Hồ sơ của bạn</h1>
-          <div id="profile-subtitle">Những điều avatar biết về bạn và dùng khi trò chuyện.</div>
+          <div id="profile-subtitle">Những điều avatar biết về bạn, và tính cách bạn chọn cho avatar.</div>
         </div>
         <button id="profile-close" class="profile-button" type="button">Đóng</button>
       </div>
@@ -648,6 +666,27 @@
           </div>
           <div id="profile-import-message" role="status"></div>
           <ul id="profile-import-list" class="profile-list"></ul>
+        </section>
+        <!-- Persona: the personality the person gives the avatar (fields built by
+             src/persona/persona-panel.js) -->
+        <section class="profile-block" id="persona-block" aria-labelledby="persona-title">
+          <h2 id="persona-title">Tính cách của avatar</h2>
+          <p class="profile-hint">
+            Không bắt buộc. Dán một đoạn mô tả avatar mà bạn muốn rồi bấm "Đọc mô tả" để điền
+            các trường bên dưới, hoặc tự nhập từng trường. Avatar chỉ dùng sau khi bạn bấm "Lưu".
+          </p>
+          <div id="persona-read-form">
+            <textarea id="persona-description" class="profile-input"
+              aria-label="Dán đoạn mô tả tính cách của avatar"
+              placeholder="Ví dụ: Bạn là Mai, một trợ lý vui vẻ. Xưng em và gọi tôi là anh. Trả lời ngắn gọn, đi thẳng vào ý chính."></textarea>
+            <button id="persona-read" class="profile-button primary" type="button">Đọc mô tả</button>
+          </div>
+          <div id="persona-message" role="status"></div>
+          <div class="profile-groups" id="persona-fields"></div>
+          <div id="persona-actions">
+            <button id="persona-clear" class="profile-button danger" type="button">Xoá tính cách</button>
+            <button id="persona-save" class="profile-button primary" type="button">Lưu</button>
+          </div>
         </section>
       </div>
     </div>

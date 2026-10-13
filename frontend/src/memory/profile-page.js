@@ -6,7 +6,9 @@
  * proposals: what the avatar heard in a conversation and does not use until the person
  * approves it (corrected or not) or rejects it. Under the lists, the imports: a description
  * of the person given as a file or a pasted text, which the backend reads into items,
- * and the list of what was given, each with its original.
+ * and the list of what was given, each with its original. The last block, the
+ * personality the person gives the avatar, is a panel of its own
+ * (../persona/persona-panel.js) that this page opens with itself.
  *
  * The page is an overlay over the avatar, opened by #profile-toggle: a modal <dialog>,
  * so the browser keeps the keyboard inside it and closes it on Escape. Its frame is in
@@ -81,8 +83,10 @@ function button(text, className) {
 }
 
 export class ProfilePage {
-  constructor(client) {
+  /** `persona`: the panel of the block "Tính cách của avatar", opened with the page. */
+  constructor(client, persona = null) {
     this._client = client
+    this._persona = persona
     this._page = document.getElementById('profile-page')
     this._toggle = document.getElementById('profile-toggle')
     this._close = document.getElementById('profile-close')
@@ -183,6 +187,7 @@ export class ProfilePage {
     this._page.showModal()   // modal: the page behind is inert, Tab stays inside
     this._close.focus()
     this.refresh()
+    this._persona?.open()
   }
 
   close() {

@@ -21,11 +21,15 @@ import { KnowledgeClient } from './knowledge/knowledge-client.js'
 import { KnowledgePanel } from './knowledge/knowledge-panel.js'
 import { MemoryClient } from './memory/memory-client.js'
 import { ProfilePage } from './memory/profile-page.js'
+import { PersonaClient } from './persona/persona-client.js'
+import { PersonaPanel } from './persona/persona-panel.js'
 import { TranscriptPanel } from './transcript/transcript-panel.js'
 
 async function main() {
   new KnowledgePanel(new KnowledgeClient()).init()
-  new ProfilePage(new MemoryClient()).init()
+  const persona = new PersonaPanel(new PersonaClient())
+  persona.init()
+  new ProfilePage(new MemoryClient(), persona).init()
 
   const container = document.getElementById('canvas-container')
 

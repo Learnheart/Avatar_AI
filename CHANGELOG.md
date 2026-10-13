@@ -18,6 +18,10 @@ the rules are in `CLAUDE.md` / `AGENTS.md` §7.
   one request to the language model, outside the turn (`POST /persona/read`, at most
   `PERSONA_IMPORT_MAX_CHARS`, default 8000, characters). What is read is only given
   back: nothing is stored until the person saves the fields.
+- `[persona]` `[expression]` The profile page has a block "Tính cách của avatar": a box
+  to paste a description and have it read into the fields, one input per field to type
+  or correct, "Lưu" to store them and "Xoá tính cách" to go back to the default
+  character.
 - `[persona]` `[llm]` The turn can carry a personality for the avatar: it is given to
   the LLM as a system message of its own, after the fixed character and before what is
   known about the person. Slow or failing, the turn is answered in the default character

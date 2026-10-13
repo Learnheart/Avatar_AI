@@ -7,7 +7,7 @@
 // ── Env-driven ────────────────────────────────────────────────────────────
 
 export const WS_URL = import.meta.env.VITE_WS_URL || `ws://${window.location.hostname}:8000/ws`
-// Backend HTTP API (knowledge base, memory), without a trailing slash.
+// Backend HTTP API (knowledge base, memory, persona), without a trailing slash.
 export const API_URL = (
   import.meta.env.VITE_API_URL || `http://${window.location.hostname}:8000`
 ).replace(/\/+$/, '')
@@ -42,6 +42,13 @@ export const MEMORY_ITEM_MAX_CHARS = 200
 // word (its loaders and MEMORY_IMPORT_MAX_FILE_MB).
 export const MEMORY_IMPORT_EXTENSIONS = ['.txt', '.md', '.csv', '.pdf', '.docx']
 export const MEMORY_IMPORT_MAX_FILE_MB = 5
+
+// ── Persona block of the profile page ─────────────────────────────────────
+
+// The fields and the description stop at these lengths; the backend has the last word
+// (its PERSONA_FIELD_MAX_CHARS and PERSONA_IMPORT_MAX_CHARS).
+export const PERSONA_FIELD_MAX_CHARS = 300
+export const PERSONA_IMPORT_MAX_CHARS = 8000
 
 // ── Transcript window ─────────────────────────────────────────────────────
 
