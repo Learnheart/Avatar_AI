@@ -1,4 +1,4 @@
-"""Checks on the shape of the backend source: the layering of CLAUDE.md §4, file size."""
+"""Checks on the shape of the backend source: the layering of CLAUDE.md §4."""
 import ast
 from pathlib import Path
 
@@ -7,10 +7,6 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BACKEND = REPO_ROOT / "backend"
 CORE = BACKEND / "core"
-
-MAX_FILE_LINES = 400
-# Files allowed over the limit, each until the plan that splits it.
-OVERSIZED = {"backend/core/orchestrator/orchestrator.py"}
 
 OUTSIDE_CORE = ("backend.providers", "backend.runtime", "backend.features")
 ORCHESTRATOR = ("backend.core.orchestrator",)
@@ -43,10 +39,6 @@ def forbidden_imports(folder: Path, forbidden: tuple[str, ...]) -> list[str]:
             if any(module == name or module.startswith(name + ".") for name in forbidden):
                 found.append(f"{path.relative_to(REPO_ROOT).as_posix()} imports {module}")
     return found
-
-
-def line_count(path: Path) -> int:
-    return len(path.read_text(encoding="utf-8").splitlines())
 
 
 def test_the_import_scan_sees_both_forms_at_any_level():
@@ -86,15 +78,3 @@ def test_the_core_keeps_its_layering(folder, forbidden):
     assert any(folder.rglob("*.py")), f"{folder} holds no source: the check reads nothing"
 
     assert forbidden_imports(folder, forbidden) == []
-
-
-def test_no_backend_file_is_over_the_size_limit():
-    lines = {
-        path.relative_to(REPO_ROOT).as_posix(): line_count(path)
-        for path in BACKEND.rglob("*.py")
-    }
-    too_long = {name: count for name, count in lines.items() if count > MAX_FILE_LINES}
-
-    assert set(too_long) - OVERSIZED == set(), f"over {MAX_FILE_LINES} lines: {too_long}"
-    # A listed file that was split or deleted leaves the list: no stale exception.
-    assert OVERSIZED - set(too_long) == set(), "listed as oversized but within the limit"

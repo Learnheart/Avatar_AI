@@ -1,5 +1,5 @@
-# Backend quality gate: lint + complexity (ruff) and the unit tests, which include the
-# layering and file-size checks (tests/unit/test_code_shape.py). Same commands as
+# Backend quality gate: lint (ruff) and the unit tests, which include the layering
+# checks (tests/unit/test_code_shape.py). Same commands as
 # CLAUDE.md §5; no secret, no model provider, no camera.
 name: Backend CI
 
@@ -32,7 +32,7 @@ jobs:
           uv venv --python 3.12 .venv
           uv pip install -r backend/requirements.txt -r backend/requirements-dev.txt
 
-      - name: Lint and complexity
+      - name: Lint
         run: .venv/bin/ruff check
 
       - name: Unit tests

@@ -220,7 +220,7 @@ docs/
   quality-gates.md
   YYYY-MM-DD/<feature-name>/   # plan.md, design.md, test-plan.md (§0)
 
-ruff.toml                      # lint rules and complexity limits of the backend (§5)
+ruff.toml                      # lint rules of the backend (§5)
 .github/workflows/
   backend-ci.yml               # on every push: ruff check + backend unit tests
 ```
@@ -301,8 +301,8 @@ npm run dev                     # http://localhost:3000
 Checks:
 
 ```bash
-.venv/bin/ruff check                                     # lint + complexity
-.venv/bin/python -m pytest tests/unit -q                 # backend unit tests
+.venv/bin/ruff check                                     # lint
+.venv/bin/python -m pytest tests/unit -q                 # backend unit tests, with the layering checks
 cd frontend && npm test && npm run build                 # frontend unit tests + bundle
 RUN_E2E=1 .venv/bin/python -m pytest tests/e2e -q -s     # real turn (costs Groq calls)
 ```

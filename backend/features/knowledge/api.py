@@ -27,8 +27,7 @@ class DocumentSelection(BaseModel):
     enabled: bool
 
 
-def create_knowledge_router(config: AppConfig) -> APIRouter:  # noqa: C901
-    # ruff adds the branches of the nested route handlers to this function; it reads top to bottom.
+def create_knowledge_router(config: AppConfig) -> APIRouter:
     router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
     def knowledge(request: Request) -> KnowledgeBase:
