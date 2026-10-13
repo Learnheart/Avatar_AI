@@ -113,16 +113,26 @@ def test_many_short_turns_stay_where_a_few_long_ones_are_dropped():
     assert short.tokens <= 100 and long.tokens <= 100
 
 
-def test_a_turn_larger_than_the_whole_budget_is_not_kept():
+def test_a_turn_larger_than_the_whole_budget_is_not_kept_and_evicts_nothing():
     conversation = _conversation(max_tokens=42)
-    conversation.append(_spoken("a", 30))
+    for name in "abc":
+        conversation.append(_spoken(name, 30))
 
-    conversation.append(_spoken("b", 300))
+    conversation.append(_spoken("d", 300))
+
+    assert _names(conversation) == ["a", "b", "c"]
+    assert conversation.tokens == 42
+    conversation.append(_spoken("e", 30))
+    assert _names(conversation) == ["b", "c", "e"]
+
+
+def test_a_turn_larger_than_the_budget_leaves_an_empty_conversation_empty():
+    conversation = _conversation(max_tokens=42)
+
+    conversation.append(_spoken("a", 300))
 
     assert conversation.history == ()
     assert conversation.tokens == 0
-    conversation.append(_spoken("c", 30))
-    assert _names(conversation) == ["c"]
 
 
 def test_the_estimate_follows_the_characters_per_token():

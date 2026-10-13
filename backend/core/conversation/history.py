@@ -64,8 +64,10 @@ class Conversation:
     def append(self, turn: ChatTurn) -> None:
         """Add a turn, then drop the oldest ones, whole, until the history fits its
         budget: short turns stay longer than long ones. A turn larger than the whole
-        budget is not kept either."""
+        budget is not kept, and the turns already kept stay: it evicts nothing."""
         tokens = turn_tokens(turn, self._chars_per_token)
+        if tokens > self._max_tokens:
+            return
         self._turns.append((turn, tokens))
         self._tokens += tokens
         while self._tokens > self._max_tokens:

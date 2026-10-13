@@ -44,9 +44,9 @@ summary: The earlier turns given to the LLM are bounded by an estimated number o
   keys: the persona (`PERSONA_FIELD_MAX_CHARS` per field), the profile
   (`MEMORY_PROMPT_MAX_ITEMS` × `MEMORY_ITEM_MAX_CHARS`), the passages
   (`KNOWLEDGE_TOP_K` × `KNOWLEDGE_CHUNK_CHARS`) and the answer (`LLM_MAX_TOKENS`).
-- **A turn larger than the whole budget is not kept**: the guarantee is that the
-  history fits, and one spoken utterance with its two or three sentences of answer is
-  far below the default budget.
+- **A turn larger than the whole budget is not kept, and evicts nothing**: the turns
+  already kept stay. The guarantee is that the history fits, and one spoken utterance
+  with its two or three sentences of answer is far below the default budget.
 - **The conversation owns the window**, as it owned the cap: `Conversation.append`
   drops the oldest turns, the engine and the backends still read what they are handed.
   What is stored for the long-term memory (`turns` table) is not concerned: every
