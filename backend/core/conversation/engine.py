@@ -12,6 +12,7 @@ of its user are handed to it with each utterance.
 import asyncio
 import re
 import time
+import unicodedata
 from contextlib import aclosing
 from typing import AsyncIterator, Callable, Optional, Sequence, TypeVar
 
@@ -80,6 +81,27 @@ def without_emoji(text: str) -> str:
     if cleaned == text:
         return text
     return _SPACE_BEFORE_PUNCTUATION.sub("", cleaned).strip()
+
+
+_NOT_A_WORD = re.compile(r"[^\w\s]+", re.UNICODE)
+
+
+def spoken_words(text: str) -> str:
+    """The text as two transcripts are compared: lower case, composed letters, no
+    punctuation, one space between words."""
+    plain = _NOT_A_WORD.sub(" ", unicodedata.normalize("NFC", text).lower())
+    return " ".join(plain.split())
+
+
+def invented(text: str, phrases: Sequence[str]) -> Optional[str]:
+    """The phrase of `phrases` the transcript holds, or None. `phrases` are sentences
+    an STT writes for audio that holds no such words (STT_HALLUCINATIONS)."""
+    heard = f" {spoken_words(text)} "
+    for phrase in phrases:
+        words = spoken_words(phrase)
+        if words and f" {words} " in heard:
+            return phrase
+    return None
 
 
 def _speakable(sentence: str) -> bool:
@@ -188,6 +210,21 @@ class ConversationEngine:
                 span.set_attribute("stt.confidence", round(transcript.confidence, 4))
             if transcript.no_speech_prob is not None:
                 span.set_attribute("stt.no_speech_prob", round(transcript.no_speech_prob, 4))
+            phrase = invented(transcript.text, self.config.STT_HALLUCINATIONS)
+            if phrase is not None:
+                # Not what the person said: the turn ends as for an empty transcript.
+                span.set_attribute("stt.dropped", phrase)
+                logger.warning({
+                    "msg": "Transcript dropped: a sentence the STT invents",
+                    "phrase": phrase,
+                    "audio_ms": audio_ms,
+                })
+                return Transcript(
+                    text="",
+                    language=transcript.language,
+                    confidence=transcript.confidence,
+                    no_speech_prob=transcript.no_speech_prob,
+                )
             return transcript
 
     async def _with_knowledge(self, question: str, history: Sequence[ChatTurn]) -> str:

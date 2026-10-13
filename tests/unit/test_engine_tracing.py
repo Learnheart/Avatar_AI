@@ -270,3 +270,23 @@ async def test_a_guest_or_no_persona_wired_leaves_no_persona_span(config, spans)
     await _turn(_engine(config), user_id="user-7")
 
     assert "persona" not in _by_name(spans)
+
+
+# ── Sentences the STT invents ─────────────────────────────────────────────
+
+async def test_a_dropped_transcript_keeps_what_the_stt_wrote_on_its_span(config, spans):
+    written = "Cảm ơn các bạn đã theo dõi và ủng hộ cho kênh."
+
+    await _turn(_engine(config, stt=FakeSTT(written)))
+
+    steps = _by_name(spans)
+    (heard,) = steps["stt"]
+    assert heard.attributes["stt.text"] == written
+    assert heard.attributes["stt.dropped"] == "cảm ơn các bạn đã theo dõi"
+    assert "llm" not in steps and "tts" not in steps
+
+
+async def test_a_transcript_that_is_kept_says_nothing_of_a_drop(config, spans):
+    await _turn(_engine(config))
+
+    assert "stt.dropped" not in _by_name(spans)["stt"][0].attributes

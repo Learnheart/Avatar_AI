@@ -5,7 +5,7 @@ import pytest
 
 from backend.config import AppConfig
 from backend.core.conversation.engine import (
-    ConversationEngine, split_sentences, without_emoji,
+    ConversationEngine, invented, split_sentences, spoken_words, without_emoji,
 )
 from backend.core.contracts import (
     LLM, STT, TTS, Knowledge, KnowledgeError, LLMError, Memory, MemoryServiceError, Persona,
@@ -826,3 +826,90 @@ async def test_an_answer_of_emoji_alone_speaks_the_fallback_text(config):
     events = await _collect(engine)
 
     assert _texts(events) == [config.LLM_FALLBACK_TEXT]
+
+
+# ── Sentences the STT invents ─────────────────────────────────────────────
+
+INVENTED = (
+    "Cảm ơn các bạn đã theo dõi và ủng hộ cho kênh lalaschool Để không bỏ lỡ những video "
+    "hấp dẫn"
+)
+
+
+def test_spoken_words_are_lower_case_without_punctuation():
+    assert spoken_words("  Cảm ơn,  các BẠN!\n(đã theo dõi…) ") == "cảm ơn các bạn đã theo dõi"
+    assert spoken_words("Lãi suất 5,5% một năm?") == "lãi suất 5 5 một năm"
+    # Decomposed letters compare equal to composed ones.
+    assert spoken_words("ca\u0309m o\u031bn") == spoken_words("cảm ơn")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        INVENTED,
+        "Cảm ơn các bạn đã theo dõi.",
+        "cám ơn các bạn đã xem video",
+        "Hãy đăng ký kênh để ủng hộ mình nhé!",
+        "Hẹn gặp lại các bạn trong những video tiếp theo.",
+        "Thanks for watching!",
+        "Ghiền Mì Gõ",
+    ],
+)
+def test_a_sentence_the_stt_invents_is_recognised(config, text):
+    assert invented(text, config.STT_HALLUCINATIONS) is not None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Hôm nay thời tiết thế nào",
+        "Cảm ơn bạn nhé",
+        "Tôi đã theo dõi lãi suất cả tuần nay",
+        "Kênh thanh toán nào được hỗ trợ?",
+        "Cho tôi đăng ký thẻ tín dụng",
+        "Tôi muốn xem video hướng dẫn",
+        "",
+    ],
+)
+def test_what_a_person_says_is_not_taken_for_an_invented_sentence(config, text):
+    assert invented(text, config.STT_HALLUCINATIONS) is None
+
+
+def test_a_phrase_is_matched_on_whole_words(config):
+    assert invented("ủng hộ kênhh", ("ủng hộ kênh",)) is None
+    assert invented("xin ủng hộ kênh nhé", ("ủng hộ kênh",)) == "ủng hộ kênh"
+    assert invented("anything", ("", "  ")) is None
+
+
+async def test_an_invented_transcript_starts_no_answer(config):
+    llm = FakeLLM(["Không có gì."])
+    tts = FakeTTS()
+    engine = _engine(config, FakeSTT(INVENTED), llm, tts)
+
+    events = await _collect(engine)
+
+    assert [type(event) for event in events] == [TranscriptEvent, DoneEvent]
+    assert events[0].text == ""
+    assert llm.calls == [] and tts.spoken == []
+
+
+async def test_an_invented_transcript_makes_no_lookup_and_no_memory_read(config):
+    knowledge, memory = FakeKnowledge([]), FakeMemory()
+    engine = ConversationEngine(
+        config, stt=FakeSTT(INVENTED), llm=FakeLLM([]), tts=FakeTTS(),
+        knowledge=knowledge, memory=memory,
+    )
+
+    await _collect(engine, user_id="user-7")
+
+    assert knowledge.queries == [] and memory.user_ids == []
+
+
+async def test_the_phrases_are_the_ones_of_the_config(config):
+    config.STT_HALLUCINATIONS = ("xin chào quý khách",)
+    llm = FakeLLM(["Dạ."])
+
+    await _collect(_engine(config, FakeSTT("Xin chào, quý khách!"), llm, FakeTTS()))
+    await _collect(_engine(config, FakeSTT(INVENTED), llm, FakeTTS()))
+
+    assert llm.calls == [INVENTED]

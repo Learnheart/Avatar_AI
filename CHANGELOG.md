@@ -197,6 +197,12 @@ the rules are in `CLAUDE.md` / `AGENTS.md` §7.
 - `[stt]` Whisper is asked for the detailed response (`verbose_json`) instead of the
   text alone.
 
+### Fixed
+
+- `[stt]` A sentence Whisper invents on short or unclear audio ("Cảm ơn các bạn đã theo
+  dõi và ủng hộ cho kênh…", "đăng ký kênh", "thanks for watching") is no longer
+  answered as if the person had said it: the turn ends as for silence.
+
 ## [0.1.0] - 2026-10-12
 
 MVP 1 for the demo: one complete spoken turn end to end, and answers from uploaded

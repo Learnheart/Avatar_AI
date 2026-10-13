@@ -59,6 +59,32 @@ class Prompts:
         "gì. Nếu không có lời nói, trả về chuỗi rỗng."
     )
 
+    # Sentences Whisper writes when it is given short or unclear audio: the closing
+    # words of the videos it was trained on, not something a person in front of the
+    # kiosk says. A transcript holding one of them is dropped (the turn ends as if
+    # nothing had been said). Lower case, without punctuation; add what is seen in the
+    # logs.
+    STT_HALLUCINATIONS: tuple[str, ...] = (
+        "cảm ơn các bạn đã theo dõi",
+        "cám ơn các bạn đã theo dõi",
+        "cảm ơn các bạn đã xem",
+        "cám ơn các bạn đã xem",
+        "ủng hộ cho kênh",
+        "ủng hộ kênh",
+        "đăng ký kênh",
+        "đăng kí kênh",
+        "không bỏ lỡ những video",
+        "hẹn gặp lại các bạn trong những video",
+        "hẹn gặp lại các bạn trong video",
+        "lalaschool",
+        "la la school",
+        "ghiền mì gõ",
+        "thanks for watching",
+        "thank you for watching",
+        "subscribe to my channel",
+        "subscribe to our channel",
+    )
+
     # The user message when the knowledge base has passages for the question: the
     # passages (each written with KNOWLEDGE_PASSAGE), then the question.
     KNOWLEDGE_PROMPT: str = (
