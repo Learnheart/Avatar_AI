@@ -9,16 +9,22 @@ export function authHeaders(token) {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-const USERNAME = /^[a-z0-9._-]{3,32}$/
+const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
 
 /**
- * Why a user name is refused before any request, or null when it can be sent: the
- * backend would refuse it anyway (it compares names without case).
+ * Why an email is refused before any request, or null when it can be sent: the backend
+ * would refuse it anyway. The code sent to the address is what proves it, not this.
  */
-export function usernameRefusal(username) {
-  return USERNAME.test(String(username ?? '').trim().toLowerCase())
+export function emailRefusal(email) {
+  const typed = String(email ?? '').trim()
+  return typed.length <= 254 && EMAIL.test(typed) ? null : 'Vui lòng nhập một địa chỉ email hợp lệ'
+}
+
+/** Why a code is refused before any request, or null: six digits, spaces ignored. */
+export function codeRefusal(code) {
+  return /^\d{6}$/.test(String(code ?? '').replace(/\s+/g, ''))
     ? null
-    : 'Tên đăng nhập gồm 3 đến 32 ký tự: chữ không dấu, số, dấu chấm, gạch dưới hoặc gạch ngang'
+    : 'Mã xác nhận gồm 6 chữ số'
 }
 
 /** Why a password is refused before any request, or null when it can be sent. */
@@ -32,15 +38,43 @@ export function passwordRefusal(password, minChars) {
 export function authErrorMessage(status) {
   switch (status) {
     case NETWORK_FAILURE: return 'Không kết nối được máy chủ'
-    case 401: return 'Sai tên đăng nhập hoặc mật khẩu'
+    case 401: return 'Sai email hoặc mật khẩu'
     case 403: return 'Máy này không cho phép tạo tài khoản'
     case 404: return 'Mục này không còn tồn tại'
-    case 409: return 'Tên đăng nhập này đã có người dùng'
-    case 422: return 'Tên đăng nhập hoặc mật khẩu không hợp lệ'
+    case 409: return 'Email này đã có tài khoản, hãy đăng nhập'
+    case 422: return 'Email hoặc mật khẩu không hợp lệ'
     case 429: return 'Đăng nhập sai quá nhiều lần, vui lòng thử lại sau ít phút'
     case 502: return 'Máy chủ đang gặp sự cố, vui lòng thử lại'
     default: return `Lỗi máy chủ (${status})`
   }
+}
+
+/**
+ * The message for a refused request of a code: 429 and 502 mean something else there
+ * (a code was just sent; the mail could not be sent).
+ */
+export function registerErrorMessage(status) {
+  switch (status) {
+    case 429: return 'Mã vừa được gửi, vui lòng đợi một phút rồi yêu cầu lại'
+    case 502: return 'Chưa gửi được mã tới email này, vui lòng thử lại'
+    default: return authErrorMessage(status)
+  }
+}
+
+/** The message for a refused code: 401 is a wrong code, 410 one that is over. */
+export function verifyErrorMessage(status) {
+  switch (status) {
+    case 401: return 'Mã không đúng, vui lòng kiểm tra lại'
+    case 410: return 'Mã đã hết hạn hoặc nhập sai quá nhiều lần, vui lòng yêu cầu mã mới'
+    case 409: return 'Email này đã có tài khoản, hãy đăng nhập'
+    default: return authErrorMessage(status)
+  }
+}
+
+/** What the form says once a code was sent ({ email, expires_in_sec }). */
+export function codeSentMessage(sent) {
+  const minutes = Math.max(1, Math.round((Number(sent?.expires_in_sec) || 0) / 60))
+  return `Đã gửi mã gồm 6 chữ số tới ${sent?.email}. Mã có hiệu lực trong ${minutes} phút.`
 }
 
 /** The message for a refused unlinking: 409 means something else there. */

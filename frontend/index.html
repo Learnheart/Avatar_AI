@@ -540,8 +540,11 @@
     /* Sign-in form of a guest, and the accounts linked to a signed-in user */
     #auth-form { display: flex; flex-direction: column; gap: 10px; max-width: 360px; margin-top: 16px; }
     #auth-form .profile-input { flex: none; }
-    #auth-buttons, #auth-providers { display: flex; flex-wrap: wrap; gap: 8px; }
+    #auth-credentials, #auth-code-step { display: flex; flex-direction: column; gap: 10px; }
+    #auth-credentials[hidden], #auth-code-step[hidden] { display: none; }
+    #auth-buttons, #auth-providers, #auth-code-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
     #auth-register[hidden], #auth-identities[hidden] { display: none; }
+    #auth-code-sent { line-height: 1.5; }
     #auth-message, #auth-identity-message { min-height: 18px; font-size: 13px; color: #00c864; }
     #auth-message.error, #auth-identity-message.error { color: #ff6b6b; }
 
@@ -683,16 +686,30 @@
         Đăng nhập để avatar nhớ bạn và dùng tính cách bạn chọn cho nó.
         <!-- Sign-in form (src/auth/auth-panel.js) -->
         <div id="auth-form">
-          <input id="auth-username" class="profile-input" type="text" autocomplete="username"
-            maxlength="32" aria-label="Tên đăng nhập" placeholder="Tên đăng nhập" />
-          <input id="auth-password" class="profile-input" type="password"
-            autocomplete="current-password" maxlength="256" aria-label="Mật khẩu"
-            placeholder="Mật khẩu" />
-          <div id="auth-buttons">
-            <button id="auth-login" class="profile-button primary" type="button">Đăng nhập</button>
-            <button id="auth-register" class="profile-button" type="button" hidden>Tạo tài khoản</button>
+          <div id="auth-credentials">
+            <input id="auth-email" class="profile-input" type="email" autocomplete="username"
+              maxlength="254" aria-label="Email" placeholder="Email" />
+            <input id="auth-password" class="profile-input" type="password"
+              autocomplete="current-password" maxlength="256" aria-label="Mật khẩu"
+              placeholder="Mật khẩu (ít nhất 8 ký tự)" />
+            <div id="auth-buttons">
+              <button id="auth-login" class="profile-button primary" type="button">Đăng nhập</button>
+              <button id="auth-register" class="profile-button" type="button" hidden>Tạo tài khoản</button>
+            </div>
+            <div id="auth-providers"></div>
           </div>
-          <div id="auth-providers"></div>
+          <!-- Second step of a new account: the code sent to the email -->
+          <div id="auth-code-step" hidden>
+            <div id="auth-code-sent"></div>
+            <input id="auth-code" class="profile-input" type="text" inputmode="numeric"
+              autocomplete="one-time-code" maxlength="8" aria-label="Mã xác nhận"
+              placeholder="Mã xác nhận gồm 6 chữ số" />
+            <div id="auth-code-buttons">
+              <button id="auth-verify" class="profile-button primary" type="button">Xác nhận</button>
+              <button id="auth-resend" class="profile-button" type="button">Gửi lại mã</button>
+              <button id="auth-back" class="profile-button" type="button">Quay lại</button>
+            </div>
+          </div>
           <div id="auth-message" role="status"></div>
         </div>
       </div>

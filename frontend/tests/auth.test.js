@@ -11,6 +11,9 @@ import { NETWORK_FAILURE } from '../src/memory/format.js'
 import {
   authErrorMessage,
   authHeaders,
+  codeRefusal,
+  codeSentMessage,
+  emailRefusal,
   identityLabel,
   linkableProviders,
   linkedMessage,
@@ -19,8 +22,9 @@ import {
   providerErrorMessage,
   providerLabel,
   readFragment,
+  registerErrorMessage,
   unlinkErrorMessage,
-  usernameRefusal,
+  verifyErrorMessage,
 } from '../src/auth/format.js'
 import { PageSession } from '../src/auth/session.js'
 
@@ -151,13 +155,37 @@ test('authHeaders presents a token and nothing for a guest', () => {
   assert.deepEqual(authHeaders(''), {})
 })
 
-test('usernameRefusal accepts what the backend accepts', () => {
-  for (const name of ['linh', 'Linh.Nguyen', ' linh_01 ', 'a-b', 'x'.repeat(32)]) {
-    assert.equal(usernameRefusal(name), null, name)
+test('emailRefusal accepts what the backend accepts', () => {
+  for (const email of ['linh@example.com', ' Linh.Nguyen@Example.COM ', 'a+b@x.vn']) {
+    assert.equal(emailRefusal(email), null, email)
   }
-  for (const name of ['', 'ab', 'x'.repeat(33), 'linh nguyen', 'linh@home', 'lính', null]) {
-    assert.match(usernameRefusal(name), /3 đến 32/, String(name))
+  for (const email of ['', 'linh', 'linh@', '@example.com', 'linh@example', 'linh nguyen@example.com',
+    'a@b@example.com', `${'x'.repeat(250)}@example.com`, null]) {
+    assert.match(emailRefusal(email), /email hợp lệ/, String(email))
   }
+})
+
+test('codeRefusal wants six digits and ignores the spaces typed in them', () => {
+  assert.equal(codeRefusal('123456'), null)
+  assert.equal(codeRefusal(' 123 456 '), null)
+  for (const code of ['', '12345', '1234567', '12a456', null]) {
+    assert.match(codeRefusal(code), /6 chữ số/, String(code))
+  }
+})
+
+test('the messages of the two steps of a new account', () => {
+  assert.match(registerErrorMessage(409), /đã có tài khoản/)
+  assert.match(registerErrorMessage(429), /vừa được gửi/)
+  assert.match(registerErrorMessage(502), /Chưa gửi được mã/)
+  assert.equal(registerErrorMessage(403), authErrorMessage(403))
+  assert.match(verifyErrorMessage(401), /Mã không đúng/)
+  assert.match(verifyErrorMessage(410), /yêu cầu mã mới/)
+  assert.equal(verifyErrorMessage(502), authErrorMessage(502))
+  assert.equal(
+    codeSentMessage({ email: 'linh@example.com', expires_in_sec: 600 }),
+    'Đã gửi mã gồm 6 chữ số tới linh@example.com. Mã có hiệu lực trong 10 phút.',
+  )
+  assert.match(codeSentMessage({ email: 'a@b.c', expires_in_sec: 20 }), /trong 1 phút/)
 })
 
 test('passwordRefusal follows the minimum length', () => {
@@ -168,9 +196,9 @@ test('passwordRefusal follows the minimum length', () => {
 
 test('authErrorMessage names each refusal', () => {
   assert.equal(authErrorMessage(NETWORK_FAILURE), 'Không kết nối được máy chủ')
-  assert.match(authErrorMessage(401), /Sai tên đăng nhập hoặc mật khẩu/)
+  assert.match(authErrorMessage(401), /Sai email hoặc mật khẩu/)
   assert.match(authErrorMessage(403), /không cho phép tạo tài khoản/)
-  assert.match(authErrorMessage(409), /đã có người dùng/)
+  assert.match(authErrorMessage(409), /đã có tài khoản/)
   assert.match(authErrorMessage(422), /không hợp lệ/)
   assert.match(authErrorMessage(429), /quá nhiều lần/)
   assert.match(authErrorMessage(502), /thử lại/)

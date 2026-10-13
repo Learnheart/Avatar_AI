@@ -7,7 +7,9 @@
 
 import { API_URL } from '../config.js'
 import { NETWORK_FAILURE } from '../memory/format.js'
-import { authErrorMessage, authHeaders, unlinkErrorMessage } from './format.js'
+import {
+  authErrorMessage, authHeaders, registerErrorMessage, unlinkErrorMessage, verifyErrorMessage,
+} from './format.js'
 import { pageSession } from './session.js'
 
 const AUTH_URL = `${API_URL}/auth`
@@ -47,16 +49,29 @@ export class AuthClient {
     return (await request('/providers')).json()
   }
 
-  /** Create an account; resolves with the session ({ token, user, expires_at }). */
-  async register(username, password, displayName) {
-    const body = { username, password }
-    if (displayName) body.display_name = displayName
-    return (await request('/register', json(body))).json()
+  /**
+   * Ask for an account: the backend sends a code to the email and creates nothing yet.
+   * Resolves with { email, expires_in_sec, resend_in_sec }.
+   */
+  async register(email, password) {
+    const response = await request('/register', json({ email, password }), registerErrorMessage)
+    return response.json()
+  }
+
+  /**
+   * Give back the code sent to the email: the account is created. Resolves with the
+   * session ({ token, user, expires_at }).
+   */
+  async verify(email, code) {
+    const response = await request(
+      '/register/verify', json({ email, code }), verifyErrorMessage,
+    )
+    return response.json()
   }
 
   /** Sign in; resolves with the session. */
-  async login(username, password) {
-    return (await request('/login', json({ username, password }))).json()
+  async login(email, password) {
+    return (await request('/login', json({ email, password }))).json()
   }
 
   /** End the session of the page on the backend. */

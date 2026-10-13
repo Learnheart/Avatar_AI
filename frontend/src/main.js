@@ -8,8 +8,8 @@
  *   4. LipSync → hook into audio + avatar
  *   5. Wire WS message handlers
  *
- * The knowledge panel, the profile page and the sign-in are set up first: they only
- * need the backend HTTP API.
+ * The knowledge panel, the profile page, the sign-in and the transcript window are set
+ * up first: they do not wait for the avatar.
  * The transcript window is filled from the WebSocket messages of the turn.
  */
 
@@ -39,19 +39,22 @@ async function main() {
   pageSession.onChange(() => profile.sessionChanged())
   auth.init()
 
-  const container = document.getElementById('canvas-container')
-
-  // ── 1. Avatar Renderer ────────────────────────────────────────────────
-  const avatar = new AvatarRenderer(container)
-  await avatar.init()
-
-  // ── 2. WebSocket Client ───────────────────────────────────────────────
+  // The WebSocket client is made now and connected last: the transcript window, which
+  // only needs it for its button, works while the avatar is still loading.
   const ws = new WSClient(pageSession)
 
   // The button only asks: the window is emptied by the `conversation` message that
   // follows, so the screen cannot disagree with the backend.
   const transcript = new TranscriptPanel()
   transcript.init(() => ws.sendConversationReset())
+
+  const container = document.getElementById('canvas-container')
+
+  // ── 1. Avatar Renderer ────────────────────────────────────────────────
+  const avatar = new AvatarRenderer(container)
+  await avatar.init()
+
+  // ── 2. WebSocket Client (created above, connected in step 6) ──────────
 
   // ── 3. Audio Manager ─────────────────────────────────────────────────
   const audio = new AudioManager(ws)
