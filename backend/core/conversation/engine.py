@@ -14,7 +14,8 @@ import re
 import time
 import unicodedata
 from contextlib import aclosing
-from typing import AsyncIterator, Callable, Optional, Sequence, TypeVar
+from dataclasses import replace
+from typing import AsyncIterator, Callable, Mapping, Optional, Sequence, TypeVar
 
 from opentelemetry import trace
 from opentelemetry.trace import Span
@@ -61,26 +62,54 @@ def split_sentences(text: str) -> tuple[list[str], str]:
 
 
 # What is drawn and never pronounced: the pictographs (flags and skin tones included),
-# the symbol and dingbat blocks, and the characters that only build emoji (variation
-# selector, zero width joiner, keycap, tags), with the spaces around a run of them.
+# the symbol and dingbat blocks, any character that is not a letter or a digit and is
+# followed by the emoji variation selector ("▶️"; the digit of a keycap stays), and the
+# characters that only build emoji (variation selector, zero width joiner, keycap,
+# tags), with the spaces around a run of them.
 _EMOJI = re.compile(
-    r"\s*(?:["
+    r"\s*(?:(?:[^\w\s]\uFE0F|["
     "\U0001F000-\U0001FAFF"
     "\u2300-\u23FF\u2600-\u27BF\u2B00-\u2BFF"
     "\uFE0F\u200D\u20E3\U000E0020-\U000E007F"
-    r"]+\s*)+"
+    r"])+\s*)+"
 )
 _SPACE_BEFORE_PUNCTUATION = re.compile(r"\s+(?=[.,!?…;:])")
+# A pause a symbol left where nothing can pause: at an end, or before another mark.
+_STRAY_PAUSE = re.compile(r"^[,\s]+|,(?=[.,!?…;:])|[,\s]+$")
 
 
-def without_emoji(text: str) -> str:
-    """The text as it can be spoken: every run of emoji becomes one space, and the
-    space this leaves before a punctuation mark or at an end is closed. A text without
-    emoji is returned as given."""
-    cleaned = _EMOJI.sub(" ", text)
+class SpokenSymbols:
+    """The symbols that are said in words (SPOKEN_SYMBOLS) and how they are found in a
+    text: any of them, with the variation selector that may follow it and the spaces
+    around it. The longest first, so one symbol never hides a longer one. Built once per
+    table and handed to `without_emoji`."""
+
+    def __init__(self, table: Mapping[str, str]) -> None:
+        self._table = table
+        longest_first = sorted(filter(None, table), key=len, reverse=True)
+        self._pattern: Optional[re.Pattern[str]] = re.compile(
+            r"\s*(" + "|".join(map(re.escape, longest_first)) + r")\uFE0F?\s*"
+        ) if longest_first else None
+
+    def in_words(self, text: str) -> str:
+        """The text with each symbol replaced by what is said for it, between spaces."""
+        if self._pattern is None:
+            return text
+        return self._pattern.sub(lambda found: f" {self._table[found.group(1)]} ", text)
+
+
+def without_emoji(text: str, symbols: Optional[SpokenSymbols] = None) -> str:
+    """The text as it can be spoken. A symbol of `symbols` (`SpokenSymbols` of
+    SPOKEN_SYMBOLS) becomes the word said for it, or a pause when its value holds no
+    letter; every other run of emoji becomes one space, and the space this leaves
+    before a punctuation mark or at an end is closed. A text without emoji is returned
+    as given."""
+    cleaned = symbols.in_words(text) if symbols is not None else text
+    cleaned = _EMOJI.sub(" ", cleaned)
     if cleaned == text:
         return text
-    return _SPACE_BEFORE_PUNCTUATION.sub("", cleaned).strip()
+    cleaned = _SPACE_BEFORE_PUNCTUATION.sub("", cleaned)
+    return _STRAY_PAUSE.sub("", cleaned).strip()
 
 
 _NOT_A_WORD = re.compile(r"[^\w\s]+", re.UNICODE)
@@ -93,15 +122,61 @@ def spoken_words(text: str) -> str:
     return " ".join(plain.split())
 
 
-def invented(text: str, phrases: Sequence[str]) -> Optional[str]:
-    """The phrase of `phrases` the transcript holds, or None. `phrases` are sentences
-    an STT writes for audio that holds no such words (STT_HALLUCINATIONS)."""
-    heard = f" {spoken_words(text)} "
-    for phrase in phrases:
-        words = spoken_words(phrase)
-        if words and f" {words} " in heard:
-            return phrase
-    return None
+def _transcript_sentences(text: str) -> list[str]:
+    """The transcript cut into its sentences, each as written with the spaces after
+    it: joined, they are the transcript. No punctuation = one sentence."""
+    pieces: list[str] = []
+    start = 0
+    for match in _SENTENCE_END.finditer(text):
+        pieces.append(text[start:match.end()])
+        start = match.end()
+    if start < len(text):
+        pieces.append(text[start:])
+    return pieces
+
+
+def _phrases_held(
+    sentence: str, phrases: Sequence[Sequence[str]]
+) -> tuple[list[int], int]:
+    """Which of `phrases` (each as its words) the sentence holds, matched on whole
+    words, and how many words of the sentence are outside all of them."""
+    words = spoken_words(sentence).split()
+    covered = [False] * len(words)
+    held: list[int] = []
+    for index, phrase in enumerate(phrases):
+        size = len(phrase)
+        found = False
+        for start in range(len(words) - size + 1) if size else ():
+            if words[start:start + size] == list(phrase):
+                covered[start:start + size] = [True] * size
+                found = True
+        if found:
+            held.append(index)
+    return held, covered.count(False)
+
+
+def without_invented(
+    text: str, phrases: Sequence[str], max_rest_words: int
+) -> tuple[str, tuple[str, ...]]:
+    """The transcript without the sentences an STT invents, and the phrases they were
+    recognised by (() = nothing was cut, and the text is returned as given).
+
+    `phrases` are what an STT writes for audio that holds no such words
+    (STT_HALLUCINATIONS). A sentence is invented when it holds one of them and at most
+    `max_rest_words` words outside them: a longer sentence is what a person said, even
+    with such words in it. The sentences kept are kept as written."""
+    worded = [spoken_words(phrase).split() for phrase in phrases]
+    kept: list[str] = []
+    dropped: dict[str, None] = {}  # in the order they were met, each once
+    for sentence in _transcript_sentences(text):
+        held, rest = _phrases_held(sentence, worded)
+        if held and rest <= max_rest_words:
+            dropped.update((phrases[index], None) for index in held)
+        else:
+            kept.append(sentence)
+    if not dropped:
+        return text, ()
+    return "".join(kept).strip(), tuple(dropped)
 
 
 def _speakable(sentence: str) -> bool:
@@ -150,6 +225,8 @@ class ConversationEngine:
         self._knowledge = knowledge
         self._memory = memory
         self._persona = persona
+        # The table is read once, here: it does not change while the engine runs.
+        self._symbols = SpokenSymbols(config.SPOKEN_SYMBOLS)
 
     def load(self) -> None:
         """Load local models. Call once at startup, off the event loop (blocking)."""
@@ -210,22 +287,23 @@ class ConversationEngine:
                 span.set_attribute("stt.confidence", round(transcript.confidence, 4))
             if transcript.no_speech_prob is not None:
                 span.set_attribute("stt.no_speech_prob", round(transcript.no_speech_prob, 4))
-            phrase = invented(transcript.text, self.config.STT_HALLUCINATIONS)
-            if phrase is not None:
-                # Not what the person said: the turn ends as for an empty transcript.
-                span.set_attribute("stt.dropped", phrase)
-                logger.warning({
-                    "msg": "Transcript dropped: a sentence the STT invents",
-                    "phrase": phrase,
-                    "audio_ms": audio_ms,
-                })
-                return Transcript(
-                    text="",
-                    language=transcript.language,
-                    confidence=transcript.confidence,
-                    no_speech_prob=transcript.no_speech_prob,
-                )
-            return transcript
+            kept, dropped = without_invented(
+                transcript.text,
+                self.config.STT_HALLUCINATIONS,
+                self.config.STT_HALLUCINATION_MAX_REST_WORDS,
+            )
+            if not dropped:
+                return transcript
+            # Not what the person said. `stt.text` keeps what the STT wrote; with
+            # nothing left, the turn ends as for an empty transcript.
+            span.set_attribute("stt.dropped", dropped)
+            logger.warning({
+                "msg": "Transcript cut: a sentence the STT invents",
+                "phrases": list(dropped),
+                "kept_chars": len(kept),
+                "audio_ms": audio_ms,
+            })
+            return replace(transcript, text=kept)
 
     async def _with_knowledge(self, question: str, history: Sequence[ChatTurn]) -> str:
         """The question, preceded by the passages of the uploaded documents that match
@@ -403,7 +481,8 @@ class ConversationEngine:
         self, user_text: str, history: Sequence[ChatTurn], profile: str, persona: str
     ) -> AsyncIterator[str]:
         """Stream the LLM answer as speakable sentences, without the emoji the model
-        may have written. `profile` is what is known about the person and `persona` the
+        may have written and with the symbols that have a spoken form in words.
+        `profile` is what is known about the person and `persona` the
         personality they gave the avatar ("" = nothing)."""
         # LLM_TIMEOUT_SEC bounds the wait for each delta, first token included.
         deltas = _bounded(
@@ -434,15 +513,18 @@ class ConversationEngine:
                         answer.append(delta)
                         buffer += delta
                         done, buffer = split_sentences(buffer)
-                        for sentence in filter(_speakable, map(without_emoji, done)):
+                        for sentence in filter(_speakable, map(self._spoken, done)):
                             yield sentence
 
-                tail = without_emoji(buffer.strip())
+                tail = self._spoken(buffer.strip())
                 if _speakable(tail):
                     yield tail
             finally:
                 # Whatever was generated, also when the stream fails or is cancelled.
                 span.set_attribute("llm.answer", "".join(answer))
+
+    def _spoken(self, sentence: str) -> str:
+        return without_emoji(sentence, self._symbols)
 
     async def _speak(self, sentence: str, fallback: bool = False) -> AsyncIterator[AudioEvent]:
         """Synthesize one sentence. On TTS failure the sentence is emitted as text only.

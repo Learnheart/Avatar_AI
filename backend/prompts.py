@@ -61,29 +61,73 @@ class Prompts:
 
     # Sentences Whisper writes when it is given short or unclear audio: the closing
     # words of the videos it was trained on, not something a person in front of the
-    # kiosk says. A transcript holding one of them is dropped (the turn ends as if
-    # nothing had been said). Lower case, without punctuation; add what is seen in the
-    # logs.
+    # kiosk says. A sentence of the transcript that holds one of them and little else
+    # (STT_HALLUCINATION_MAX_REST_WORDS) is cut; the other sentences are kept.
+    # A phrase is listed only when a customer would not say it to a bank kiosk: it
+    # names the video or its audience by itself ("cảm ơn các bạn đã theo dõi", "like
+    # và đăng ký kênh"). A verb with "kênh" alone is never enough, a bank has channels ("hãy
+    # đăng ký kênh SMS Banking", "ủng hộ cho kênh ..."). In doubt, leave the phrase
+    # out: an invented sentence that gets through reaches the LLM, a real question
+    # that is cut gets no answer. Lower case, without punctuation; add what is seen in
+    # the logs.
     STT_HALLUCINATIONS: tuple[str, ...] = (
         "cảm ơn các bạn đã theo dõi",
         "cám ơn các bạn đã theo dõi",
+        "các bạn đã theo dõi và hẹn gặp lại",
+        "đã theo dõi và ủng hộ cho kênh",
         "cảm ơn các bạn đã xem",
         "cám ơn các bạn đã xem",
-        "ủng hộ cho kênh",
-        "ủng hộ kênh",
-        "đăng ký kênh",
-        "đăng kí kênh",
+        "cảm ơn các bạn đã lắng nghe",
+        "cám ơn các bạn đã lắng nghe",
+        "chúc các bạn xem video vui vẻ",
+        "các bạn đã xem video",
+        "đăng ký kênh để ủng hộ",
+        "đăng kí kênh để ủng hộ",
+        "đăng ký kênh nhé",
+        "đăng kí kênh nhé",
+        "like và đăng ký kênh",
+        "like và đăng kí kênh",
+        "share và đăng ký kênh",
+        "share và đăng kí kênh",
+        "đăng ký kênh để xem những video",
+        "đăng kí kênh để xem những video",
+        "đăng ký kênh để nhận được những video mới nhất",
+        "đăng kí kênh để nhận được những video mới nhất",
+        "nhận được những video mới nhất nhé",
+        "ủng hộ kênh nhé các bạn",
         "không bỏ lỡ những video",
+        "không bỏ lỡ những video hấp dẫn",
         "hẹn gặp lại các bạn trong những video",
         "hẹn gặp lại các bạn trong video",
         "lalaschool",
         "la la school",
         "ghiền mì gõ",
+        "hãy subscribe cho kênh",
         "thanks for watching",
         "thank you for watching",
+        "please subscribe",
         "subscribe to my channel",
         "subscribe to our channel",
+        "phụ đề được thực hiện bởi",
+        "amara org",
     )
+
+    # Symbols of an answer that are read aloud and not deleted with the emoji: the
+    # word said in place of each. A value without a letter is a pause (the arrows).
+    # Every other symbol of the emoji blocks is dropped.
+    SPOKEN_SYMBOLS: dict[str, str] = field(default_factory=lambda: {
+        "\u2795": "cộng",   # ➕
+        "\u2796": "trừ",    # ➖
+        "\u2716": "nhân",   # ✖
+        "\u2715": "nhân",   # ✕
+        "\u2797": "chia",   # ➗
+        **{arrow: "," for arrow in (
+            "\u2190\u2191\u2192\u2193\u2194\u2195\u2196\u2197\u2198\u2199"  # ← ↑ → ↓ ↔ ↕ ↖ ↗ ↘ ↙
+            "\u21A9\u21AA\u21D0\u21D2\u21D4"                                    # ↩ ↪ ⇐ ⇒ ⇔
+            "\u2794\u279C\u279D\u279E\u27A1\u27A4"                              # ➔ ➜ ➝ ➞ ➡ ➤
+            "\u2934\u2935\u2B05\u2B06\u2B07"                                    # ⤴ ⤵ ⬅ ⬆ ⬇
+        )},
+    })
 
     # The user message when the knowledge base has passages for the question: the
     # passages (each written with KNOWLEDGE_PASSAGE), then the question.

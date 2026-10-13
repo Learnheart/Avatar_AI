@@ -5,7 +5,7 @@ import pytest
 
 from backend.config import AppConfig
 from backend.core.conversation.engine import (
-    ConversationEngine, invented, split_sentences, spoken_words, without_emoji,
+    ConversationEngine, SpokenSymbols, split_sentences, spoken_words, without_emoji, without_invented,
 )
 from backend.core.contracts import (
     LLM, STT, TTS, Knowledge, KnowledgeError, LLMError, Memory, MemoryServiceError, Persona,
@@ -788,6 +788,52 @@ def test_without_emoji_returns_a_text_without_emoji_as_given(text):
     assert without_emoji(text) == text
 
 
+@pytest.mark.parametrize(
+    ("written", "spoken"),
+    [
+        ("3 ➕ 2 ➡ 5", "3 cộng 2, 5"),
+        ("3➕2", "3 cộng 2"),
+        ("10 ➖ 4, 6 ✖ 2, 6 ✕ 2 và 8 ➗ 2.", "10 trừ 4, 6 nhân 2, 6 nhân 2 và 8 chia 2."),
+        ("3 ➕️ 2 ➡️ 5", "3 cộng 2, 5"),                    # with the variation selector
+        ("Chọn Cài đặt → Bảo mật ➡ Đổi mật khẩu.", "Chọn Cài đặt, Bảo mật, Đổi mật khẩu."),
+        ("➡ Bấm vào đây ➡", "Bấm vào đây"),                # no pause at an end
+        ("Xong rồi ➡.", "Xong rồi."),                      # nor before another mark
+    ],
+)
+def test_a_symbol_with_a_spoken_form_is_said_in_words(config, written, spoken):
+    assert without_emoji(written, SpokenSymbols(config.SPOKEN_SYMBOLS)) == spoken
+
+
+@pytest.mark.parametrize(
+    ("written", "spoken"),
+    [
+        ("5 ★ sao", "5 sao"),                              # not "5 sao sao"
+        ("▶️ Bắt đầu", "Bắt đầu"),
+        ("Bấm ▶️ để nghe, ⏸️ để dừng ‼️", "Bấm để nghe, để dừng"),
+        ("Bấm phím 1️⃣ hoặc #️⃣.", "Bấm phím 1 hoặc."),      # a keycap keeps its digit
+        ("Trời đẹp quá nhỉ 😊", "Trời đẹp quá nhỉ"),
+    ],
+)
+def test_a_symbol_without_a_spoken_form_is_still_removed(config, written, spoken):
+    assert without_emoji(written, SpokenSymbols(config.SPOKEN_SYMBOLS)) == spoken
+
+
+def test_a_text_without_symbols_is_returned_as_given_with_the_spoken_table(config):
+    text = "Số 1.000.000 đồng — tức là 2 x 3 = 6, đúng không?"
+
+    assert without_emoji(text, SpokenSymbols(config.SPOKEN_SYMBOLS)) == text
+
+
+async def test_the_symbols_of_the_answer_are_spoken_in_words(config):
+    llm = FakeLLM(["Dạ, 3 ➕ 2 ", "➡ 5 ạ. ", "▶️ Mời anh hỏi tiếp."])
+    tts = FakeTTS()
+    engine = _engine(config, FakeSTT(), llm, tts)
+
+    await _collect(engine)
+
+    assert tts.spoken == ["Dạ, 3 cộng 2, 5 ạ.", "Mời anh hỏi tiếp."]
+
+
 async def test_emoji_of_the_answer_are_not_spoken_shown_or_remembered(config):
     llm = FakeLLM(["Trời đẹp quá nhỉ 😊 ", "Anh có kế hoạch gì chưa? 💕"])
     tts = FakeTTS()
@@ -843,6 +889,13 @@ def test_spoken_words_are_lower_case_without_punctuation():
     assert spoken_words("ca\u0309m o\u031bn") == spoken_words("cảm ơn")
 
 
+def _cut(config: AppConfig, text: str) -> str:
+    kept, _ = without_invented(
+        text, config.STT_HALLUCINATIONS, config.STT_HALLUCINATION_MAX_REST_WORDS
+    )
+    return kept
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -853,10 +906,30 @@ def test_spoken_words_are_lower_case_without_punctuation():
         "Hẹn gặp lại các bạn trong những video tiếp theo.",
         "Thanks for watching!",
         "Ghiền Mì Gõ",
+        "Hãy đăng kí kênh để ủng hộ mình",
+        "Đăng ký kênh nhé",
+        "Hãy like và đăng ký kênh",
+        "Đừng quên like, share và đăng ký kênh nhé",
+        "Đăng ký kênh để xem những video mới nhất",
+        "Các bạn hãy đăng ký kênh để nhận được những video mới nhất nhé",
+        "Cảm ơn các bạn đã theo dõi và hẹn gặp lại.",
+        "Ủng hộ kênh nhé các bạn",
+        "Phụ đề được thực hiện bởi cộng đồng Amara.org",
+        "Hãy subscribe cho kênh Ghiền Mì Gõ Để không bỏ lỡ những video hấp dẫn",
+        "Hãy subscribe cho kênh La La School Để không bỏ lỡ những video hấp dẫn",
+        "Thank you for watching.",
+        "Cảm ơn các bạn đã lắng nghe.",
+        "Chúc các bạn xem video vui vẻ.",
+        "Please subscribe.",
     ],
 )
-def test_a_sentence_the_stt_invents_is_recognised(config, text):
-    assert invented(text, config.STT_HALLUCINATIONS) is not None
+def test_a_sentence_the_stt_invents_is_dropped_whole(config, text):
+    kept, dropped = without_invented(
+        text, config.STT_HALLUCINATIONS, config.STT_HALLUCINATION_MAX_REST_WORDS
+    )
+
+    assert kept == ""
+    assert dropped and set(dropped) <= set(config.STT_HALLUCINATIONS)
 
 
 @pytest.mark.parametrize(
@@ -868,17 +941,140 @@ def test_a_sentence_the_stt_invents_is_recognised(config, text):
         "Kênh thanh toán nào được hỗ trợ?",
         "Cho tôi đăng ký thẻ tín dụng",
         "Tôi muốn xem video hướng dẫn",
+        "Tôi muốn đăng ký kênh SMS Banking",
+        "Ngân hàng có ủng hộ kênh thanh toán QR không",
+        "Đăng ký kênh SMS",
+        "Ngân hàng có ủng hộ cho kênh thanh toán QR không",
+        "Đăng ký kênh để nhận OTP",
+        "Đăng ký kênh để nhận thông báo",
+        "Tôi muốn ủng hộ mình một tài khoản tiết kiệm",
+        # A bank has channels too: a verb with "kênh" is what a customer asks for.
+        "Hãy đăng ký kênh SMS Banking.",
+        "Hãy đăng ký kênh SMS cho tôi.",
+        "Hãy đăng ký kênh thông báo",
+        "Nhớ đăng ký kênh eBank",
+        "Đừng quên đăng ký kênh nhận OTP",
+        "Ủng hộ cho kênh quỹ vắc xin",
+        "Ủng hộ kênh của mình thì làm sao",
+        "Subscribe cho kênh nào",
+        "Đăng ký kênh nào?",
+        "Cảm ơn bạn",
+        "Cảm ơn các bạn đã hỗ trợ tôi",
+        "Tôi muốn xem video hướng dẫn mở tài khoản",
+        "  Lãi suất là 5.5% một năm.  Còn kỳ hạn sáu tháng?\n",
         "",
     ],
 )
-def test_what_a_person_says_is_not_taken_for_an_invented_sentence(config, text):
-    assert invented(text, config.STT_HALLUCINATIONS) is None
+def test_what_a_person_says_is_kept_as_it_was_written(config, text):
+    assert without_invented(
+        text, config.STT_HALLUCINATIONS, config.STT_HALLUCINATION_MAX_REST_WORDS
+    ) == (text, ())
 
 
-def test_a_phrase_is_matched_on_whole_words(config):
-    assert invented("ủng hộ kênhh", ("ủng hộ kênh",)) is None
-    assert invented("xin ủng hộ kênh nhé", ("ủng hộ kênh",)) == "ủng hộ kênh"
-    assert invented("anything", ("", "  ")) is None
+def test_an_invented_sentence_is_cut_and_the_real_ones_are_kept(config):
+    question = "Lãi suất tiết kiệm bao nhiêu?"
+
+    assert _cut(config, f"{question} Cảm ơn các bạn đã theo dõi.") == question
+    assert _cut(config, f"Cảm ơn các bạn đã theo dõi. {question}") == question
+    assert _cut(config, f"Thanks for watching!\n{question} Hãy đăng ký kênh nhé.") == question
+    assert _cut(
+        config, f"Tôi tên là Linh. Cảm ơn các bạn đã xem video. {question}"
+    ) == f"Tôi tên là Linh. {question}"
+
+
+def test_an_unpunctuated_mix_of_real_and_invented_words_is_kept_whole(config):
+    text = "Lãi suất tiết kiệm bao nhiêu cảm ơn các bạn đã theo dõi"
+
+    assert without_invented(
+        text, config.STT_HALLUCINATIONS, config.STT_HALLUCINATION_MAX_REST_WORDS
+    ) == (text, ())
+
+
+def test_the_phrases_a_cut_was_recognised_by_are_told_once_each():
+    phrases = ("cảm ơn các bạn", "hẹn gặp lại", "không có trong câu")
+
+    kept, dropped = without_invented(
+        "Hẹn gặp lại. Mấy giờ rồi nhỉ các bạn? Cảm ơn các bạn! Hẹn gặp lại nhé.", phrases, 1
+    )
+
+    assert kept == "Mấy giờ rồi nhỉ các bạn?"
+    assert dropped == ("hẹn gặp lại", "cảm ơn các bạn")
+
+
+def test_a_sentence_is_invented_up_to_the_words_allowed_beside_the_phrase():
+    phrases = ("cảm ơn các bạn",)
+    text = "Xin cảm ơn các bạn rất nhiều"  # three words beside the phrase
+
+    assert without_invented(text, phrases, 3) == ("", phrases)
+    assert without_invented(text, phrases, 2) == (text, ())
+    assert without_invented("Cảm ơn các bạn", phrases, 0) == ("", phrases)
+
+
+def test_words_shared_by_two_phrases_are_counted_once():
+    # "đăng ký kênh" belongs to both phrases: one word is left, not a negative count
+    # nor three.
+    phrases = ("hãy đăng ký kênh", "đăng ký kênh để")
+
+    assert without_invented("Hãy đăng ký kênh để xem", phrases, 1) == ("", phrases)
+    assert without_invented("Hãy đăng ký kênh để xem", phrases, 0)[1] == ()
+
+
+def test_a_phrase_is_matched_on_whole_words():
+    assert without_invented("ủng hộ kênhh", ("ủng hộ kênh",), 3) == ("ủng hộ kênhh", ())
+    assert without_invented("xin ủng hộ kênh nhé", ("ủng hộ kênh",), 3) == ("", ("ủng hộ kênh",))
+    assert without_invented("anything", ("", "  "), 3) == ("anything", ())
+
+
+async def test_the_engine_answers_what_is_left_of_a_cut_transcript(config):
+    llm = FakeLLM(["Dạ, 5,5% một năm ạ."])
+    knowledge = FakeKnowledge([])
+    stt = FakeSTT("Lãi suất tiết kiệm bao nhiêu? Cảm ơn các bạn đã theo dõi.")
+    stt.confidence = 0.8
+    engine = ConversationEngine(config, stt=stt, llm=llm, tts=FakeTTS(), knowledge=knowledge)
+
+    events = await _collect(engine)
+
+    assert events[0] == TranscriptEvent("Lãi suất tiết kiệm bao nhiêu?", 0.8)
+    assert knowledge.queries == ["Lãi suất tiết kiệm bao nhiêu?"]
+    assert llm.calls == ["Lãi suất tiết kiệm bao nhiêu?"]
+    assert _texts(events) == ["Dạ, 5,5% một năm ạ."]
+
+
+async def test_a_question_holding_words_of_a_phrase_is_answered(config):
+    # Dropped whole by the first filter, which matched "đăng ký kênh" anywhere.
+    llm = FakeLLM(["Dạ được ạ."])
+    engine = _engine(config, FakeSTT("Tôi muốn đăng ký kênh SMS Banking"), llm, FakeTTS())
+
+    events = await _collect(engine)
+
+    assert events[0].text == "Tôi muốn đăng ký kênh SMS Banking"
+    assert llm.calls == ["Tôi muốn đăng ký kênh SMS Banking"]
+
+
+async def test_the_span_of_a_cut_transcript_keeps_what_was_written_and_what_was_dropped(
+    config, spans
+):
+    written = "Lãi suất tiết kiệm bao nhiêu? Cảm ơn các bạn đã theo dõi và ủng hộ cho kênh."
+
+    await _collect(_engine(config, FakeSTT(written), FakeLLM(["Dạ."]), FakeTTS()))
+
+    (heard,) = [span for span in spans.get_finished_spans() if span.name == "stt"]
+    assert heard.attributes["stt.text"] == written
+    assert heard.attributes["stt.dropped"] == (
+        "cảm ơn các bạn đã theo dõi",
+        "đã theo dõi và ủng hộ cho kênh",
+    )
+
+
+async def test_the_words_allowed_beside_a_phrase_are_the_ones_of_the_config(config):
+    said = "Dạ cảm ơn các bạn đã theo dõi chương trình hôm nay"  # five words beside
+    llm = FakeLLM(["Dạ."])
+
+    await _collect(_engine(config, FakeSTT(said), llm, FakeTTS()))
+    config.STT_HALLUCINATION_MAX_REST_WORDS = 5
+    await _collect(_engine(config, FakeSTT(said), llm, FakeTTS()))
+
+    assert llm.calls == [said]
 
 
 async def test_an_invented_transcript_starts_no_answer(config):

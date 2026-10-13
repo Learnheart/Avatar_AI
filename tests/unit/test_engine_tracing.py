@@ -282,7 +282,10 @@ async def test_a_dropped_transcript_keeps_what_the_stt_wrote_on_its_span(config,
     steps = _by_name(spans)
     (heard,) = steps["stt"]
     assert heard.attributes["stt.text"] == written
-    assert heard.attributes["stt.dropped"] == "cảm ơn các bạn đã theo dõi"
+    assert tuple(heard.attributes["stt.dropped"]) == (
+        "cảm ơn các bạn đã theo dõi",
+        "đã theo dõi và ủng hộ cho kênh",
+    )
     assert "llm" not in steps and "tts" not in steps
 
 
