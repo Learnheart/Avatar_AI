@@ -4,7 +4,7 @@ date: 2026-10-13
 status: todo
 agent: avatar
 modules: orchestrator, expression, memory, persona
-summary: Sign-in for the kiosk — every person starts as a guest, signs in with an account to get their memory and their avatar's persona, and is signed out when they leave; a session token replaces AUTH_DEV_USER_ID as the source of the user
+summary: Sign-in for the kiosk — every person starts as a guest and signs in, with a local account or with Google / Facebook, to get their memory and their avatar's persona; the session is kept and expires after a configurable time; a session token replaces AUTH_DEV_USER_ID as the source of the user
 ---
 
 # Sign-in: guest and signed-in user
@@ -38,8 +38,11 @@ why, what and the order of the work.
   microphone or the avatar.
 - Signing in or out starts a new conversation: what a guest said is never attributed to
   the user who signs in afterwards.
-- A session ends when the person signs out, when the person leaves the kiosk, or after
-  a time without use; the next person is a guest.
+- A session is kept: the person stays signed in across a reload and a restart of the
+  browser. It ends when the person signs out or when it expires, after a time without
+  use or at a maximum age, both configurable.
+- A person can sign in with a Google or a Facebook account, and link one to the
+  account they already have, so that either way reaches the same memory.
 - A person creates their own account at the kiosk (this can be switched off).
 - No secret is stored as given: neither a password nor a session token can be read
   back from the database, the logs or the traces.
@@ -64,19 +67,28 @@ why, what and the order of the work.
   of the open connection; the orchestrator closes the conversation in progress as it
   already does for a user change, and answers with a `session` message naming the mode
   the connection is now in.
-- **The kiosk signs a person out when they leave.** When the orchestrator closes a
-  signed-in user's conversation because nobody is there (`absence`) or nothing was
-  said (`idle`), the session is revoked and the page goes back to guest. A new
-  conversation asked with the button does not sign out. Without a conversation (the
-  person only uses the profile page), the session ends after
-  `AUTH_SESSION_IDLE_MINUTES` without a request.
+- **The session is kept and ends by time** (changed on 2026-10-13, on review): it
+  expires after `AUTH_SESSION_IDLE_MINUTES` (30) without use and at
+  `AUTH_SESSION_MAX_HOURS` (12) of age whatever happened; the page keeps the token
+  across restarts of the browser. Signing a person out when they leave the kiosk
+  (conversation closed for `absence` or `idle`) becomes an option that is off by
+  default, `AUTH_LOGOUT_ON_LEAVE`. **What this costs on a shared kiosk**: until the
+  session expires, the next person in front of it is taken for the one who signed in.
+  The timeout is the control; the page always shows who is signed in.
 - **Accounts are local first: a user name and a password**, behind one small boundary
   (an *authenticator*: credentials in → a user or a refusal out), so another way of
   proving who one is can be added without touching sessions, modes or the turn. The
   password is hashed with scrypt from the standard library: no new dependency.
-  Company single sign-on, and signing in from a phone by scanning a code shown on the
-  kiosk (so that no password is typed on a public screen), are the obvious next
-  authenticators and are not designed here.
+- **Google and Facebook are authenticators of the same kind**: the OAuth 2
+  authorization-code flow with PKCE, the person's identity read from the provider and
+  nothing else kept (no access to their Google or Facebook data). An identity is the
+  pair (provider, id at the provider); linking is an explicit act of a signed-in
+  person, and two accounts are never merged because their emails match. A provider
+  whose keys are not set is not offered, so the feature costs nothing where it is not
+  wanted. Company single sign-on plugs in the same way. Signing in from one's own
+  phone by a code shown on the kiosk, so that no Google or Facebook password is typed
+  on a public screen, is the better form for a shared kiosk; it is named in the design
+  and not designed.
 - **`current_user_id()` stays the single seam** and gains the token: `AUTH_DEV_USER_ID`
   set → that user, as today; otherwise the token → its session → its user; otherwise a
   guest. One FastAPI dependency in `features/accounts/` replaces the copies in the
@@ -94,7 +106,9 @@ why, what and the order of the work.
 
 - Roles and who may manage the knowledge base. `/knowledge/documents` is open to
   everyone today, guests included, and stays so here. It deserves its own decision.
-- Company single sign-on, sign-in by phone, recognising a person by face or voice.
+- Company single sign-on, sign-in by a code approved on one's phone, recognising a
+  person by face or voice.
+- Anything done on the person's Google or Facebook account: only who they are is read.
 - Changing or resetting a password, deleting an account and its data.
 - Several people talking at once: the kiosk still has one connection and one
   conversation.
@@ -103,7 +117,7 @@ why, what and the order of the work.
 
 ## Implementation approach
 
-Five slices, each tested and committed on its own.
+Six slices, each tested and committed on its own.
 
 1. **Sessions and accounts on the server.** Tables `credentials` and `sessions`, their
    store, the password hashing, the local authenticator, the session service (open,
@@ -113,12 +127,16 @@ Five slices, each tested and committed on its own.
    `/auth/logout`, `/auth/session`; the attempt limit.
 3. **The WebSocket.** The `auth` and `session` messages; `main.py` resolving the token
    and the orchestrator changing the user of the open connection.
-4. **Signed out on leaving.** The orchestrator tells the wiring why a user's
-   conversation closed; the session is revoked on `absence` and `idle`; idle sessions
-   expire.
-5. **The page.** `frontend/src/auth/`: the session held by the page, the sign-in form
-   in place of the guest note, the mode shown beside the profile button, the token on
-   every request and on the WebSocket.
+4. **Expiry, and signing out on leaving.** Sessions expire by idle time and by age,
+   on every use and at startup; with `AUTH_LOGOUT_ON_LEAVE`, the orchestrator tells the
+   wiring why a user's conversation closed and the session is revoked on `absence` and
+   `idle`.
+5. **Google and Facebook.** The `identities` table, the start, callback and exchange
+   routes, linking and unlinking. Needs an application registered at each provider.
+6. **The page.** `frontend/src/auth/`: the session held by the page, the sign-in form
+   in place of the guest note with its provider buttons, the mode shown beside the
+   profile button, the linked accounts on the profile page, the token on every request
+   and on the WebSocket.
 
 Then the docs: `CLAUDE.md` / `AGENTS.md`, `docs/ARCHITECTURE.md` (sign-in is no longer
 planned), `docs/quality-gates.md`, `CHANGELOG.md`, `.env.example`.
@@ -126,19 +144,26 @@ planned), `docs/quality-gates.md`, `CHANGELOG.md`, `.env.example`.
 ## To-do
 
 - [ ] The decisions above reviewed by a human, in particular: accounts by user name and
-      password, self-registration at the kiosk, signing out on leaving
+      password, self-registration at the kiosk, the two timeouts of a kept session
+- [ ] Outside the code, by a human: an application registered at Google and at Meta,
+      their client ids and secrets, the callback URL declared at each
 - [ ] Slice 1 — credentials, sessions, password hashing, local authenticator, with unit
       tests
 - [ ] Slice 2 — `current_user_id()` from a token, the shared dependency, the `/auth`
       routes and the attempt limit, with unit tests
 - [ ] Slice 3 — the `auth` and `session` WebSocket messages, with unit tests
-- [ ] Slice 4 — signed out on `absence` and `idle`, idle sessions expired, with unit
-      tests
-- [ ] Slice 5 — the sign-in form and the mode on the page, with unit tests,
-      `npm run build`
+- [ ] Slice 4 — sessions expired by idle time and age, signed out on `absence` and
+      `idle` when asked, with unit tests
+- [ ] Slice 5 — Google and Facebook: sign-in, linking, unlinking, with unit tests (the
+      provider faked)
+- [ ] Slice 6 — the sign-in form, the mode and the linked accounts on the page, with
+      unit tests, `npm run build`
 - [ ] `CLAUDE.md` / `AGENTS.md`, `docs/ARCHITECTURE.md`, `docs/quality-gates.md`,
       `CHANGELOG.md`, `.env.example`
-- [ ] Real run: register, sign in, a turn answered with the profile, walk away and come
-      back as a guest; first audio and end-to-end times reported
+- [ ] Real run: register, sign in, a turn answered with the profile, the session still
+      there after a reload and gone after its timeout; first audio and end-to-end times
+      reported
+- [ ] Real sign-in with Google and with Facebook, and one of them linked to a local
+      account
 - [ ] The page in a real browser: register, sign in, reload, sign out
 - [ ] Human verification
