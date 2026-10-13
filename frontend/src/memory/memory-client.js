@@ -7,7 +7,9 @@
  */
 
 import { API_URL, MEMORY_IMPORT_MAX_FILE_MB } from '../config.js'
-import { NETWORK_FAILURE, apiErrorMessage, importErrorMessage } from './format.js'
+import { authHeaders } from '../auth/format.js'
+import { pageSession } from '../auth/session.js'
+import { NETWORK_FAILURE, UNAUTHORIZED, apiErrorMessage, importErrorMessage } from './format.js'
 
 const ITEMS_URL = `${API_URL}/memory/items`
 const IMPORTS_URL = `${API_URL}/memory/imports`
@@ -27,10 +29,15 @@ function importFailure(status) {
 async function request(url, options, message = apiErrorMessage) {
   let response
   try {
-    response = await fetch(url, options)
+    response = await fetch(url, {
+      ...options,
+      headers: { ...options?.headers, ...authHeaders(pageSession.token) },
+    })
   } catch {
     throw failure(NETWORK_FAILURE, message)
   }
+  // The backend no longer knows the session the page presents: the page is a guest.
+  if (response.status === UNAUTHORIZED && pageSession.token) pageSession.signOut()
   if (!response.ok) throw failure(response.status, message)
   return response
 }

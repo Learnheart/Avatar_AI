@@ -8,14 +8,17 @@
  *   4. LipSync → hook into audio + avatar
  *   5. Wire WS message handlers
  *
- * The knowledge panel and the profile page are set up first: they only need the
- * backend HTTP API.
+ * The knowledge panel, the profile page and the sign-in are set up first: they only
+ * need the backend HTTP API.
  * The transcript window is filled from the WebSocket messages of the turn.
  */
 
 import { AvatarRenderer } from './avatar/avatar-renderer.js'
 import { WSClient } from './ws-client.js'
 import { AudioManager } from './audio/audio-manager.js'
+import { AuthClient } from './auth/auth-client.js'
+import { AuthPanel } from './auth/auth-panel.js'
+import { pageSession } from './auth/session.js'
 import { LipSync } from './avatar/lip-sync.js'
 import { KnowledgeClient } from './knowledge/knowledge-client.js'
 import { KnowledgePanel } from './knowledge/knowledge-panel.js'
@@ -29,7 +32,12 @@ async function main() {
   new KnowledgePanel(new KnowledgeClient()).init()
   const persona = new PersonaPanel(new PersonaClient())
   persona.init()
-  new ProfilePage(new MemoryClient(), persona).init()
+  const profile = new ProfilePage(new MemoryClient(), persona)
+  profile.init()
+  // Sign-in: the page starts as a guest, or as the user of the session it kept.
+  const auth = new AuthPanel(new AuthClient(), pageSession, () => profile.open())
+  pageSession.onChange(() => profile.sessionChanged())
+  auth.init()
 
   const container = document.getElementById('canvas-container')
 
@@ -38,7 +46,7 @@ async function main() {
   await avatar.init()
 
   // ── 2. WebSocket Client ───────────────────────────────────────────────
-  const ws = new WSClient()
+  const ws = new WSClient(pageSession)
 
   // The button only asks: the window is emptied by the `conversation` message that
   // follows, so the screen cannot disagree with the backend.
@@ -92,6 +100,12 @@ async function main() {
   ws.on('state', (msg) => {
     ws.setStatus(msg.state)
     avatar.setState(msg.state)
+  })
+
+  // session → the mode the backend holds this connection in: it ended the session
+  // (expired, signed out elsewhere, the person left), or confirms who is signed in
+  ws.on('session', (msg) => {
+    if (pageSession.token) pageSession.confirm(msg.user)
   })
 
   // connected → log session info

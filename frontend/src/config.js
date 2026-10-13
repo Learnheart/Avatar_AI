@@ -7,7 +7,7 @@
 // ── Env-driven ────────────────────────────────────────────────────────────
 
 export const WS_URL = import.meta.env.VITE_WS_URL || `ws://${window.location.hostname}:8000/ws`
-// Backend HTTP API (knowledge base, memory, persona), without a trailing slash.
+// Backend HTTP API (knowledge base, memory, persona, sign-in), without a trailing slash.
 export const API_URL = (
   import.meta.env.VITE_API_URL || `http://${window.location.hostname}:8000`
 ).replace(/\/+$/, '')
@@ -42,6 +42,12 @@ export const MEMORY_ITEM_MAX_CHARS = 200
 // word (its loaders and MEMORY_IMPORT_MAX_FILE_MB).
 export const MEMORY_IMPORT_EXTENSIONS = ['.txt', '.md', '.csv', '.pdf', '.docx']
 export const MEMORY_IMPORT_MAX_FILE_MB = 5
+
+// ── Sign-in ───────────────────────────────────────────────────────────────
+
+// Checked before an account is created; the backend has the last word (its
+// AUTH_PASSWORD_MIN_CHARS).
+export const AUTH_PASSWORD_MIN_CHARS = 8
 
 // ── Persona block of the profile page ─────────────────────────────────────
 

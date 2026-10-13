@@ -4,6 +4,8 @@
  * - Auto-reconnect with exponential backoff (WS_BACKOFF_* in config.js)
  * - on(type, handler) subscription to dispatch incoming messages
  * - send() helpers for audio_chunk / playback_ended / conversation_reset to the backend
+ * - Says who the page is: an `auth` message with the session token, first on every
+ *   connection and again whenever the page signs in or out
  * - Status label: connection status + avatar state (idle/listening/thinking/speaking)
  */
 
@@ -15,7 +17,11 @@ import {
 } from './config.js'
 
 export class WSClient {
-  constructor() {
+  /** `session`: the session of the page (auth/session.js), whose token is presented. */
+  constructor(session) {
+    this._session = session
+    this._presented = undefined // the token last presented on the open connection
+    session.onChange(() => this._sendAuth())
     this._ws = null
     this._handlers = {}         // { type: [fn, ...] }
     this._backoffMs = WS_BACKOFF_INITIAL_MS
@@ -37,6 +43,8 @@ export class WSClient {
       console.log('[WS] Connected')
       this._backoffMs = WS_BACKOFF_INITIAL_MS
       this._wasOpen = true
+      this._presented = undefined
+      this._sendAuth()   // the first frame: before any audio of the microphone
       this.setStatus('connected')
     }
 
@@ -73,6 +81,14 @@ export class WSClient {
     if (this._ws && this._ws.readyState === WebSocket.OPEN) {
       this._ws.send(JSON.stringify(message))
     }
+  }
+
+  /** Say who the page is; nothing is sent again for the token already presented. */
+  _sendAuth() {
+    const token = this._session.token
+    if (!this._ws || this._ws.readyState !== WebSocket.OPEN || token === this._presented) return
+    this._presented = token
+    this.send({ type: 'auth', token })
   }
 
   sendAudioChunk(base64Data) {

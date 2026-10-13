@@ -194,6 +194,16 @@ export class ProfilePage {
     this._page.close()
   }
 
+  /** Who is signed in changed: an open page shows the other person's data, or the form. */
+  sessionChanged() {
+    this._stopEditing()
+    this._removingImportId = null
+    this._persona?.reset()
+    if (!this._page.open) return
+    this._say('')
+    this.refresh()
+  }
+
   /** Read the items and the imports: an item names the import it comes from. */
   async _read() {
     const [items, imports] = await Promise.all([

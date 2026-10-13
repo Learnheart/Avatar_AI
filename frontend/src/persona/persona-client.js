@@ -7,7 +7,9 @@
  */
 
 import { API_URL, PERSONA_FIELD_MAX_CHARS } from '../config.js'
-import { NETWORK_FAILURE } from '../memory/format.js'
+import { authHeaders } from '../auth/format.js'
+import { pageSession } from '../auth/session.js'
+import { NETWORK_FAILURE, UNAUTHORIZED } from '../memory/format.js'
 import { personaErrorMessage, readErrorMessage } from './format.js'
 
 const PERSONA_URL = `${API_URL}/persona`
@@ -22,10 +24,15 @@ function failure(status, message) {
 async function request(url, options, message = personaErrorMessage) {
   let response
   try {
-    response = await fetch(url, options)
+    response = await fetch(url, {
+      ...options,
+      headers: { ...options?.headers, ...authHeaders(pageSession.token) },
+    })
   } catch {
     throw failure(NETWORK_FAILURE, message)
   }
+  // The backend no longer knows the session the page presents: the page is a guest.
+  if (response.status === UNAUTHORIZED && pageSession.token) pageSession.signOut()
   if (!response.ok) throw failure(response.status, message)
   return response
 }

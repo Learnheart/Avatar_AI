@@ -71,6 +71,15 @@ export class PersonaPanel {
     this.refresh()
   }
 
+  /** Who is signed in changed: what was typed belongs to the person before. */
+  reset() {
+    this._saved = {}
+    this._description.value = ''
+    this._fill({})
+    this._say('')
+    if (!this._busy) this.refresh()
+  }
+
   async refresh() {
     try {
       // The defaults do not change while the page is open: one read is enough.
