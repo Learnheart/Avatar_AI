@@ -141,7 +141,7 @@ Then the docs: `CLAUDE.md` / `AGENTS.md`, `docs/ARCHITECTURE.md`,
       keys) with unit tests
 - [x] Slice 2 — store, service and the `GET` / `PUT` / `DELETE /persona` routes with
       unit tests
-- [ ] Slice 3 — reading a pasted description (`POST /persona/read`) with unit tests
+- [x] Slice 3 — reading a pasted description (`POST /persona/read`) with unit tests
 - [ ] Slice 4 — the "Tính cách của avatar" block on the profile page with unit tests,
       `npm run build`
 - [ ] `CLAUDE.md` / `AGENTS.md`, `docs/ARCHITECTURE.md`, `docs/quality-gates.md`,

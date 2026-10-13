@@ -5,12 +5,15 @@ from fastapi.testclient import TestClient
 
 import backend.main as main
 from backend.config import AppConfig
+from backend.core.contracts import LLMError
 from backend.main import create_app
 from backend.utils.database import DatabaseError
 from tests.unit.fakes import build_orchestrator
 from tests.unit.memory_fakes import CompletingLLM
 
 URL = "/persona"
+READ = "/persona/read"
+DESCRIPTION = "Trợ lý tên là Mai, xưng em và gọi tôi là anh."
 MAI = {"name": "Mai", "addressing": "xưng em, gọi anh"}
 
 
@@ -89,6 +92,51 @@ def test_a_saved_persona_is_the_prompt_of_the_next_turn(client):
     assert "- Tên của trợ lý: Mai" in prompt and "- Cách xưng hô: xưng em, gọi anh" in prompt
 
 
+# ── Reading a description ─────────────────────────────────────────────────
+
+def test_a_description_is_read_into_fields_and_nothing_is_stored(client, llm):
+    response = client.post(READ, json={"text": DESCRIPTION})
+
+    assert response.status_code == 200
+    assert response.json() == {"fields": MAI}
+    assert DESCRIPTION in llm.requests[0][1]
+    assert client.get(URL).json() == {"fields": {}}
+
+
+def test_a_description_over_the_limit_answers_413(client, config, llm):
+    config.PERSONA_IMPORT_MAX_CHARS = 10
+
+    assert client.post(READ, json={"text": DESCRIPTION}).status_code == 413
+    assert llm.requests == []
+
+
+@pytest.mark.parametrize("body", [{"text": "  "}, {}, {"text": 7}, {"text": "x", "fields": {}}])
+def test_a_description_that_cannot_be_read_answers_422(client, llm, body):
+    assert client.post(READ, json=body).status_code == 422
+    assert llm.requests == []
+
+
+def test_a_description_with_nothing_about_the_avatar_answers_422(client, llm):
+    llm.answer = "{}"
+
+    assert client.post(READ, json={"text": DESCRIPTION}).status_code == 422
+
+
+def test_an_llm_failure_answers_502_without_the_provider_text(client, llm):
+    llm.error = LLMError("401 secret-provider-detail")
+
+    response = client.post(READ, json={"text": DESCRIPTION})
+
+    assert response.status_code == 502
+    assert "secret" not in response.text
+
+
+def test_an_answer_that_is_not_the_json_asked_for_answers_502(client, llm):
+    llm.answer = "Tên của trợ lý là Mai."
+
+    assert client.post(READ, json={"text": DESCRIPTION}).status_code == 502
+
+
 # ── Identity ──────────────────────────────────────────────────────────────
 
 def test_a_guest_gets_401_on_every_route(config):
@@ -98,10 +146,11 @@ def test_a_guest_gets_401_on_every_route(config):
             client.put(URL, json={"fields": MAI}),
             client.put(URL, json={}),
             client.delete(URL),
+            client.post(READ, json={"text": DESCRIPTION}),
         ]
         users = client.app.state.users.count()
 
-    assert [response.status_code for response in responses] == [401] * 4
+    assert [response.status_code for response in responses] == [401] * 5
     assert users == 0
 
 

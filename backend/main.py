@@ -89,9 +89,10 @@ def build_imports(
     )
 
 
-def build_persona(config: AppConfig, database: Database) -> PersonaService:
-    """The persona on the application database."""
-    return PersonaService(config, PersonaStore(database))
+def build_persona(config: AppConfig, database: Database, llm: LLM) -> PersonaService:
+    """The persona on the application database; a description of the avatar is read
+    into its fields with the LLM it is given."""
+    return PersonaService(config, PersonaStore(database), llm)
 
 
 def build_orchestrator(
@@ -156,13 +157,13 @@ def create_app(
             logger.error({"msg": "The application database cannot be opened", "error": str(e)})
             raise
         app.state.users = UsersStore(database)
-        # One LLM for the turns, the imports and the reading of closed conversations:
-        # with a backup backend, a primary the turns found dead is not asked again in
-        # the background.
+        # One LLM for the turns, the imports, the reading of closed conversations and
+        # of the descriptions of the avatar: with a backup backend, a primary the turns
+        # found dead is not asked again in the background.
         llm = create_llm(config)
         app.state.memory = memory or build_memory(config, database, llm)
         app.state.imports = build_imports(config, database, llm, app.state.memory)
-        app.state.persona = build_persona(config, database)
+        app.state.persona = build_persona(config, database, llm)
         try:
             app.state.knowledge = knowledge or build_knowledge(config)
             await app.state.knowledge.start()

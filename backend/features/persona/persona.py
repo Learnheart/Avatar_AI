@@ -5,19 +5,29 @@ A persona is a dictionary of predefined fields (`PERSONA_FIELDS`), each one shor
 of text; any of them may be left out. The fields that are set are written into the text
 the LLM is given with each turn of that user; the text is cached per user and dropped
 when the user saves or removes their persona, so a turn reads from RAM and a change
-applies to the next turn. The store is given by `backend/main.py`.
+applies to the next turn.
+
+A description of the avatar written freely is read into the fields by one LLM call,
+outside any turn. What is read is given back and stored nowhere: the person reviews the
+fields and saves them. The store and the LLM are given by `backend/main.py`.
 """
 import asyncio
+import json
 from datetime import datetime, timezone
 from typing import Callable, Mapping, TypeVar
 
+from opentelemetry.trace import Span
+
 from backend.config import AppConfig
-from backend.core.contracts import Persona, PersonaError
+from backend.core.contracts import LLM, LLMError, Persona, PersonaError
 from backend.features.memory.memory import one_line
+from backend.features.memory.reading import as_document
+from backend.features.persona.extraction import InvalidPersonaAnswer, parse_fields
 from backend.features.persona.store import PersonaStore
 from backend.models import PERSONA_FIELDS
 from backend.utils.database import DatabaseError
 from backend.utils.logging import get_logger
+from backend.utils.telemetry import tracer
 
 logger = get_logger("persona")
 
@@ -28,16 +38,46 @@ class InvalidPersona(ValueError):
     """The persona cannot be stored: an unknown field, or a text too long."""
 
 
+class EmptyDescription(ValueError):
+    """The description holds no text."""
+
+
+class DescriptionTooLong(ValueError):
+    """The description is longer than one may be."""
+
+
+class NothingToRead(ValueError):
+    """The description was read and says nothing about the avatar."""
+
+
+class PersonaReadFailed(Exception):
+    """The LLM failed, or answered something else than the fields asked for."""
+
+
+# `persona.outcome` of the `persona.read` span, by the error that ended the reading.
+_OUTCOMES: dict[type, str] = {
+    EmptyDescription: "empty",
+    DescriptionTooLong: "too_long",
+    PersonaReadFailed: "extraction_failed",
+    NothingToRead: "nothing",
+}
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
 class PersonaService(Persona):
     def __init__(
-        self, config: AppConfig, store: PersonaStore, clock: Callable[[], datetime] = _utc_now
+        self,
+        config: AppConfig,
+        store: PersonaStore,
+        llm: LLM,
+        clock: Callable[[], datetime] = _utc_now,
     ) -> None:
         self.config = config
         self._store = store
+        self._llm = llm
         self._clock = clock
         self._prompts: dict[str, str] = {}
         # Counts the writes per user: a prompt read from the store while the user's
@@ -88,6 +128,54 @@ class PersonaService(Persona):
         """Remove the persona of the user: the avatar is the default character again."""
         await self._write(user_id, {})
         logger.info({"msg": "Persona removed"})
+
+    # ── Reading a description ─────────────────────────────────────────────
+
+    async def read(self, text: str) -> dict[str, str]:
+        """The fields a description of the avatar states, read by the LLM, in the order
+        of PERSONA_FIELDS. Nothing is stored: `save` does that, once the person has
+        seen them. Raises EmptyDescription, DescriptionTooLong, NothingToRead (the
+        text) or PersonaReadFailed (the LLM)."""
+        with tracer.start_as_current_span(
+            "persona.read", attributes={"persona.chars": len(text)}
+        ) as span:
+            try:
+                fields = await self._read(span, text)
+            except Exception as e:
+                span.set_attribute("persona.outcome", _OUTCOMES.get(type(e), "error"))
+                raise
+            span.set_attributes({
+                "persona.outcome": "read",
+                "persona.fields": json.dumps(fields, ensure_ascii=False),
+            })
+        logger.info({"msg": "Persona description read", "fields": list(fields)})
+        return fields
+
+    async def _read(self, span: Span, text: str) -> dict[str, str]:
+        if not text.strip():
+            raise EmptyDescription("The description holds no text")
+        limit = self.config.PERSONA_IMPORT_MAX_CHARS
+        if len(text) > limit:
+            raise DescriptionTooLong(
+                f"The description is longer than {limit} characters: it has {len(text)}"
+            )
+        span.set_attribute("persona.description", text)
+
+        max_chars = self.config.PERSONA_FIELD_MAX_CHARS
+        prompt = self.config.PERSONA_IMPORT_PROMPT.format(max_chars=max_chars)
+        try:
+            document = as_document(self.config.PERSONA_IMPORT_DOCUMENT, text)
+            answer = await self._llm.complete(prompt, document)
+        except LLMError as e:
+            raise PersonaReadFailed(f"The LLM failed: {e}") from e
+        span.set_attribute("llm.answer", answer)
+        try:
+            fields = parse_fields(answer, max_chars)
+        except InvalidPersonaAnswer as e:
+            raise PersonaReadFailed(str(e)) from e
+        if not fields:
+            raise NothingToRead("Nothing about the avatar in the description")
+        return fields
 
     # ── Internals ─────────────────────────────────────────────────────────
 
