@@ -1,6 +1,6 @@
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -547,7 +547,9 @@ def test_the_imported_items_are_edited_and_deleted_like_any_other(client):
 
 # ── Proposals: what the avatar gathered from conversations ────────────────
 
-HEARD_AT = datetime(2026, 10, 13, 8, 0, tzinfo=timezone.utc)
+# After the items the tests add over the API, which are dated by the real clock: a
+# proposal is listed after what it was heard about.
+HEARD_AT = datetime.now(timezone.utc) + timedelta(days=1)
 
 
 def _heard(client, item_id: str, text: str, **fields) -> dict:
