@@ -72,6 +72,11 @@ summary: The avatar's answers carry no emoji — the LLM is told not to write an
       nhảnh, hay pha trò") and the same six in the default character: no emoji in any
       of the twelve answers, so the filter had nothing to remove; it is covered by the
       unit tests. Not measured on Groq
+- [x] Real turn after the change (2026-10-13, `tests/e2e/test_real_persona.py`, Groq
+      answering 503 and the Databricks backup taking over the STT and the LLM): the turn
+      under the persona is answered "Dạ, em là Bông ạ! Anh cần em hỗ trợ gì không?",
+      end to end 4.8 s; first audio 4.2 s against 3.5 s, the gate that already fails on
+      this path (`../avatar-persona/plan.md`)
 - [ ] Seen in that run, to decide: asked "Ai đặt tên cho bạn vậy?" in the default
       character, the model names itself and its maker instead of the avatar
 - [ ] Human verification
