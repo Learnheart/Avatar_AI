@@ -30,9 +30,10 @@ summary: The avatar's answers carry no emoji — the LLM is told not to write an
 - **Two layers.** The instruction lowers how often it happens; the filter guarantees
   it. Neither replaces the other: an instruction is a request, and a filter alone would
   leave sentences built around a symbol that is no longer there.
-- **The instruction** is one sentence in `SYSTEM_PROMPT` (the answer is read aloud: words
-  only, no emoji) and one rule in `PERSONA_PROMPT`, which otherwise says that the persona
-  wins over the general guidance.
+- **The instruction** is one rule of `SYSTEM_PROMPT` (the answer is read aloud: words
+  only, no emoji), which holds for every persona. (When this was written the persona
+  had a prompt of its own, `PERSONA_PROMPT`, carrying the same rule; it is now part of
+  `SYSTEM_PROMPT`, see `../avatar-persona/plan.md`.)
 - **The filter is in the conversation engine**, on each completed sentence of the LLM
   answer, before it is queued for the TTS: one place, whatever the LLM backend, and the
   events the orchestrator records and sends already carry the cleaned text. It works on

@@ -200,17 +200,19 @@ stores nothing.
 > real model (`tests/e2e`), not by an automated gate. Whether the answer actually follows the profile (the way of addressing) is
 > checked by a real turn (`tests/e2e`), not by an automated gate.
 
-### 1.11 Persona (the personality a known person gives the avatar → a system message of the turn; reading a description)
+### 1.11 Persona (the personality a known person gives the avatar → written into the system prompt of the turn; reading a description)
 
-**Contract:** a user id in → the text given to the LLM out, written from the fields
+**Contract:** a user id in → the persona written into the `{persona}` slot of
+`SYSTEM_PROMPT` out: the default fields (`PERSONA_DEFAULT`), each replaced by the one
 that user set (`name`, `role`, `addressing`, `personality`, `answer_style`, `avoid`, in
-that order, each with its label), or nothing when none is set. A dictionary of fields
+that order, each with its label), or nothing when none is set — the slot then holds
+the default persona. A dictionary of fields
 in → the whole persona of that user, used from the next turn. A description written
 freely in → the fields it states out, stored nowhere. A guest has no persona.
 
 | Type | Gate criteria |
 |---|---|
-| Functional | `PUT /persona` stores the fields it is given as the whole persona of the user (a field left out or empty is gone), `GET` gives back the fields that are set, `DELETE` removes them; the turn of that user carries them as a system message of its own after `SYSTEM_PROMPT` and before the profile, and a turn without persona is the request it was before; each value reaches the prompt on one line whatever was typed (line breaks, control and invisible characters never do) and braces in it are plain text; one user never reads or changes another's persona; a guest gets `401` on every route and no row is written for them; the fields survive a restart |
+| Functional | `PUT /persona` stores the fields it is given as the whole persona of the user (a field left out or empty is gone), `GET` gives back the fields that are set, `DELETE` removes them; the turn of that user carries them inside its one system prompt, over the default fields they replace, followed by the profile as a second system message; a turn without persona, a guest's included, carries the default persona in the same place; each value reaches the prompt on one line whatever was typed (line breaks, control and invisible characters never do) and braces in it are plain text; one user never reads or changes another's persona; a guest gets `401` on every route and no row is written for them; the fields survive a restart |
 | Functional — reading | `POST /persona/read` gives the description to ONE `LLM.complete` call with `PERSONA_IMPORT_PROMPT` (never the persona of the turns), between delimiters it cannot close; the fields of the answer come back and nothing is stored (`GET` is unchanged); each reading is one `persona.read` trace with the description in, the fields out and its outcome |
 | Performance | The persona read in a turn is answered from RAM after the first read of a user, also when none is set, and never takes longer than `PERSONA_TIMEOUT_SEC`; a save or a delete applies to the next turn; a guest's turn makes no persona read at all |
 | Resilience | An unknown field, a value longer than `PERSONA_FIELD_MAX_CHARS`, a value that is not text or a body without `fields` → `422`, the stored persona unchanged; a failing store → `502` without the database's text; none set, a slow or a failing read in a turn → the turn completes in the default character |

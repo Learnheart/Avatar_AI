@@ -90,7 +90,7 @@ documents the user has uploaded.
 | Document panel | Frontend — knowledge | Upload, list, delete documents and tick the ones the avatar may use |
 | Conversation memory, short-term *(MVP 2, built)* | The earlier turns of the conversation in progress | Kept in working memory only; bounded to the most recent turns; gone when the conversation ends. Each turn is kept as it happened: what was heard, and the sentences that had actually started to play |
 | Application database *(MVP 2, built)* | System and user information: the users, and what the avatar remembers about each of them | Short remembered facts, each *active* (used in answers), *pending* (proposed after a conversation, awaiting approval) or *rejected* (kept only so that it is never proposed again); and the turns of a signed-in person's conversation, kept until that conversation has been read. Written through one database toolkit (SQLAlchemy Core), so the engine is a configuration choice: a local SQLite file first, PostgreSQL when deployed for many users. Tables are created at startup; there is no migration tool yet |
-| Avatar personality *(MVP 2, built)* | The character the avatar plays for a signed-in person | A handful of named settings (its name, its role, how it addresses the person, its character, how it answers, what it avoids), each a short text and each optional; kept per person in the application database; given to the language model with every turn of that person, on top of the default character. A guest gets the default character |
+| Avatar personality *(MVP 2, built)* | The character the avatar plays for a signed-in person | A handful of named settings (its name, its role, how it addresses the person, its character, how it answers, what it avoids), each a short text and each optional; kept per person in the application database; written into the instructions the language model gets with every turn of that person, each setting taking the place of its default. A guest gets the default settings |
 | Object store *(MVP 2, built)* | The original files a person imports to describe themselves | One store for all users, holding the files unchanged; who owns a file is recorded in the application database, and a file is only ever read through that record; a local folder first, replaceable by a cloud bucket |
 | Profile page *(MVP 2, built)* | Frontend — the person's configuration | Shows what the avatar remembers about the person as editable settings: add, edit, delete, import a description and manage the imports; approve or reject what the avatar gathered from conversations, each proposal shown with the words it comes from; give the avatar a personality, by pasting a description that is read into the settings or by typing them |
 
@@ -393,8 +393,8 @@ flowchart TB
   language model is given.
 - **The avatar's personality is a setting of the person, not of the kiosk** *(built)*.
   It is a few named, optional settings rather than one free text, so each can be
-  shown, corrected and limited on its own; it refines the default character instead of
-  replacing it, so an empty setting falls back to the default. Where the person asked
+  shown, corrected and limited on its own; the default character is the same settings
+  with default values, so a setting left empty falls back to its default. Where the person asked
   to be addressed in a certain way in their own facts, that wins over the personality.
   A pasted description is only read into the settings: the person sees and saves them,
   and the description itself is not kept.

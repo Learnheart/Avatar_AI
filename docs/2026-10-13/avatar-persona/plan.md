@@ -69,13 +69,18 @@ summary: A signed-in person gives the avatar a personality — a few named field
   the LLM, for a signed-in person only, bounded by `PERSONA_TIMEOUT_SEC`, inside a
   `persona` span; `LLM.stream_answer` gains `persona: str = ""`. The service caches the
   text per user and drops it on a save or a delete, like the memory's profile.
-- **Where it stands in the request**: `SYSTEM_PROMPT`, then the persona as a second
-  system message, then the memory profile, then the history. `SYSTEM_PROMPT` stays: it
-  is the default the persona refines, and `PERSONA_PROMPT` says that the persona wins
-  where the two differ.
+- **Where it stands in the request** (changed on 2026-10-13, after the first real run):
+  the persona is written into the system prompt. `SYSTEM_PROMPT` is a template with one
+  `{persona}` slot, like the other texts of `prompts.py`, followed by the rules that
+  hold for every persona. `PERSONA_DEFAULT` holds the default persona (role,
+  personality, answer style): it fills the slot for a guest and for a person who set
+  nothing, and a field a person set replaces the default of that field only. The first
+  version sent the persona as a system message of its own after a fixed `SYSTEM_PROMPT`,
+  which described a second character the persona then had to contradict. The memory
+  profile stays a second system message, then the history.
 - **Two ways of addressing can be set**: the persona's `addressing` and the person's own
   `addressing` memory item. The memory item wins: it comes later in the request and
-  `MEMORY_PROMPT` already makes it binding. `PERSONA_PROMPT` says so too.
+  `MEMORY_PROMPT` already makes it binding. `SYSTEM_PROMPT` says so too.
 - **Reading a description is one `LLM.complete` call outside any turn**, like a memory
   import: `PERSONA_IMPORT_PROMPT` as the instruction, the description between
   delimiters it cannot close (`PERSONA_IMPORT_DOCUMENT`), read as material and never
@@ -171,4 +176,9 @@ Then the docs: `CLAUDE.md` / `AGENTS.md`, `docs/ARCHITECTURE.md`,
       stored; a field corrected, the page closed and reopened with the unsaved form
       kept; saved, and still there after a reload; a value over the limit refused with
       its reason and the stored persona unchanged; deleted
+- [x] The persona written into `SYSTEM_PROMPT` with `PERSONA_DEFAULT`, with unit tests
+- [ ] Real run of the rewritten `SYSTEM_PROMPT` (the measurements above are those of the
+      first version): the default character, a persona, a persona with one field set,
+      the person's own `addressing` winning, no emoji. Blocked on 2026-10-13: Groq
+      answers 503 and the Databricks profile needs a new sign-in
 - [ ] Human verification

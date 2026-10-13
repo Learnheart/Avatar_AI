@@ -106,7 +106,7 @@ cover as much logic as possible with unit tests.
 | **Knowledge base** | sqlite-vec (SQLite extension) + embedding qua `EMBEDDING_BACKEND` (`local_hash` \| `openai_compatible` \| `databricks` \| `ollama`), backup qua `EMBEDDING_BACKEND_BACKUP`; pypdf, python-docx | Upload tài liệu (txt, md, csv, pdf, docx) → chunk → vector; tra cứu đoạn liên quan cho mỗi câu hỏi trước khi gọi LLM |
 | **Application database** | SQLAlchemy Core trên `DATABASE_URL` (file SQLite local; PostgreSQL khi deploy) | Lưu user, memory (những điều avatar nhớ về từng user) và các turn của cuộc trò chuyện chưa được đọc; bảng được tạo lúc startup, chưa có migration tool |
 | **Memory** | logic nội bộ trên application database; `AUTH_DEV_USER_ID` thay cho login; import và cuộc trò chuyện đã đóng được đọc bằng một lần gọi LLM ngoài turn (`LLM.complete`) | Hồ sơ của user đã đăng nhập (các memory item `active`) đưa vào LLM mỗi turn; import file / đoạn văn tự giới thiệu → memory item; cuộc trò chuyện đã đóng → memory item `pending` (đề xuất) chờ user duyệt hoặc từ chối, sở thích / tính cách được nhắc lại ở cuộc trò chuyện sau thì tự `active`; turn đã lưu bị xoá sau khi đọc; guest không có memory |
-| **Persona** | logic nội bộ trên application database; đoạn mô tả dán vào được đọc bằng một lần gọi LLM ngoài turn (`LLM.complete`) | Tính cách user đã đăng nhập đặt cho avatar: một dict các trường định nghĩa trước (`name`, `role`, `addressing`, `personality`, `answer_style`, `avoid`), trường nào có giá trị thì đưa vào LLM mỗi turn dưới dạng một system message riêng, sau `SYSTEM_PROMPT` và trước hồ sơ của user; không bắt buộc, guest dùng tính cách mặc định |
+| **Persona** | logic nội bộ trên application database; đoạn mô tả dán vào được đọc bằng một lần gọi LLM ngoài turn (`LLM.complete`) | Tính cách user đã đăng nhập đặt cho avatar: một dict các trường định nghĩa trước (`name`, `role`, `addressing`, `personality`, `answer_style`, `avoid`), được ghi vào chỗ `{persona}` của `SYSTEM_PROMPT` mỗi turn: trường nào user khai báo thì thay giá trị mặc định (`PERSONA_DEFAULT`) của trường đó, trường còn lại giữ mặc định; không bắt buộc, guest dùng persona mặc định |
 | **Object store** | thư mục local `OBJECT_STORE_DIR` (thay được bằng S3-compatible) | Giữ nguyên bản gốc của file user import; chủ sở hữu chỉ ghi trong application database |
 | Observability | OpenTelemetry SDK (traces + metrics) + OTLP/HTTP exporter; JSON log trên stdout | Mỗi turn một trace, mỗi bước một span (listen, stt, knowledge, embedding, persona, memory, llm, tts, playback) kèm input/output; số đo vòng lặp perception; `CAPTURE_ENABLED` lưu frame camera + audio + trace ra đĩa |
 | Device Capability Router | logic nội bộ (phát hiện Metal/CUDA/CPU lúc startup) | Chọn backend inference phù hợp máy; cho phép override qua config |
@@ -307,13 +307,16 @@ Layering rules:
   deleted once read, and after `MEMORY_TRANSCRIPT_TTL_DAYS` whatever happened.
 - The persona reaches the turn through the `Persona` contract only: for a logged-in
   user the engine asks it for the personality that user gave the avatar, before the
-  LLM, and answers in the default character (`SYSTEM_PROMPT`) when there is none or the
-  read is slow or failing; a guest's turn reads nothing. It is a system message of its
-  own between `SYSTEM_PROMPT` and the profile, so what the person asked for themselves
-  (their own way of being addressed) comes last and wins. Its fields are declared once
-  (`PERSONA_FIELDS` in `backend/models.py`), stored per user and never read across
-  users; a description is read into them by `LLM.complete`, given between delimiters as
-  material and stored nowhere: only what the user saves is kept.
+  LLM; a guest's turn reads nothing. The persona is written into the system prompt:
+  `SYSTEM_PROMPT` has one `{persona}` slot and `PERSONA_DEFAULT` (`backend/prompts.py`)
+  is what fills it when nobody set anything. A field the user set replaces the default
+  of that field, the others keep theirs; with none set, or a slow or failing read, the
+  avatar plays the default persona. The profile follows as a second system message, so
+  what the person asked for themselves (their own way of being addressed) comes last
+  and wins. The fields are declared once (`PERSONA_FIELDS` in `backend/models.py`),
+  stored per user and never read across users; a description is read into them by
+  `LLM.complete`, given between delimiters as material and stored nowhere: only what
+  the user saves is kept.
 - Users, memory and persona live in the application database (`DATABASE_URL`).
   `backend/utils/database.py` is the only module that knows engines; a feature declares
   its tables and keeps all its SQL in its `store.py`, written against SQLAlchemy Core
