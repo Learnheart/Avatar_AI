@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from backend.config import AppConfig
 from backend.main import create_app
-from tests.unit.accounts_fakes import PASSWORD, create_account
+from tests.unit.accounts_fakes import create_account
 from tests.unit.fakes import build_orchestrator
 
 PAGE = "http://kiosk.test:3000"
