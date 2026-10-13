@@ -77,6 +77,8 @@ them. Unit tests:
       to end 3.8 s. The two turns of that test are far below the budget: the window
       itself is covered by the unit tests, and no real conversation long enough to slide
       has been run
+- [x] Real turns on Groq after the change (2026-10-13, the whole `tests/e2e` suite, 8
+      passed)
 - [ ] To decide: the ratio was measured on the Databricks model only; on the Groq
       model it is assumed
 - [ ] Human verification

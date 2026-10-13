@@ -162,7 +162,13 @@ Then the docs: `CLAUDE.md` / `AGENTS.md`, `docs/ARCHITECTURE.md`,
       em": three answers out of three call the person "chị Linh" and keep the name
       Bông, so the person's own `addressing` wins; `avoid` "Không nói về chính trị"
       declines a question about an election
-- [ ] The latency gate on this path: end to end 5.5 s (under 10 s), first audio 4.0 s
+- [x] The latency gate on Groq (2026-10-13, the whole `tests/e2e` suite, 8 passed, no
+      fallback): the persona test reads the description in 0.7 s and answers with first
+      audio 1.6 s, end to end 3.5 s; the plain turn 2.2 s / 8.1 s; the knowledge turn
+      2.0 s / 3.7 s. On Groq the description is read into `name` "Bông", `addressing`
+      "em - anh", `answer_style` "vui vẻ, trả lời thật ngắn gọn", and the turn answers
+      "Em là Bông, trợ lý ảo của anh"
+- [ ] The latency gate on the Databricks backup, as first measured on this path: end to end 5.5 s (under 10 s), first audio 4.0 s
       and 4.2 s against 3.5 s, so the e2e test fails on its last assertion. In the
       measured turn the STT took 1.9 s and the first sentence of the LLM 1.6 s; the same
       gate fails on Databricks without the persona (`../../2026-10-12/knowledge-base/plan.md`).
