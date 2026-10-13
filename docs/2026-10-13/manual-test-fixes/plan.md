@@ -82,8 +82,14 @@ log of that session:
 - [x] Invented sentences dropped by the engine, with unit tests, `CHANGELOG.md`
 - [x] The head moving on its own, with unit tests, `CHANGELOG.md`
 - [x] The two drop-downs, with unit tests, `npm run build`, `CHANGELOG.md`
-- [ ] The page in a real browser: both drop-downs opened, closed and remembered across a
-      reload
+- [x] The page in a real browser (headless Chrome driven over CDP, 2026-10-13): the
+      documents closed and the conversation open at first; each header pressed, the
+      documents open with their arrow down and the conversation folded to its header;
+      both found as they were left after a reload; the documents closed again with
+      "Đóng". Seen there and fixed: the header of the conversation did nothing until the
+      avatar had loaded
+- [x] Account creation: settled in `../sign-in/plan.md` (an email, and the code sent to
+      it)
 - [ ] Seen in the same log, to decide: one answer of seven sentences took 28 s to
       synthesise and the turn was cut at `TURN_TIMEOUT_SEC` (30 s) with an error; the
       question was answered from a document and the answer ignored the "two or three
