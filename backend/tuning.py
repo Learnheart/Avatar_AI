@@ -90,6 +90,29 @@ class Tuning:
     # still never proposed again.
     MEMORY_EXTRACT_MAX_REJECTED: int = env_int("MEMORY_EXTRACT_MAX_REJECTED", 50)
 
+    # ── Sign-in (who is a guest, who is a signed-in user) ───────────────
+    # 0: accounts cannot be created at the kiosk.
+    AUTH_ALLOW_REGISTRATION: int = env_int("AUTH_ALLOW_REGISTRATION", 1)
+    # Shortest password a local account accepts.
+    AUTH_PASSWORD_MIN_CHARS: int = env_int("AUTH_PASSWORD_MIN_CHARS", 8)
+    # A session is kept until it was not used (no request, no turn) for this long, or
+    # is this old whatever happened. On a shared kiosk these two bound how long the
+    # next person is taken for the one who signed in.
+    AUTH_SESSION_IDLE_MINUTES: float = env_float("AUTH_SESSION_IDLE_MINUTES", 30.0)
+    AUTH_SESSION_MAX_HOURS: float = env_float("AUTH_SESSION_MAX_HOURS", 12.0)
+    # 1: the session also ends when the person leaves the kiosk or goes silent (their
+    # conversation closed for `absence` or `idle`).
+    AUTH_LOGOUT_ON_LEAVE: int = env_int("AUTH_LOGOUT_ON_LEAVE", 0)
+    # Failed sign-ins on one user name before it is held, and the window they are
+    # counted in (also how long the name is held).
+    AUTH_LOGIN_MAX_ATTEMPTS: int = env_int("AUTH_LOGIN_MAX_ATTEMPTS", 5)
+    AUTH_LOGIN_WINDOW_MINUTES: float = env_float("AUTH_LOGIN_WINDOW_MINUTES", 10.0)
+    # How often the session of the connected page is looked at: once it has expired
+    # the page is told and the avatar answers a guest.
+    AUTH_SESSION_CHECK_SEC: float = env_float("AUTH_SESSION_CHECK_SEC", 30.0)
+    # Max wait for an external provider (Google, Facebook) during a sign-in.
+    AUTH_PROVIDER_TIMEOUT_SEC: float = env_float("AUTH_PROVIDER_TIMEOUT_SEC", 10.0)
+
     # ── Persona (the personality a logged-in user gives the avatar) ─────
     # Characters of one field of the persona: every field that is set is in every
     # prompt of that user. A longer text is refused.

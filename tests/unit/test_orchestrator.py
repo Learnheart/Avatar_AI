@@ -1533,3 +1533,77 @@ async def test_stopping_does_not_wait_longer_than_the_memory_timeout(config, clo
     (abandoned,) = [r.msg for r in caplog.records if r.msg.get("msg") == "Memory calls abandoned"]
     assert abandoned["calls"] == ["memory-record_turn"]
     assert memory.calls == []
+
+
+# ── Sign-in: the user of an open connection ───────────────────────────────
+
+async def test_changing_the_user_closes_the_conversation_in_progress(orch, ws):
+    await _complete_turn(orch, ws)
+    guest_conversation = orch._conversation.id
+
+    await orch.set_user("user-7")
+    await _complete_turn(orch, ws)
+
+    assert _conversation_ids(ws) == [guest_conversation, None, orch._conversation.id]
+    assert orch._conversation.user_id == "user-7"
+    assert orch._engine.user_ids == [None, "user-7"]
+    assert orch._engine.histories == [(), ()]  # nothing of the guest follows the user
+
+
+async def test_setting_the_same_user_changes_nothing(orch, ws):
+    await orch.set_user("user-7")
+    await _complete_turn(orch, ws)
+    conversation = orch._conversation.id
+
+    await orch.set_user("user-7")
+
+    assert orch._conversation.id == conversation
+    assert _conversation_ids(ws) == [conversation]
+
+
+async def test_changing_the_user_cancels_the_running_turn_as_a_barge_in(orch, ws):
+    orch._engine.gate = asyncio.Event()
+    orch._engine.gate_after = AudioEvent
+    await _send(orch, chunk(START), chunk(END))
+    await _reach(orch, AvatarState.SPEAKING)
+
+    await orch.set_user(None)  # the same guest: nothing happens
+    assert orch.state == AvatarState.SPEAKING
+    await orch.set_user("user-7")
+
+    assert orch.state == AvatarState.IDLE and orch._conversation is None
+    assert ws.of_type("interrupt")
+    assert orch._engine.closed == 1
+
+
+async def test_the_wiring_is_told_of_a_user_s_turns_and_closes_and_never_of_a_guest_s(orch, ws):
+    told: list[tuple] = []
+
+    async def turn(user_id):
+        told.append(("turn", user_id))
+
+    async def closed(user_id, reason):
+        told.append(("closed", user_id, reason))
+
+    orch.on_user_turn, orch.on_conversation_closed = turn, closed
+    await _complete_turn(orch, ws)                     # a guest
+    await orch.set_user("user-7")                      # closes the guest's conversation
+    await _complete_turn(orch, ws)
+    await orch.handle_client_message(json.dumps({"type": "conversation_reset"}))
+    await wait_until(lambda: len(told) == 2)
+
+    assert told == [("turn", "user-7"), ("closed", "user-7", "reset")]
+
+
+async def test_a_failing_notice_is_logged_and_costs_nothing(orch, ws, caplog):
+    async def broken(user_id):
+        raise RuntimeError("the wiring is broken")
+
+    orch.on_user_turn = broken
+    await orch.set_user("user-7")
+
+    await _complete_turn(orch, ws)
+    await wait_until(lambda: not orch._notices)
+
+    assert orch.state == AvatarState.IDLE
+    assert any(record.msg.get("msg") == "Notice failed" for record in caplog.records)

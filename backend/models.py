@@ -108,6 +108,46 @@ class User:
     last_seen_at: datetime  # UTC
 
 
+@dataclass
+class Credentials:
+    """The local account of a user: a user name and a hashed password, with the failed
+    sign-ins counted since `first_failure_at`."""
+    username: str  # lower case
+    user_id: str
+    password_hash: str
+    failed_attempts: int = 0
+    first_failure_at: Optional[datetime] = None  # UTC
+
+
+@dataclass
+class Identity:
+    """A user as an external provider knows them: (provider, subject) names one person."""
+    provider: str
+    subject: str  # the person's id at the provider
+    user_id: str
+    email: Optional[str]  # as the provider gave it; shown, never used to find a user
+    created_at: datetime  # UTC
+
+    def to_dict(self) -> dict:
+        """The identity as the HTTP API gives it (`/auth/identities`)."""
+        return {
+            "provider": self.provider,
+            "email": self.email,
+            "created_at": self.created_at.isoformat(),
+        }
+
+
+@dataclass
+class Session:
+    """A sign-in that is still open. `id` is the SHA-256 of the token the page holds:
+    the token itself is stored nowhere."""
+    id: str
+    user_id: str
+    created_at: datetime  # UTC
+    last_seen_at: datetime  # UTC
+    revoked_at: Optional[datetime] = None  # UTC
+
+
 # What a memory item is about. `identity`: name, role. `addressing`: how the person and
 # the avatar call each other. `preference`: answer style, topics. `personality`.
 MEMORY_CATEGORIES = ("identity", "addressing", "preference", "personality")

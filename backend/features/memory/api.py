@@ -27,7 +27,7 @@ from pydantic import BaseModel, ConfigDict
 
 from backend.config import AppConfig
 from backend.core.contracts import MemoryServiceError
-from backend.features.accounts.identity import current_user_id
+from backend.features.accounts.identity import bearer_token, current_user_id
 from backend.features.memory.imports import (
     EmptyImport,
     ImportExtractionFailed,
@@ -93,7 +93,11 @@ def create_memory_router(config: AppConfig) -> APIRouter:
     async def user(request: Request) -> str:
         """The id of the logged-in user; a guest has no memory."""
         try:
-            user_id = await asyncio.to_thread(current_user_id, config, request.app.state.users)
+            user_id = await asyncio.to_thread(
+                current_user_id, config, request.app.state.users,
+                sessions=request.app.state.sessions,
+                token=bearer_token(request.headers.get("authorization")),
+            )
         except DatabaseError as e:
             logger.error({"msg": "User lookup failed", "error": str(e)})
             raise HTTPException(502, "The memory is not available") from e

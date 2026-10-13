@@ -126,9 +126,43 @@ class AppConfig(Tuning, Prompts):
     # A SQLAlchemy URL. A SQLite file locally; PostgreSQL at deployment. It may hold a
     # password, so it stays out of repr(config).
     DATABASE_URL: str = env_str("DATABASE_URL", "sqlite:///backend/data/app.db", repr=False)
-    # Until the login exists: the id of the user every connection and request belongs
-    # to. Empty = a guest, who has no memory.
+    # ── Sign-in ─────────────────────────────────────────────────────────
+    # Development and tests: the id of the user every connection and request belongs
+    # to, without sign-in. Empty = the session token decides (no token = a guest).
     AUTH_DEV_USER_ID: str = env_str("AUTH_DEV_USER_ID", "")
+    # External providers. One whose client id is empty is not offered. The application
+    # is registered at the provider, with `<AUTH_PUBLIC_URL>/auth/<provider>/callback`
+    # as its redirect URI.
+    AUTH_GOOGLE_CLIENT_ID: str = env_str("AUTH_GOOGLE_CLIENT_ID", "")
+    AUTH_GOOGLE_CLIENT_SECRET: str = env_str("AUTH_GOOGLE_CLIENT_SECRET", repr=False)
+    AUTH_FACEBOOK_CLIENT_ID: str = env_str("AUTH_FACEBOOK_CLIENT_ID", "")
+    AUTH_FACEBOOK_CLIENT_SECRET: str = env_str("AUTH_FACEBOOK_CLIENT_SECRET", repr=False)
+    # The address of this backend as the browser reaches it (the provider sends the
+    # person back to it), and the address of the page they return to. No trailing slash.
+    AUTH_PUBLIC_URL: str = env_str("AUTH_PUBLIC_URL", "", normalize=lambda url: url.rstrip("/"))
+    AUTH_PAGE_URL: str = env_str("AUTH_PAGE_URL", "", normalize=lambda url: url.rstrip("/"))
+    # Where each provider is asked: the person is sent to `AUTHORIZE`, the code is
+    # exchanged at `TOKEN`, and `USERINFO` says who they are.
+    AUTH_GOOGLE_AUTHORIZE_URL: str = env_str(
+        "AUTH_GOOGLE_AUTHORIZE_URL", "https://accounts.google.com/o/oauth2/v2/auth"
+    )
+    AUTH_GOOGLE_TOKEN_URL: str = env_str(
+        "AUTH_GOOGLE_TOKEN_URL", "https://oauth2.googleapis.com/token"
+    )
+    AUTH_GOOGLE_USERINFO_URL: str = env_str(
+        "AUTH_GOOGLE_USERINFO_URL", "https://openidconnect.googleapis.com/v1/userinfo"
+    )
+    AUTH_GOOGLE_SCOPE: str = env_str("AUTH_GOOGLE_SCOPE", "openid email profile")
+    AUTH_FACEBOOK_AUTHORIZE_URL: str = env_str(
+        "AUTH_FACEBOOK_AUTHORIZE_URL", "https://www.facebook.com/v19.0/dialog/oauth"
+    )
+    AUTH_FACEBOOK_TOKEN_URL: str = env_str(
+        "AUTH_FACEBOOK_TOKEN_URL", "https://graph.facebook.com/v19.0/oauth/access_token"
+    )
+    AUTH_FACEBOOK_USERINFO_URL: str = env_str(
+        "AUTH_FACEBOOK_USERINFO_URL", "https://graph.facebook.com/v19.0/me?fields=id,name,email"
+    )
+    AUTH_FACEBOOK_SCOPE: str = env_str("AUTH_FACEBOOK_SCOPE", "public_profile email")
     # The directory of the object store: the original bytes of what users import. Who
     # owns an object is recorded in the application database only.
     OBJECT_STORE_DIR: str = env_str("OBJECT_STORE_DIR", "backend/data/objects")
@@ -196,6 +230,31 @@ class AppConfig(Tuning, Prompts):
             raise ValueError("MEMORY_PROMPT_MAX_ITEMS must be at least 1.")
         if self.MEMORY_ITEM_MAX_CHARS < 1:
             raise ValueError("MEMORY_ITEM_MAX_CHARS must be at least 1.")
+        for key in ("AUTH_PASSWORD_MIN_CHARS", "AUTH_LOGIN_MAX_ATTEMPTS"):
+            if getattr(self, key) < 1:
+                raise ValueError(f"{key} must be at least 1.")
+        for key in (
+            "AUTH_SESSION_IDLE_MINUTES",
+            "AUTH_SESSION_MAX_HOURS",
+            "AUTH_LOGIN_WINDOW_MINUTES",
+            "AUTH_SESSION_CHECK_SEC",
+            "AUTH_PROVIDER_TIMEOUT_SEC",
+        ):
+            value = getattr(self, key)
+            if not (math.isfinite(value) and value > 0):
+                raise ValueError(f"{key} must be positive and finite.")
+        for provider in ("GOOGLE", "FACEBOOK"):
+            if not getattr(self, f"AUTH_{provider}_CLIENT_ID"):
+                continue
+            if not getattr(self, f"AUTH_{provider}_CLIENT_SECRET"):
+                raise ValueError(
+                    f"AUTH_{provider}_CLIENT_SECRET is required with AUTH_{provider}_CLIENT_ID."
+                )
+            if not (self.AUTH_PUBLIC_URL and self.AUTH_PAGE_URL):
+                raise ValueError(
+                    "AUTH_PUBLIC_URL and AUTH_PAGE_URL are required by the external "
+                    "sign-in providers."
+                )
         for key in ("MEMORY_TIMEOUT_SEC", "PERSONA_TIMEOUT_SEC"):
             value = getattr(self, key)
             if not (math.isfinite(value) and value > 0):

@@ -149,6 +149,13 @@ class Orchestrator:
         self._memory_jobs: set[asyncio.Task] = set()
         self._memory_last: dict[str, asyncio.Task] = {}
 
+        # What the wiring (`backend/main.py`) asked to be told about a signed-in user,
+        # each called in the background and never awaited by a turn: a turn of the user
+        # was recorded (user id); a conversation of the user closed (user id, reason).
+        self.on_user_turn: Optional[Callable[[str], Awaitable[None]]] = None
+        self.on_conversation_closed: Optional[Callable[[str, str], Awaitable[None]]] = None
+        self._notices: set[asyncio.Task] = set()
+
     @property
     def state(self) -> AvatarState:
         return self._state
@@ -183,6 +190,9 @@ class Orchestrator:
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks = []
         await self._stop_memory_jobs()
+        for notice in set(self._notices):
+            notice.cancel()
+        await asyncio.gather(*self._notices, return_exceptions=True)
 
         loop = asyncio.get_running_loop()
         await self._release("camera", asyncio.to_thread(self._camera.stop))
@@ -230,6 +240,44 @@ class Orchestrator:
             conversation_message(conversation.id if conversation else None)
         )
         return self._session_id
+
+    async def set_user(self, user_id: Optional[str]) -> None:
+        """The person behind the connection signed in or out (None = a guest). For
+        another user than the one set, the running turn is cancelled as by a barge-in,
+        an utterance being heard is dropped and the conversation closes: a conversation
+        belongs to one user from its first utterance. The same user changes nothing."""
+        if user_id == self._user_id:
+            return
+        async with self._turn_lock:
+            answering = self._state in (AvatarState.THINKING, AvatarState.SPEAKING)
+            await self._cancel_turn()
+            if answering:
+                await self.ws_manager.send(interrupt_message())
+            await self._drop_turn()
+            await self._close_conversation("user_changed")
+            self._user_id = user_id
+        logger.info({"msg": "User of the connection changed", "user_id": user_id})
+
+    def _notify(self, what: str, call: Optional[Awaitable[None]]) -> None:
+        """Run a notice to the wiring in the background; its failure is logged."""
+        if call is None:
+            return
+
+        async def run() -> None:
+            try:
+                await call
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error({
+                    "msg": "Notice failed",
+                    "notice": what,
+                    "error": summarize_error(e, self.config.ERROR_SUMMARY_MAX_CHARS),
+                })
+
+        notice = asyncio.create_task(run(), name=what)
+        self._notices.add(notice)
+        notice.add_done_callback(self._notices.discard)
 
     async def handle_disconnect(self, websocket: WebSocket) -> None:
         """Losing the active socket cancels the running turn and resets the state to idle.
@@ -436,6 +484,8 @@ class Orchestrator:
                 _MEMORY_RECORD,
                 self._memory.record_turn(conversation.user_id, conversation.id, turn),
             )
+        if self.on_user_turn is not None and conversation.user_id is not None:
+            self._notify("user_turn", self.on_user_turn(conversation.user_id))
 
     async def _turn(self, pcm: bytes, conversation: Conversation, record: TurnRecord) -> None:
         playback_end = await asyncio.wait_for(
@@ -608,6 +658,11 @@ class Orchestrator:
                 conversation.id,
                 _MEMORY_CLOSE,
                 self._memory.close_conversation(conversation.user_id, conversation.id),
+            )
+        if self.on_conversation_closed is not None and conversation.user_id is not None:
+            self._notify(
+                "conversation_closed",
+                self.on_conversation_closed(conversation.user_id, reason),
             )
         await self.ws_manager.send(conversation_message(None))
 

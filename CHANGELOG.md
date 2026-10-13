@@ -9,6 +9,29 @@ the rules are in `CLAUDE.md` / `AGENTS.md` §7.
 
 ### Added
 
+- `[accounts]` Sign-in. A person is a guest (the default: no memory, the default
+  persona, nothing written) or a signed-in user. An account is a user name and a
+  password created at the kiosk (`AUTH_ALLOW_REGISTRATION`, `AUTH_PASSWORD_MIN_CHARS`);
+  after `AUTH_LOGIN_MAX_ATTEMPTS` failed sign-ins a user name is held for
+  `AUTH_LOGIN_WINDOW_MINUTES`. New routes `POST /auth/register`, `/auth/login`,
+  `/auth/logout`, `GET /auth/session`, `GET /auth/providers`.
+- `[accounts]` A session is kept and expires by time: after
+  `AUTH_SESSION_IDLE_MINUTES` (30) without use, or at `AUTH_SESSION_MAX_HOURS` (12) of
+  age. `AUTH_LOGOUT_ON_LEAVE=1` also ends it when the person leaves the kiosk or goes
+  silent. The `/memory` and `/persona` routes read the session from
+  `Authorization: Bearer <token>`; `AUTH_DEV_USER_ID` still names one user for
+  development, without sign-in.
+- `[accounts]` Sign-in with Google and Facebook, and linking either to an existing
+  account (`AUTH_GOOGLE_CLIENT_ID` / `_SECRET`, `AUTH_FACEBOOK_CLIENT_ID` / `_SECRET`,
+  `AUTH_PUBLIC_URL`, `AUTH_PAGE_URL`; a provider without keys is not offered). Only who
+  the person is is read from the provider; nothing of it is kept. New routes
+  `/auth/{provider}/start`, `/callback` and `/link`, `POST /auth/exchange`,
+  `GET /auth/identities`, `DELETE /auth/identities/{provider}`.
+- `[accounts]` `[orchestrator]` Two WebSocket messages: `auth` (client → server)
+  presents the session token, or `null` for a guest, and is the first message a page
+  sends; `session` (server → client) tells the mode the connection is in, in answer and
+  whenever the server ends the session. Signing in or out starts a new conversation;
+  a reload keeps the conversation of the signed-in user.
 - `[orchestrator]` `[llm]` The earlier turns given to the LLM are bounded by an
   estimated number of tokens (`MEMORY_HISTORY_MAX_TOKENS`, default 2000) instead of a
   number of turns: when a new turn does not fit, the oldest ones are dropped whole, so

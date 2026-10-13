@@ -1,9 +1,9 @@
 ---
 author: linhbk3
 date: 2026-10-13
-status: todo
+status: in-progress
 agent: avatar
-modules: orchestrator, expression, memory, persona
+modules: accounts, orchestrator, expression, memory, persona
 summary: Design of the sign-in layer — the two modes, where identity is resolved, the session and its lifetime on a kiosk, the data, the routes, the WebSocket messages and the keys
 ---
 
@@ -284,9 +284,7 @@ erDiagram
     credentials {
         string username PK "lower case"
         string user_id FK "unique"
-        string password_hash "scrypt"
-        string salt
-        string parameters "of the hash"
+        string password_hash "scrypt, with its salt and its parameters"
         int failed_attempts
         datetime first_failure_at
         datetime updated_at
@@ -303,12 +301,14 @@ erDiagram
         string user_id FK
         datetime created_at
         datetime last_seen_at
-        datetime expires_at
         datetime revoked_at
     }
 ```
 
-`features/accounts/store.py` keeps all their SQL, on SQLAlchemy Core like the rest.
+`features/accounts/store.py` keeps all their SQL, on SQLAlchemy Core like the rest. The
+end of a session is not stored: it is computed from `created_at`, `last_seen_at` and the
+two timeouts each time the token is used, so a change of either timeout applies to the
+sessions that are open.
 
 ## 6. HTTP routes
 
@@ -321,7 +321,8 @@ A contract between `backend/features/accounts/api.py` and `frontend/src/auth/`.
 | `POST /auth/logout` | | `204`, with or without a valid token |
 | `GET /auth/session` | | `200 {"user": {"id", "display_name"}, "expires_at"}`, or `200 {"user": null}` for a guest |
 | `GET /auth/providers` | | `200 {"providers": ["google", ...], "registration": true}`: what the form may offer |
-| `GET /auth/{provider}/start` | `?link=1` to attach it to the signed-in account | `302` to the provider; `404` a provider that is not configured |
+| `POST /auth/{provider}/link` | | `200 {"url"}`: where the signed-in user's browser goes to attach the provider to their account (a start with a one-time ticket, since a navigation carries no token); `401` a guest; `404` a provider that is not configured |
+| `GET /auth/{provider}/start` | `?ticket=` from the link | `302` to the provider, with the state of the flow in a cookie; `404` a provider that is not configured |
 | `GET /auth/{provider}/callback` | the provider's `code` and `state` | `302` to the page with a one-time code, or with an error name; `409` (as an error name) the identity belongs to another account |
 | `POST /auth/exchange` | `{"code"}` | `200`, same shape as login; `401` an unknown, used or expired code |
 | `GET /auth/identities` | | `200 {"identities": [{"provider", "email", "created_at"}]}` of the signed-in user; `401` a guest |
@@ -341,8 +342,11 @@ Unchanged: `/memory` and `/persona` (their `401` now means "no valid session"),
 | `auth` | client → server | `{"type": "auth", "token": "<token>" \| null}` | Who is behind this connection from now on; `null` = a guest. Sent after `connected` and whenever the page signs in or out |
 | `session` | server → client | `{"type": "session", "user": {"id", "display_name"} \| null}` | The mode the connection is in. Answers every `auth`, and is sent unasked when the server ends the session (leaving, expiry) |
 
-- A connection starts as a guest until its `auth` message is resolved; the page sends
-  it before the microphone is streamed.
+- `auth` is the first frame a page sends, before the microphone is streamed, with
+  `null` when it has no token. A page that reconnects (a reload, a network drop) is
+  taken for the user of the session the connection had until that first frame, so the
+  conversation of a signed-in user survives a reload; a connection whose first frame
+  is anything else is a guest from that frame on.
 - An `auth` that changes the user closes the conversation in progress (`user_changed`)
   and cancels the turn that is running; an `auth` naming the user already set changes
   nothing.
@@ -361,10 +365,13 @@ out in `.env.example`.
 | `AUTH_SESSION_IDLE_MINUTES` | 30 | A session without a request or a turn for this long has expired |
 | `AUTH_SESSION_MAX_HOURS` | 12 | A session never lives longer, counted from the sign-in |
 | `AUTH_LOGOUT_ON_LEAVE` | 0 | 1: the session also ends when the person leaves or goes silent |
+| `AUTH_SESSION_CHECK_SEC` | 30 | How often the session of the connected page is looked at, to tell the page when it has expired |
+| `AUTH_PROVIDER_TIMEOUT_SEC` | 10 | Max wait for a provider during a sign-in |
 | `AUTH_GOOGLE_CLIENT_ID`, `AUTH_GOOGLE_CLIENT_SECRET` (`config.py`) | empty | The application registered at Google; empty = Google is not offered |
 | `AUTH_FACEBOOK_CLIENT_ID`, `AUTH_FACEBOOK_CLIENT_SECRET` (`config.py`) | empty | The application registered at Meta; empty = Facebook is not offered |
 | `AUTH_PUBLIC_URL` (`config.py`) | empty | The address of the backend as the provider reaches it back, for the callback |
 | `AUTH_PAGE_URL` (`config.py`) | empty | The address of the page the callback returns to |
+| `AUTH_GOOGLE_*_URL`, `AUTH_GOOGLE_SCOPE`, `AUTH_FACEBOOK_*_URL`, `AUTH_FACEBOOK_SCOPE` (`config.py`) | the public endpoints | Where each provider is asked, and for what |
 | `AUTH_LOGIN_MAX_ATTEMPTS` | 5 | Failed sign-ins on one user name before it is held |
 | `AUTH_LOGIN_WINDOW_MINUTES` | 10 | The window those attempts are counted in, and how long it is held |
 

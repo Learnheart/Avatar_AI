@@ -1,9 +1,9 @@
 ---
 author: linhbk3
 date: 2026-10-13
-status: todo
+status: in-progress
 agent: avatar
-modules: orchestrator, expression, memory, persona
+modules: accounts, orchestrator, expression, memory, persona
 summary: Sign-in for the kiosk — every person starts as a guest and signs in, with a local account or with Google / Facebook, to get their memory and their avatar's persona; the session is kept and expires after a configurable time; a session token replaces AUTH_DEV_USER_ID as the source of the user
 ---
 
@@ -143,18 +143,19 @@ planned), `docs/quality-gates.md`, `CHANGELOG.md`, `.env.example`.
 
 ## To-do
 
-- [ ] The decisions above reviewed by a human, in particular: accounts by user name and
-      password, self-registration at the kiosk, the two timeouts of a kept session
+- [x] The decisions above reviewed by a human (2026-10-13): the session is kept and
+      expires by timeout, Google and Facebook are added, and the code is written before
+      the applications are registered at the providers
 - [ ] Outside the code, by a human: an application registered at Google and at Meta,
       their client ids and secrets, the callback URL declared at each
-- [ ] Slice 1 — credentials, sessions, password hashing, local authenticator, with unit
+- [x] Slice 1 — credentials, sessions, password hashing, local authenticator, with unit
       tests
-- [ ] Slice 2 — `current_user_id()` from a token, the shared dependency, the `/auth`
+- [x] Slice 2 — `current_user_id()` from a token, the shared dependency, the `/auth`
       routes and the attempt limit, with unit tests
-- [ ] Slice 3 — the `auth` and `session` WebSocket messages, with unit tests
-- [ ] Slice 4 — sessions expired by idle time and age, signed out on `absence` and
+- [x] Slice 3 — the `auth` and `session` WebSocket messages, with unit tests
+- [x] Slice 4 — sessions expired by idle time and age, signed out on `absence` and
       `idle` when asked, with unit tests
-- [ ] Slice 5 — Google and Facebook: sign-in, linking, unlinking, with unit tests (the
+- [x] Slice 5 — Google and Facebook: sign-in, linking, unlinking, with unit tests (the
       provider faked)
 - [ ] Slice 6 — the sign-in form, the mode and the linked accounts on the page, with
       unit tests, `npm run build`

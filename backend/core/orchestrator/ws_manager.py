@@ -56,6 +56,13 @@ def conversation_message(conversation_id: Optional[str]) -> dict:
     return {"type": "conversation", "conversation_id": conversation_id}
 
 
+def session_message(user: Optional[dict]) -> dict:
+    """The mode the connection is in: the signed-in user ({"id", "display_name"}), or
+    None for a guest. Answers every `auth` of the client, and is sent unasked when the
+    server ends the session."""
+    return {"type": "session", "user": user}
+
+
 def interrupt_message() -> dict:
     """Stop the audio that is playing and drop what is queued."""
     return {"type": "interrupt"}

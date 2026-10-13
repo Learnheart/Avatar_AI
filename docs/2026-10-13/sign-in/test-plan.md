@@ -1,9 +1,9 @@
 ---
 author: linhbk3
 date: 2026-10-13
-status: todo
+status: in-progress
 agent: avatar
-modules: orchestrator, expression, memory, persona
+modules: accounts, orchestrator, expression, memory, persona
 summary: Tests for sign-in — the two modes, sessions, accounts, the WebSocket messages and signing out on leaving
 ---
 

@@ -56,3 +56,74 @@ def test_the_time_of_a_call_is_now_by_default(config, users):
     current_user_id(config, users)
 
     assert before <= users.get("linh").last_seen_at <= datetime.now(timezone.utc)
+
+
+# ── A session token ───────────────────────────────────────────────────────
+
+from backend.features.accounts.identity import bearer_token  # noqa: E402
+from backend.features.accounts.sessions import SessionService  # noqa: E402
+from backend.features.accounts.store import AccountsStore  # noqa: E402
+from backend.models import User  # noqa: E402
+from backend.utils.database import DatabaseError  # noqa: E402
+
+
+@pytest.fixture
+def sessions(config, users) -> SessionService:
+    store = AccountsStore(users._database)
+    store.add_account(User("u1", "Linh", NOW, NOW), "linh", "hash")
+    return SessionService(config, store)
+
+
+def test_a_valid_token_is_its_user(config, users, sessions):
+    token, _ = sessions.open("u1")
+
+    assert current_user_id(config, users, sessions=sessions, token=token) == "u1"
+
+
+@pytest.mark.parametrize("token", [None, "", "not-a-token"])
+def test_no_token_or_a_bad_one_is_a_guest(config, users, sessions, token):
+    sessions.open("u1")
+
+    assert current_user_id(config, users, sessions=sessions, token=token) is None
+
+
+def test_a_revoked_token_is_a_guest(config, users, sessions):
+    token, _ = sessions.open("u1")
+    sessions.revoke(token)
+
+    assert current_user_id(config, users, sessions=sessions, token=token) is None
+
+
+def test_the_configured_user_wins_over_any_token(config, users, sessions):
+    token, _ = sessions.open("u1")
+    config.AUTH_DEV_USER_ID = "dev"
+
+    assert current_user_id(config, users, sessions=sessions, token=token) == "dev"
+    assert current_user_id(config, users, sessions=sessions, token=None) == "dev"
+
+
+def test_a_failing_database_is_raised_not_taken_for_a_guest(config, users, sessions):
+    def down(*args):
+        raise DatabaseError("database is gone")
+
+    sessions._store.get_session = down
+
+    with pytest.raises(DatabaseError):
+        current_user_id(config, users, sessions=sessions, token="any")
+
+
+@pytest.mark.parametrize(
+    ("header", "token"),
+    [
+        ("Bearer abc", "abc"),
+        ("bearer abc", "abc"),
+        ("Bearer   abc  ", "abc"),
+        ("Bearer ", None),
+        ("Basic abc", None),
+        ("abc", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_the_token_is_read_from_a_bearer_header_only(header, token):
+    assert bearer_token(header) == token

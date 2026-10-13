@@ -32,7 +32,10 @@ def _tables(url: str) -> set[str]:
         engine.dispose()
 
 
-TABLES = {"users", "memory_items", "imports", "conversations", "turns", "persona_fields"}
+TABLES = {
+    "users", "credentials", "identities", "sessions",
+    "memory_items", "imports", "conversations", "turns", "persona_fields",
+}
 
 
 def test_startup_creates_the_tables_in_an_empty_file(config, tmp_path):

@@ -122,6 +122,15 @@ def test_invalid_values_fail_validation(overrides):
         {"MEMORY_TIMEOUT_SEC": float("nan")},
         {"MEMORY_TIMEOUT_SEC": float("inf")},
         {"PERSONA_TIMEOUT_SEC": 0},
+        {"AUTH_PASSWORD_MIN_CHARS": 0},
+        {"AUTH_LOGIN_MAX_ATTEMPTS": 0},
+        {"AUTH_SESSION_IDLE_MINUTES": 0},
+        {"AUTH_SESSION_IDLE_MINUTES": float("nan")},
+        {"AUTH_SESSION_MAX_HOURS": -1},
+        {"AUTH_SESSION_MAX_HOURS": float("inf")},
+        {"AUTH_LOGIN_WINDOW_MINUTES": 0},
+        {"AUTH_SESSION_CHECK_SEC": 0},
+        {"AUTH_PROVIDER_TIMEOUT_SEC": 0},
         {"PERSONA_TIMEOUT_SEC": float("nan")},
         {"PERSONA_TIMEOUT_SEC": float("inf")},
         {"PERSONA_FIELD_MAX_CHARS": 0},
@@ -152,6 +161,45 @@ def test_invalid_conversation_settings_fail_validation(overrides):
     (key,) = overrides
     with pytest.raises(ValueError, match=key):
         AppConfig(GROQ_API_KEY="test-key", **overrides).validate()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "missing"),
+    [
+        ({"AUTH_GOOGLE_CLIENT_ID": "id"}, "AUTH_GOOGLE_CLIENT_SECRET"),
+        ({"AUTH_FACEBOOK_CLIENT_ID": "id"}, "AUTH_FACEBOOK_CLIENT_SECRET"),
+        ({"AUTH_GOOGLE_CLIENT_ID": "id", "AUTH_GOOGLE_CLIENT_SECRET": "s"}, "AUTH_PUBLIC_URL"),
+        ({"AUTH_FACEBOOK_CLIENT_ID": "id", "AUTH_FACEBOOK_CLIENT_SECRET": "s",
+          "AUTH_PUBLIC_URL": "http://localhost:8000"}, "AUTH_PAGE_URL"),
+    ],
+)
+def test_a_sign_in_provider_needs_its_secret_and_the_two_addresses(overrides, missing):
+    with pytest.raises(ValueError, match=missing):
+        AppConfig(GROQ_API_KEY="test-key", **overrides).validate()
+
+
+def test_a_configured_sign_in_provider_is_accepted_and_its_secret_is_not_shown():
+    config = AppConfig(
+        GROQ_API_KEY="test-key",
+        AUTH_GOOGLE_CLIENT_ID="id",
+        AUTH_GOOGLE_CLIENT_SECRET="secret",
+        AUTH_PUBLIC_URL="http://localhost:8000",
+        AUTH_PAGE_URL="http://localhost:3000",
+    )
+
+    config.validate()
+    assert "secret" not in repr(config)
+
+
+def test_the_addresses_of_the_sign_in_are_read_without_their_last_slash(monkeypatch):
+    monkeypatch.setenv("AUTH_PUBLIC_URL", "http://localhost:8000/")
+    monkeypatch.setenv("AUTH_PAGE_URL", "http://localhost:3000//")
+
+    config = AppConfig(GROQ_API_KEY="test-key")
+
+    assert (config.AUTH_PUBLIC_URL, config.AUTH_PAGE_URL) == (
+        "http://localhost:8000", "http://localhost:3000"
+    )
 
 
 def test_the_edges_of_the_conversation_settings_are_accepted():
