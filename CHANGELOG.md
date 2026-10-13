@@ -199,6 +199,10 @@ the rules are in `CLAUDE.md` / `AGENTS.md` §7.
 
 ### Fixed
 
+- `[expression]` The head no longer copies every movement of the person in front of the
+  avatar: it has a slow motion of its own, a few degrees wide, and still tilts while
+  thinking. Following the person is an option of the page that is off
+  (`HEAD_FOLLOWS_PERSON` in `frontend/src/config.js`).
 - `[stt]` A sentence Whisper invents on short or unclear audio ("Cảm ơn các bạn đã theo
   dõi và ủng hộ cho kênh…", "đăng ký kênh", "thanks for watching") is no longer
   answered as if the person had said it: the turn ends as for silence.

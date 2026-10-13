@@ -80,7 +80,7 @@ log of that session:
 ## To-do
 
 - [x] Invented sentences dropped by the engine, with unit tests, `CHANGELOG.md`
-- [ ] The head moving on its own, with unit tests, `CHANGELOG.md`
+- [x] The head moving on its own, with unit tests, `CHANGELOG.md`
 - [ ] The two drop-downs, with unit tests, `npm run build`, `CHANGELOG.md`
 - [ ] The page in a real browser: both drop-downs opened, closed and remembered across a
       reload

@@ -70,7 +70,17 @@ export const HEAD_CLAMP = {
   yaw: 0.27,     // ~±16°  (was ±45°)
   roll: 0.12,    // ~±7°   (was ±20°)
 }
-export const HEAD_LERP = 0.15           // Smoothing factor per frame
+export const HEAD_LERP = 0.04           // Smoothing factor per frame — a slow, unhurried turn
+// false: the head has a motion of its own and does not copy the person in front of it.
+// true: the person's head rotation is added to that motion (the backend sends it either way).
+export const HEAD_FOLLOWS_PERSON = false
+// The head's own motion: a slow sway per axis. Amplitude in radians (0.07 ≈ 4°), two
+// periods in seconds that do not divide each other, so it never looks like a loop.
+export const HEAD_IDLE = {
+  pitch: { amplitude: 0.03, periods: [9.1, 5.3], phase: 0.7 },
+  yaw: { amplitude: 0.07, periods: [13.7, 7.9], phase: 0 },
+  roll: { amplitude: 0.02, periods: [11.3, 6.1], phase: 2.1 },
+}
 export const HEAD_SHARE = 0.7           // Head takes 70%, neck the remaining 30%
 export const THINKING_TILT_RAD = 0.12   // Extra roll (~7°) while state is "thinking"
 

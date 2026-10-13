@@ -22,6 +22,8 @@ import {
   BREATHING_SPEED,
   CAMERA,
   HEAD_CLAMP,
+  HEAD_FOLLOWS_PERSON,
+  HEAD_IDLE,
   HEAD_LERP,
   HEAD_SHARE,
   LIGHTS,
@@ -30,7 +32,9 @@ import {
   THINKING_TILT_RAD,
   VRM_PATH,
 } from '../config.js'
-import { clampHeadRotation, splitHeadNeck, thinkingTilt } from './motion.js'
+import {
+  clampHeadRotation, headTarget, idleHeadRotation, splitHeadNeck, thinkingTilt,
+} from './motion.js'
 
 export class AvatarRenderer {
   constructor(container) {
@@ -222,8 +226,8 @@ export class AvatarRenderer {
 
   /**
    * Called when a tracking_update arrives, and with null when the connection drops.
-   * Sets TARGET rotation — actual rotation lerps towards it in render loop.
-   * A null rotation returns the head to neutral.
+   * The rotation of the person is only followed with HEAD_FOLLOWS_PERSON; otherwise
+   * the head keeps its own motion. A null rotation is nobody to follow.
    */
   applyTrackingData(headRotation) {
     // The tracker's pitch sign is inverted relative to the VRM head bone's X axis
@@ -232,16 +236,14 @@ export class AvatarRenderer {
       ? { ...headRotation, pitch: -headRotation.pitch }
       : headRotation
     this._trackedRotation = clampHeadRotation(adjusted, HEAD_CLAMP)
-    this._updateHeadTargets()
   }
 
   /**
    * Called when a server `state` message arrives (idle | listening | thinking | speaking).
-   * "thinking" adds a small head tilt on top of the tracked rotation.
+   * "thinking" adds a small head tilt on top of the head's motion.
    */
   setState(state) {
     this._thinkingTilt = thinkingTilt(state, THINKING_TILT_RAD)
-    this._updateHeadTargets()
   }
 
   /**
@@ -262,6 +264,7 @@ export class AvatarRenderer {
       const elapsed = this._clock.elapsedTime
 
       if (this._vrm) {
+        this._updateHeadTargets(elapsed)
         this._updateHeadTracking()
         this._updateBlink(delta)
         this._updateBreathing(elapsed)
@@ -276,13 +279,16 @@ export class AvatarRenderer {
   // ── Head tracking animation ──────────────────────────────────────────
 
   /**
-   * Recompute head / neck target quaternions: tracked rotation + thinking tilt
-   * on roll, clamped again, then distributed (pitch → X, yaw → Y, roll → Z).
+   * Recompute head / neck target quaternions for this frame: the head's own motion,
+   * the person's rotation when it is followed, the thinking tilt on roll, clamped,
+   * then distributed (pitch → X, yaw → Y, roll → Z).
    */
-  _updateHeadTargets() {
-    const target = clampHeadRotation(
-      { ...this._trackedRotation, roll: this._trackedRotation.roll + this._thinkingTilt },
-      HEAD_CLAMP
+  _updateHeadTargets(elapsed) {
+    const target = headTarget(
+      idleHeadRotation(elapsed, HEAD_IDLE),
+      HEAD_FOLLOWS_PERSON ? this._trackedRotation : null,
+      this._thinkingTilt,
+      HEAD_CLAMP,
     )
     // Without a neck bone the head takes the full rotation
     const { head, neck } = splitHeadNeck(target, this._neckNode ? HEAD_SHARE : 1)
