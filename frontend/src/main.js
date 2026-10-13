@@ -18,7 +18,8 @@ import { WSClient } from './ws-client.js'
 import { AudioManager } from './audio/audio-manager.js'
 import { AuthClient } from './auth/auth-client.js'
 import { AuthPanel } from './auth/auth-panel.js'
-import { pageSession } from './auth/session.js'
+import { SESSION_VERDICT, pageSession, sessionVerdict } from './auth/session.js'
+import { AUTH_RETRY_MS } from './config.js'
 import { LipSync } from './avatar/lip-sync.js'
 import { KnowledgeClient } from './knowledge/knowledge-client.js'
 import { KnowledgePanel } from './knowledge/knowledge-panel.js'
@@ -105,10 +106,19 @@ async function main() {
     avatar.setState(msg.state)
   })
 
-  // session → the mode the backend holds this connection in: it ended the session
-  // (expired, signed out elsewhere, the person left), or confirms who is signed in
+  // session → the answer to an `auth` frame, or the backend ending the session it
+  // opened. It says something about the token the page holds only when it names the
+  // last `auth` sent and that frame carried this token; a late answer to an earlier
+  // frame (the one of page load, the person before) changes nothing.
   ws.on('session', (msg) => {
-    if (pageSession.token) pageSession.confirm(msg.user)
+    const sent = ws.lastAuth
+    switch (sessionVerdict(msg, sent, pageSession.token)) {
+      case SESSION_VERDICT.ACCEPT: pageSession.confirm(sent.token, msg.user); break
+      case SESSION_VERDICT.DROP: pageSession.rejected(sent.token); break
+      // The backend could not tell (its database failed): the token is kept.
+      case SESSION_VERDICT.RETRY: ws.retryAuth(AUTH_RETRY_MS); break
+      default: break
+    }
   })
 
   // connected → log session info

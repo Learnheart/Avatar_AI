@@ -1,7 +1,8 @@
 /**
  * Frontend config — the single place for env-driven values and tunable constants.
  *
- * Env (Vite, see frontend/.env.example): VITE_WS_URL, VITE_API_URL, VITE_VRM_PATH.
+ * Env (Vite, see frontend/.env.example): VITE_WS_URL, VITE_API_URL, VITE_VRM_PATH,
+ * VITE_AUTH_RETRY_MS.
  */
 
 // ── Env-driven ────────────────────────────────────────────────────────────
@@ -48,6 +49,13 @@ export const MEMORY_IMPORT_MAX_FILE_MB = 5
 // Checked before an account is created; the backend has the last word (its
 // AUTH_PASSWORD_MIN_CHARS).
 export const AUTH_PASSWORD_MIN_CHARS = 8
+// How long the page waits before it presents its token again, after the backend said
+// it could not tell whose it is (`session` with status `unresolved`).
+export const AUTH_RETRY_MS = Number(import.meta.env.VITE_AUTH_RETRY_MS) || 5000
+// The random verifier that binds a sign-in at a provider to this page, and the id of
+// an `auth` frame of the WebSocket.
+export const AUTH_VERIFIER_BYTES = 32
+export const AUTH_FRAME_ID_BYTES = 16
 
 // ── Persona block of the profile page ─────────────────────────────────────
 

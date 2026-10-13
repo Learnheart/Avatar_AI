@@ -50,12 +50,20 @@ export function authErrorMessage(status) {
 }
 
 /**
+ * The message for a route that acts for the signed-in user (the linked accounts): 401
+ * there is a session that is over, not a wrong password. `other` names the rest.
+ */
+export function sessionErrorMessage(status, other = authErrorMessage) {
+  return status === 401 ? 'Phiên đăng nhập đã hết, vui lòng đăng nhập lại' : other(status)
+}
+
+/**
  * The message for a refused request of a code: 429 and 502 mean something else there
- * (a code was just sent; the mail could not be sent).
+ * (a code was just sent, or too many were asked for; the mail could not be sent).
  */
 export function registerErrorMessage(status) {
   switch (status) {
-    case 429: return 'Mã vừa được gửi, vui lòng đợi một phút rồi yêu cầu lại'
+    case 429: return 'Mã vừa được gửi hoặc đã được yêu cầu quá nhiều lần, vui lòng đợi rồi thử lại'
     case 502: return 'Chưa gửi được mã tới email này, vui lòng thử lại'
     default: return authErrorMessage(status)
   }
@@ -77,11 +85,41 @@ export function codeSentMessage(sent) {
   return `Đã gửi mã gồm 6 chữ số tới ${sent?.email}. Mã có hiệu lực trong ${minutes} phút.`
 }
 
+/**
+ * How long the form keeps what waits for a code ({ expires_in_sec }), in milliseconds:
+ * as long as the code can be given back. An answer without a duration keeps nothing.
+ */
+export function forgetDelayMs(sent) {
+  const seconds = Number(sent?.expires_in_sec)
+  return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 0
+}
+
+/** What the form says once the code is over and what was typed is forgotten. */
+export function codeExpiredMessage() {
+  return 'Mã đã hết hạn, vui lòng nhập lại email và mật khẩu để nhận mã mới'
+}
+
 /** The message for a refused unlinking: 409 means something else there. */
 export function unlinkErrorMessage(status) {
   return status === 409
     ? 'Đây là cách đăng nhập duy nhất của bạn, không gỡ được'
     : authErrorMessage(status)
+}
+
+/**
+ * The message for a refused confirmation of a link (`POST /auth/identities`): the
+ * person is back from the provider and the page asks to attach who they proved to be.
+ * 409 has two causes the page cannot tell apart (the identity belongs to another user;
+ * this user already has one of that provider): one message covers both.
+ */
+export function linkErrorMessage(status) {
+  switch (status) {
+    case 403: return 'Yêu cầu liên kết này thuộc về một tài khoản khác, vui lòng thử lại'
+    case 409: return 'Không liên kết được: tài khoản này đã được liên kết'
+    case 410: return 'Yêu cầu liên kết đã hết hạn, vui lòng thử lại'
+    case 422: return 'Yêu cầu liên kết không hợp lệ, vui lòng thử lại'
+    default: return authErrorMessage(status)
+  }
 }
 
 const PROVIDER_LABELS = { google: 'Google', facebook: 'Facebook' }
@@ -93,24 +131,47 @@ export function providerLabel(provider) {
 
 /**
  * What the backend left in the address after a sign-in at a provider
- * (`#auth_code=…`, `#auth_linked=…`, `#auth_error=…`): { code }, { linked },
- * { error }, or null when the address holds none of them.
+ * (`#auth_code=…`, `#auth_link=…`, `#auth_error=…`): { code } to exchange for a
+ * session, { link } to confirm a link with, { error }, or null when the address holds
+ * none of them.
  */
 export function readFragment(hash) {
   const params = new URLSearchParams(String(hash ?? '').replace(/^#/, ''))
-  for (const [key, name] of [['auth_code', 'code'], ['auth_linked', 'linked'], ['auth_error', 'error']]) {
+  for (const [key, name] of [['auth_code', 'code'], ['auth_link', 'link'], ['auth_error', 'error']]) {
     const value = params.get(key)
     if (value) return { [name]: value }
   }
   return null
 }
 
+// ── The verifier that binds a sign-in at a provider to the page that started it ──
+
+/** Bytes → base64url without padding (RFC 4648 §5). */
+export function base64url(bytes) {
+  let binary = ''
+  for (const byte of new Uint8Array(bytes)) binary += String.fromCharCode(byte)
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+/** A fresh random value of `byteCount` bytes, as base64url: a verifier, a frame id. */
+export function randomToken(byteCount, random = globalThis.crypto) {
+  return base64url(random.getRandomValues(new Uint8Array(byteCount)))
+}
+
+/**
+ * The challenge of a verifier: base64url(SHA-256(verifier)), the verifier taken as the
+ * ASCII text it is. The backend is given the challenge when the sign-in starts and the
+ * verifier when its outcome is collected.
+ */
+export async function challengeOf(verifier, subtle = globalThis.crypto?.subtle) {
+  if (!subtle) throw new Error('SHA-256 is not available on this page')
+  return base64url(await subtle.digest('SHA-256', new TextEncoder().encode(verifier)))
+}
+
 /** The message for a sign-in at a provider that did not go through. */
 export function providerErrorMessage(reason) {
   switch (reason) {
     case 'denied': return 'Bạn đã huỷ đăng nhập'
-    case 'linked_elsewhere': return 'Tài khoản này đã được liên kết với một người dùng khác'
-    case 'already_linked': return 'Bạn đã liên kết một tài khoản khác của nhà cung cấp này'
     case 'link_expired': return 'Yêu cầu liên kết đã hết hạn, vui lòng thử lại'
     case 'provider': return 'Nhà cung cấp không phản hồi, vui lòng thử lại'
     default: return 'Đăng nhập không thành công, vui lòng thử lại'

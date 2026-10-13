@@ -12,7 +12,7 @@
  */
 
 import { PERSONA_FIELD_MAX_CHARS, PERSONA_IMPORT_MAX_CHARS } from '../config.js'
-import { UNAUTHORIZED } from '../memory/format.js'
+import { SUPERSEDED, UNAUTHORIZED } from '../memory/format.js'
 import {
   PERSONA_FIELDS,
   clearedMessage,
@@ -71,7 +71,11 @@ export class PersonaPanel {
     this.refresh()
   }
 
-  /** Who is signed in changed: what was typed belongs to the person before. */
+  /**
+   * Who is signed in changed: what was typed belongs to the person before. While a
+   * request of that person is running, the fields are read once it has answered (its
+   * answer is superseded, see `_run`).
+   */
   reset() {
     this._saved = {}
     this._description.value = ''
@@ -90,6 +94,8 @@ export class PersonaPanel {
       this._defaults = defaults
       this._fill(this._saved)
     } catch (err) {
+      // An answer for the person before is shown to nobody: `reset` reads again.
+      if (err.status === SUPERSEDED) return
       // A guest: the profile page says so itself, and hides this block.
       if (err.status !== UNAUTHORIZED) this._say(err.message, true)
     }
@@ -134,12 +140,21 @@ export class PersonaPanel {
   async _run(origin, waiting, send) {
     this._setBusy(true)
     this._say(waiting, false, true)
+    let superseded = false
     try {
       this._say(await send())
     } catch (err) {
-      this._say(err.message, true)
+      superseded = err.status === SUPERSEDED
+      if (!superseded) this._say(err.message, true)
     }
     this._setBusy(false)
+    if (superseded) {
+      // The person changed while it ran: its outcome is dropped, and the fields of
+      // who is there now are read, which `reset` could not do while the block was busy.
+      this._say('')
+      this.refresh()
+      return
+    }
     // Disabled while it held the focus, the control dropped it: the keyboard goes back
     // to it, unless the person moved on to something else meanwhile.
     const active = document.activeElement

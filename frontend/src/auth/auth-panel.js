@@ -2,7 +2,12 @@
  * The sign-in on the page: the mode shown beside the "Hồ sơ" button (a guest, or who is
  * signed in), the sign-in form a guest finds on the profile page, and the accounts
  * linked to a signed-in user. Creating an account takes two steps: the email and a
- * password, then the code the backend sent to that email.
+ * password, then the code the backend sent to that email. Only the email is sent at
+ * the first step: the password waits in the memory of the page and goes with the code.
+ *
+ * Nothing of one person is left for the next: on every change of the session, and when
+ * a code expires, the form forgets what was typed and what waits; the linked accounts
+ * on screen are emptied when the user changes.
  *
  * The frames are in index.html (#session-chip, #auth-form, #auth-identities). What is
  * shown follows the session of the page (./session.js): this panel changes the session
@@ -10,11 +15,15 @@
  * from the providers: they are only ever written with textContent.
  */
 
-import { AUTH_PASSWORD_MIN_CHARS } from '../config.js'
+import { AUTH_PASSWORD_MIN_CHARS, AUTH_VERIFIER_BYTES } from '../config.js'
+import { SUPERSEDED, UNAUTHORIZED } from '../memory/format.js'
 import {
+  challengeOf,
+  codeExpiredMessage,
   codeRefusal,
   codeSentMessage,
   emailRefusal,
+  forgetDelayMs,
   identityLabel,
   linkableProviders,
   linkedMessage,
@@ -22,8 +31,20 @@ import {
   passwordRefusal,
   providerErrorMessage,
   providerLabel,
+  randomToken,
   readFragment,
+  sessionErrorMessage,
 } from './format.js'
+import { keepVerifier, takeVerifier } from './session.js'
+
+/** Where the verifier of a provider sign-in waits: this tab only, gone when it closes. */
+function tabStorage() {
+  try {
+    return globalThis.sessionStorage ?? null
+  } catch {
+    return null
+  }
+}
 
 function button(text, className) {
   const element = document.createElement('button')
@@ -59,7 +80,11 @@ export class AuthPanel {
     this._identityMessage = document.getElementById('auth-identity-message')
     this._offered = { providers: [], registration: false }
     this._busy = false
-    this._waiting = null   // the account waiting for its code: { email, password }
+    // The account waiting for its code: { email, password }. The password is held here
+    // only, never in the hidden input, and no longer than the code lasts.
+    this._waiting = null
+    this._expiry = null      // the timer that forgets it when the code expires
+    this._shownUserId = null // whose linked accounts the list holds
   }
 
   async init() {
@@ -81,7 +106,10 @@ export class AuthPanel {
     this._code.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') this._giveCode()
     })
-    this._session.onChange(() => this._render())
+    this._session.onChange(() => {
+      this._forget()
+      this._render()
+    })
     this._render()
 
     // What a provider's callback left in the address is read once and removed from it.
@@ -98,39 +126,80 @@ export class AuthPanel {
     else if (this._session.token) await this._confirm()
   }
 
-  /** The accounts linked to the user are read again: the profile page was opened. */
-  refresh() {
-    this._sayIdentity('')
-    this._renderIdentities()
-  }
-
   // ── Changes ─────────────────────────────────────────────────────────────
 
-  /** Ask the backend whether the token the page kept still signs someone in. */
+  /**
+   * Ask the backend whether the token the page kept still signs someone in. The answer
+   * is about that token: it changes nothing when the page holds another one by then.
+   */
   async _confirm() {
+    const token = this._session.token
     try {
-      this._session.confirm(await this._client.user())
+      this._session.confirm(token, await this._client.user())
     } catch {
       // No answer: the page keeps what it has; the WebSocket will say who it is.
     }
   }
 
-  /** The person is back from a provider. */
-  async _arrive({ code, linked, error }) {
-    if (code) {
-      try {
-        this._session.signIn(await this._client.exchange(code))
-      } catch (err) {
-        this._say(providerErrorMessage(err.status === 401 ? 'expired' : 'provider'), true)
-        this._openProfile()
-      }
-      return
-    }
+  /**
+   * The person is back from a provider. The verifier this page kept when it started is
+   * taken out of the tab whatever came back: it proves one sign-in, also a failed one.
+   */
+  async _arrive({ code, link, error }) {
+    const verifier = takeVerifier(tabStorage())
+    if (code) return this._collect(code, verifier)
+    if (link) return this._confirmLink(link)
     await this._confirm()
     this._openProfile()
-    if (linked) this._sayIdentity(linkedMessage(linked))
-    else if (this._session.user) this._sayIdentity(providerErrorMessage(error), true)
+    if (this._session.user) this._sayIdentity(providerErrorMessage(error), true)
     else this._say(providerErrorMessage(error), true)
+  }
+
+  /** Go to a provider to sign in, leaving here the verifier that proves who started. */
+  async _start(provider) {
+    try {
+      const verifier = randomToken(AUTH_VERIFIER_BYTES)
+      const challenge = await challengeOf(verifier)
+      if (!keepVerifier(tabStorage(), verifier)) throw new Error('no storage for the verifier')
+      window.location.assign(this._client.startUrl(provider, challenge))
+    } catch {
+      // No random source, no SHA-256 (a page not served over https or from localhost)
+      // or no storage: the sign-in cannot be bound to this page, so it is not started.
+      this._say(providerErrorMessage(), true)
+    }
+  }
+
+  /**
+   * Collect the sign-in a provider's callback left: only with the verifier this page
+   * kept when it started. Without one, the code was not started here and is left alone.
+   */
+  async _collect(code, verifier) {
+    try {
+      if (!verifier) throw new Error('this page started no sign-in')
+      const session = await this._client.exchange(code, verifier)
+      this._forget()
+      this._session.signIn(session)
+    } catch (err) {
+      if (err.status === SUPERSEDED) return
+      // Refused (401: spent, expired, or not this page's) or never started here: the
+      // generic failure. Anything else is the backend or the network.
+      const refused = !verifier || err.status === UNAUTHORIZED
+      this._say(providerErrorMessage(refused ? undefined : 'provider'), true)
+      this._openProfile()
+    }
+  }
+
+  /** Attach to the signed-in user who the provider said they are. */
+  async _confirmLink(code) {
+    this._openProfile()
+    if (!this._session.token) return this._say(sessionErrorMessage(UNAUTHORIZED), true)
+    try {
+      const { provider } = await this._client.confirmLink(code)
+      this._sayIdentity(linkedMessage(provider))
+      this._renderIdentities()
+    } catch (err) {
+      this._sessionFailure(err)
+    }
   }
 
   async _submit(creating) {
@@ -147,28 +216,36 @@ export class AuthPanel {
     this._say('Đang đăng nhập…')
     try {
       const session = await this._client.login(email, password)
-      this._password.value = ''
-      this._say('')
+      this._forget()
       this._session.signIn(session)
     } catch (err) {
-      this._say(err.message, true)
+      if (err.status !== SUPERSEDED) this._say(err.message, true)
     }
     this._setBusy(false)
   }
 
-  /** First step of a new account, and "Gửi lại mã": have a code sent to the email. */
+  /**
+   * First step of a new account, and "Gửi lại mã": have a code sent to the email. Only
+   * the address is sent. The password leaves the input for the memory of the page, where
+   * it waits for the code and no longer than the code lasts.
+   */
   async _askCode(account) {
     if (this._busy || !account) return
     this._setBusy(true)
     this._say('Đang gửi mã xác nhận tới email của bạn…')
     try {
-      const sent = await this._client.register(account.email, account.password)
-      this._waiting = account
+      const sent = await this._client.register(account.email)
+      this._password.value = ''
       this._codeSent.textContent = codeSentMessage(sent)
       this._say('')
       this._showStep('code')
+      this._waiting = account
+      this._expiry = setTimeout(() => {
+        this._forget()
+        this._say(codeExpiredMessage(), true)
+      }, forgetDelayMs(sent))
     } catch (err) {
-      this._say(err.message, true)
+      if (err.status !== SUPERSEDED) this._say(err.message, true)
     }
     this._setBusy(false)
     if (this._waiting) this._code.focus()
@@ -183,41 +260,60 @@ export class AuthPanel {
 
     this._setBusy(true)
     this._say('Đang xác nhận…')
+    const { email, password } = this._waiting
     try {
-      const session = await this._client.verify(this._waiting.email, code)
-      this._showStep(null)
-      this._password.value = ''
-      this._say('')
+      const session = await this._client.verify(email, code, password)
+      this._forget()
       this._session.signIn(session)
     } catch (err) {
-      this._say(err.message, true)
+      if (err.status !== SUPERSEDED) this._say(err.message, true)
     }
     this._setBusy(false)
   }
 
-  /** Show the step of the form: 'code' while an account waits for its code. */
+  /**
+   * Show the step of the form: 'code' while an account waits for its code. Any other
+   * step drops what was waiting (the password with it) and the timer of its code.
+   */
   _showStep(step) {
     const code = step === 'code'
-    if (!code) this._waiting = null
+    clearTimeout(this._expiry)
+    this._expiry = null
+    this._waiting = null
     this._code.value = ''
     this._credentials.hidden = code
     this._codeStep.hidden = !code
   }
 
+  /**
+   * Forget everything a person typed in the form and what waits for a code: the page
+   * has another person in front of it (the session changed), or the code is over.
+   */
+  _forget() {
+    this._email.value = ''
+    this._password.value = ''
+    this._codeSent.textContent = ''
+    this._say('')
+    this._showStep(null)
+  }
+
   async _signOut() {
-    try {
-      await this._client.logout()
-    } catch {
-      // The page forgets its token whatever the backend answered.
-    }
+    // The page is a guest at once, before the backend answers; the session that is
+    // ended there is the one of the token the page held, whoever signs in meanwhile.
+    const token = this._session.token
     this._session.signOut()
+    try {
+      await this._client.logout(token)
+    } catch {
+      // The page forgot its token whatever the backend answers: nothing to say to a guest.
+    }
   }
 
   async _link(provider) {
     try {
       window.location.assign(await this._client.linkUrl(provider))
     } catch (err) {
-      this._sayIdentity(err.message, true)
+      this._sessionFailure(err)
     }
   }
 
@@ -226,9 +322,20 @@ export class AuthPanel {
       await this._client.unlink(provider)
       this._sayIdentity(`Đã gỡ tài khoản ${providerLabel(provider)}`)
     } catch (err) {
-      this._sayIdentity(err.message, true)
+      this._sessionFailure(err)
     }
     this._renderIdentities()
+  }
+
+  /**
+   * A route of the signed-in user failed. A session that is over is said in the main
+   * message: the page is a guest by now and the linked accounts are hidden. An answer
+   * that came for the person before is shown to nobody.
+   */
+  _sessionFailure(err) {
+    if (err.status === SUPERSEDED) return
+    if (err.status === UNAUTHORIZED) this._say(err.message, true)
+    else this._sayIdentity(err.message, true)
   }
 
   _setBusy(busy) {
@@ -248,12 +355,17 @@ export class AuthPanel {
     this._register.hidden = !this._offered.registration
     this._providers.replaceChildren(...this._offered.providers.map((provider) => {
       const start = button(`Đăng nhập với ${providerLabel(provider)}`, 'profile-button')
-      start.addEventListener('click', () => {
-        window.location.assign(this._client.startUrl(provider))
-      })
+      start.addEventListener('click', () => this._start(provider))
       return start
     }))
     this._identities.hidden = !user || this._offered.providers.length === 0
+    // Another person, or nobody: the accounts on screen, their buttons and what was
+    // said about them belong to the person before.
+    if ((user?.id ?? null) !== this._shownUserId) {
+      this._shownUserId = user?.id ?? null
+      this._identityList.replaceChildren()
+      this._sayIdentity('')
+    }
     if (user) this._renderIdentities()
   }
 
@@ -264,7 +376,9 @@ export class AuthPanel {
     try {
       linked = await this._client.identities()
     } catch (err) {
-      return this._sayIdentity(err.message, true)
+      // Rows that cannot be read again are not left on screen as if they were true.
+      if (err.status !== SUPERSEDED) this._identityList.replaceChildren()
+      return this._sessionFailure(err)
     }
     const rows = linked.map((identity) => {
       const row = document.createElement('li')

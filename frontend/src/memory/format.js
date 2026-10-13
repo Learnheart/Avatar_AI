@@ -16,6 +16,12 @@ export const NETWORK_FAILURE = 0
 /** The status of a guest: nobody is logged in. */
 export const UNAUTHORIZED = 401
 
+/**
+ * The status of a request whose answer came after the person on the page changed
+ * (auth/session.js): its outcome is shown to nobody.
+ */
+export const SUPERSEDED = -1
+
 const CATEGORY_LABELS = {
   identity: 'Thông tin về bạn',
   addressing: 'Cách xưng hô',

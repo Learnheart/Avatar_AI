@@ -25,6 +25,7 @@ import {
 } from '../config.js'
 import {
   CATEGORIES,
+  SUPERSEDED,
   UNAUTHORIZED,
   approvedMessage,
   categoryLabel,
@@ -194,14 +195,26 @@ export class ProfilePage {
     this._page.close()
   }
 
-  /** Who is signed in changed: an open page shows the other person's data, or the form. */
+  /**
+   * Who is signed in changed. Nothing of the person before stays, on screen or typed,
+   * open or closed: the page is back to what it is before its first read, and an open
+   * one then reads the other person's data, or shows the form.
+   */
   sessionChanged() {
     this._stopEditing()
     this._removingImportId = null
     this._persona?.reset()
-    if (!this._page.open) return
+    this._items = []
+    this._imports = []
+    // Hidden until they are read again: a read that fails leaves no rows to show.
+    this._guest.hidden = true
+    this._body.hidden = true
+    this._render()
+    this._importText.value = ''
+    for (const category of CATEGORIES) this._addInputs[category].value = ''
     this._say('')
-    this.refresh()
+    this._sayImport('')
+    if (this._page.open) this.refresh()
   }
 
   /** Read the items and the imports: an item names the import it comes from. */
@@ -219,7 +232,8 @@ export class ProfilePage {
       this._show({ guest: false })
       this._render()
     } catch (err) {
-      this._fail(err)
+      // An answer for the person before is shown to nobody: `sessionChanged` reads again.
+      if (err.status !== SUPERSEDED) this._fail(err)
     }
   }
 
@@ -238,6 +252,12 @@ export class ProfilePage {
       await call()
       say(typeof done === 'function' ? done() : done)
     } catch (err) {
+      if (err.status === SUPERSEDED) {
+        // The person changed while it ran: nothing of it is said or drawn. The
+        // messages are left alone, they belong to the new person by now:
+        // `sessionChanged` emptied them and redraws the page.
+        return false
+      }
       if (err.status === UNAUTHORIZED) {
         this._fail(err)
         return false
@@ -248,6 +268,7 @@ export class ProfilePage {
     try {
       await this._read()
     } catch (err) {
+      if (err.status === SUPERSEDED) return false
       // The message of a failed change is not replaced by the one of a failed refresh.
       if (!failed || err.status === UNAUTHORIZED) this._fail(err)
     }
