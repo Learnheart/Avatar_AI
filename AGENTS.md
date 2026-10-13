@@ -105,7 +105,7 @@ cover as much logic as possible with unit tests.
 | **Conversation — TTS** | **ZeroTTS** (open-source, tiếng Việt) | Text → audio tiếng Việt; chạy local real-time trên CPU, có streaming |
 | **Knowledge base** | sqlite-vec (SQLite extension) + embedding qua `EMBEDDING_BACKEND` (`local_hash` \| `openai_compatible` \| `databricks` \| `ollama`), backup qua `EMBEDDING_BACKEND_BACKUP`; pypdf, python-docx | Upload tài liệu (txt, md, csv, pdf, docx) → chunk → vector; tra cứu đoạn liên quan cho mỗi câu hỏi trước khi gọi LLM |
 | **Application database** | SQLAlchemy Core trên `DATABASE_URL` (file SQLite local; PostgreSQL khi deploy) | Lưu user, memory (những điều avatar nhớ về từng user) và các turn của cuộc trò chuyện chưa được đọc; bảng được tạo lúc startup, chưa có migration tool |
-| **Sign-in (accounts)** | logic nội bộ trên application database; scrypt (thư viện chuẩn) cho mật khẩu; OAuth 2 + PKCE qua httpx cho Google / Facebook | Hai chế độ: guest (mặc định) và user đã đăng nhập. Tài khoản local (username + password) hoặc Google / Facebook, liên kết được về cùng một user. Đăng nhập mở một session: token ngẫu nhiên, database chỉ giữ hash; session được giữ và hết hạn theo `AUTH_SESSION_IDLE_MINUTES` / `AUTH_SESSION_MAX_HOURS` (tuỳ chọn `AUTH_LOGOUT_ON_LEAVE`). `AUTH_DEV_USER_ID` vẫn dùng cho dev / test |
+| **Sign-in (accounts)** | logic nội bộ trên application database; scrypt (thư viện chuẩn) cho mật khẩu; OAuth 2 + PKCE qua httpx cho Google / Facebook | Hai chế độ: guest (mặc định) và user đã đăng nhập. Tài khoản local là email + password, chỉ được tạo sau khi nhập đúng mã 6 số gửi về email đó (`MAIL_BACKEND` = `smtp`, hoặc `log` để ghi mã ra log khi không có mail server); một email một tài khoản. Hoặc Google / Facebook, liên kết được về cùng một user. Đăng nhập mở một session: token ngẫu nhiên, database chỉ giữ hash; session được giữ và hết hạn theo `AUTH_SESSION_IDLE_MINUTES` / `AUTH_SESSION_MAX_HOURS` (tuỳ chọn `AUTH_LOGOUT_ON_LEAVE`). `AUTH_DEV_USER_ID` vẫn dùng cho dev / test |
 | **Memory** | logic nội bộ trên application database; import và cuộc trò chuyện đã đóng được đọc bằng một lần gọi LLM ngoài turn (`LLM.complete`) | Hồ sơ của user đã đăng nhập (các memory item `active`) đưa vào LLM mỗi turn; import file / đoạn văn tự giới thiệu → memory item; cuộc trò chuyện đã đóng → memory item `pending` (đề xuất) chờ user duyệt hoặc từ chối, sở thích / tính cách được nhắc lại ở cuộc trò chuyện sau thì tự `active`; turn đã lưu bị xoá sau khi đọc; guest không có memory |
 | **Persona** | logic nội bộ trên application database; đoạn mô tả dán vào được đọc bằng một lần gọi LLM ngoài turn (`LLM.complete`) | Tính cách user đã đăng nhập đặt cho avatar: một dict các trường định nghĩa trước (`name`, `role`, `addressing`, `personality`, `answer_style`, `avoid`), được ghi vào chỗ `{persona}` của `SYSTEM_PROMPT` mỗi turn: trường nào user khai báo thì thay giá trị mặc định (`PERSONA_DEFAULT`) của trường đó, trường còn lại giữ mặc định; không bắt buộc, guest dùng persona mặc định |
 | **Object store** | thư mục local `OBJECT_STORE_DIR` (thay được bằng S3-compatible) | Giữ nguyên bản gốc của file user import; chủ sở hữu chỉ ghi trong application database |
@@ -195,7 +195,7 @@ backend/
     accounts/
       identity.py              # current_user_id(): who is behind a connection or a request (a session token, or AUTH_DEV_USER_ID)
       sessions.py              # SessionService: open, resolve, revoke; a session ends by idle time or age
-      accounts.py              # AccountService: local accounts (user name + password), the attempt limit
+      accounts.py              # AccountService: local accounts (an email proved by a code + a password), the attempt limit
       passwords.py             # scrypt hash / verify (pure)
       providers.py             # ExternalSignIn: Google, Facebook (OAuth 2 + PKCE), linking and unlinking
       store.py                 # tables users, credentials, identities, sessions (all the SQL of the accounts)
@@ -223,6 +223,7 @@ backend/
     loaders.py                 # txt, md, csv, pdf, docx → text (knowledge documents, memory imports)
     errors.py
     logging.py
+    mailer.py                  # Mailer: one plain-text mail by SMTP, or to the log (MAIL_BACKEND)
   assets/
     face_landmarker.task       # MediaPipe model
   requirements.txt             # runtime deps
@@ -332,11 +333,17 @@ Layering rules:
   old (checked on every use, never stored), is revoked by a sign-out, and with
   `AUTH_LOGOUT_ON_LEAVE` when the orchestrator closes the user's conversation for
   `absence` or `idle`. A turn counts as a use; looking at a session does not.
-- An account is a user name and a password (scrypt, `features/accounts/passwords.py`)
-  or an identity at an external provider, the pair (provider, id there), never an
-  email. Identities are linked to a user by that signed-in user only; two accounts are
-  never merged. Nothing of a provider is kept but who the person is. A password, a
-  session token and a provider's access token never reach a log, a span or the capture.
+- A local account is an email address and a password (scrypt,
+  `features/accounts/passwords.py`), created in two steps: a six-digit code is sent to
+  the address (`backend/utils/mailer.py`, `MAIL_BACKEND`) and the account exists once
+  the code is given back; what waits for its code is held in RAM, hashed. One email has
+  one account. An identity at an external provider is the pair (provider, id there),
+  never an email; it is linked to a user by that signed-in user, or by itself when the
+  provider says it verified an email that is the email of a local account. Nothing
+  else is merged by email. Nothing of a provider is kept but who the person is. A
+  password, a session token and a provider's access token never reach a log, a span or
+  the capture; with `MAIL_BACKEND=log`, and only then, the mail carrying a code is
+  written to the log instead of being sent.
 - The HTTP routes `/auth` are a contract between `backend/features/accounts/api.py`
   and `frontend/src/auth/`.
 - The persona reaches the turn through the `Persona` contract only: for a logged-in

@@ -130,8 +130,8 @@
 <h2>1. Objectives</h2>
 <p><strong>Target.</strong> A kiosk avatar that notices a person standing in front of it, listens to
 what they say, and answers back in a natural Vietnamese voice, while an on-screen 3D
-avatar turns its head toward the person and moves its mouth in time with the spoken
-audio. It answers as a personal work assistant, from its own general knowledge and from
+avatar moves its head slowly, as someone waiting would, and moves its mouth in time with
+the spoken audio. It answers as a personal work assistant, from its own general knowledge and from
 documents the user has uploaded.</p>
 <p><strong>Inputs.</strong></p>
 <ul>
@@ -142,14 +142,15 @@ documents the user has uploaded.</p>
 <li>What a known person types on the profile page to describe themselves, and what they
   import there for the same purpose: a file (text, Markdown, CSV, PDF, Word) or a
   pasted text.</li>
-<li>Who the person is: a user name and a password, or a Google or Facebook account, given
-  on the page to sign in; and what they say about themselves in conversation.</li>
+<li>Who the person is: an email address and a password, with the code sent to that
+  address when the account is created, or a Google or Facebook account, given on the
+  page to sign in; and what they say about themselves in conversation.</li>
 </ul>
 <p><strong>Outputs.</strong></p>
 <ul>
 <li>A spoken Vietnamese answer played through the speaker, starting on the first sentence
   rather than after the whole answer is ready.</li>
-<li>A 3D avatar that follows the person with its head and lip-syncs to the audio.</li>
+<li>A 3D avatar whose head moves slowly on its own, tilts while it thinks, and whose mouth follows the audio.</li>
 <li>For the operator: a step-by-step record of every turn (what was heard, looked up,
   answered, and how long each step took).</li>
 </ul>
@@ -311,7 +312,7 @@ documents the user has uploaded.</p>
 <tr>
 <td>Sign-in <span class="tag built">MVP 2 · built</span></td>
 <td>Who is a guest and who is a signed-in user</td>
-<td>A person is a guest by default and signs in on the page with an account kept here (a user name and a password, stored hashed) or with a Google or Facebook account, which can be linked to the same user. Signing in opens a session that is kept across restarts of the browser and ends when it was not used for a set time or is too old; optionally also when the person leaves the kiosk. Only who the person is is read from an external account</td>
+<td>A person is a guest by default and signs in on the page with an account kept here (an email address and a password, stored hashed; the account exists once a code sent to that address is given back, so one email has one account) or with a Google or Facebook account, which can be linked to the same user. Signing in opens a session that is kept across restarts of the browser and ends when it was not used for a set time or is too old; optionally also when the person leaves the kiosk. Only who the person is is read from an external account</td>
 </tr>
 <tr>
 <td>Avatar personality <span class="tag built">MVP 2 · built</span></td>
@@ -667,7 +668,12 @@ flowchart TB
   conversation, so nothing a guest said follows the user who signs in afterwards.</li>
 <li><strong>An external account only says who the person is</strong> <span class="tag built">built</span>. Google and Facebook
   are asked once for the person's identity and nothing of theirs is kept. An identity
-  is linked to an account only by a signed-in person, never because two emails match.</li>
+  is linked to an account by a signed-in person, or by itself where the address was
+  proved on both sides: here by a code, there by a provider that says it verified it.</li>
+<li><strong>An account proves its email</strong> <span class="tag built">built</span>. The account is created only when the code
+  sent to the address comes back, so nobody holds an account in someone else's name
+  and one address has one account. Sending is a setting: a real mail server in a
+  deployment, the backend's own log on a machine that has none.</li>
 <li><strong>Three ways into long-term memory, with different trust</strong> <span class="tag built">built</span>. What a person
   types, and what is extracted from a description they import, is used at once. What
   the avatar <em>heard</em> in a conversation is only a proposal until the person approves it,
@@ -868,6 +874,11 @@ flowchart TD
 <td>The connection is kept; the page is told it is a guest's</td>
 </tr>
 <tr>
+<td>The mail carrying the code of a new account cannot be sent</td>
+<td>A message on the page, no account</td>
+<td>Nothing is kept waiting; the person can ask again</td>
+</tr>
+<tr>
 <td>An external sign-in provider (unreachable, refuses)</td>
 <td>A message on the page, still a guest</td>
 <td>Nothing is created; the other ways to sign in are unaffected</td>
@@ -992,9 +1003,9 @@ flowchart TB
 <td>One folder for all users; replaceable by a cloud bucket</td>
 </tr>
 <tr>
-<td>Sign-in with a user name and a password</td>
-<td>Backend process</td>
-<td>Nothing leaves the machine; passwords are stored hashed</td>
+<td>Sign-in with an email and a password</td>
+<td>Backend process, and a mail server when one is configured</td>
+<td>Passwords are stored hashed. The code that proves an address is sent by the configured mail server; without one it is written to the backend's log and nothing leaves the machine</td>
 </tr>
 <tr>
 <td>Sign-in with Google / Facebook</td>
@@ -1160,6 +1171,13 @@ is one row here. A change of the overall architecture also has a record in <code
 <td>Document brought in line with the system as built: sign-in in the overview and in the deployment (the sign-in on the page, the external providers, what runs where), the <code>auth</code> and <code>session</code> messages, the persona in the deployment; the document moved from Markdown to one HTML page</td>
 <td><a href="adr/0002-mvp-2-architecture.md">0002</a></td>
 <td><code>docs/2026-10-13/architecture-doc-html/</code></td>
+</tr>
+<tr>
+<td>2026-10-13</td>
+<td>v2</td>
+<td>Accounts kept here are an email address proved by a code sent to it, one account per email (before: a user name); a Google account whose verified email is that of such an account signs it in. A mail server, when configured, sends the code. From the first manual test: the head has a slow motion of its own and no longer copies the person; the documents and the conversation fold away</td>
+<td><a href="adr/0002-mvp-2-architecture.md">0002</a></td>
+<td><code>docs/2026-10-13/sign-in/</code>, <code>docs/2026-10-13/manual-test-fixes/</code></td>
 </tr>
 </tbody>
 </table>

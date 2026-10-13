@@ -192,16 +192,33 @@ the person is still there.
 - **Authenticator**: one boundary, a proof of who one is in → a user id, or a refusal.
   Two kinds: `local` (a user name and a password kept here) and external providers
   (Google, Facebook: §4.1). Whatever the kind, the outcome is the same session.
-- **Local accounts**: a user name (3 to 32 characters: letters, digits, `.`, `_`, `-`;
-  compared without case) and a password (`AUTH_PASSWORD_MIN_CHARS`, 8). The password
-  is stored as an scrypt hash with its own random salt and its parameters, so they can
-  be raised later; the comparison takes the same time whether it matches or not.
-- **Creating an account** at the kiosk: `POST /auth/register`, allowed while
-  `AUTH_ALLOW_REGISTRATION` is 1 (the default). It signs the person in at once.
-- **Refusals say nothing useful to a guesser**: a wrong user name and a wrong password
-  give the same `401` and take the same time. After `AUTH_LOGIN_MAX_ATTEMPTS` (5)
-  failures on one user name within `AUTH_LOGIN_WINDOW_MINUTES` (10), further attempts
-  on it answer `429` until the window has passed, right password or not.
+- **Local accounts**: an email address (compared without case) and a password
+  (`AUTH_PASSWORD_MIN_CHARS`, 8). The password is stored as an scrypt hash with its own
+  random salt and its parameters, so they can be raised later; the comparison takes the
+  same time whether it matches or not.
+- **Creating an account** at the kiosk takes two steps, allowed while
+  `AUTH_ALLOW_REGISTRATION` is 1 (the default):
+  1. `POST /auth/register` with the email and a password: a six-digit code is sent to
+     the address. Nothing is created; what waits is held in RAM, the password hashed
+     and the code hashed.
+  2. `POST /auth/register/verify` with the code: the account is created and the person
+     signed in. The code is good for `AUTH_OTP_TTL_MINUTES` (10) and
+     `AUTH_OTP_MAX_ATTEMPTS` (5) tries, after which a new one has to be asked for; a
+     new one can be asked for every `AUTH_OTP_RESEND_SEC` (60) and replaces the one
+     before.
+- **One email, one account.** The email is the key of the local account, so a second
+  account on it cannot exist. See §4.1 for what this means with Google and Facebook.
+- **Sending the code**: `MAIL_BACKEND=smtp` sends it through an SMTP server (`SMTP_*`
+  keys, standard library). `MAIL_BACKEND=log`, the default, writes the mail to the
+  backend log and sends nothing, so that a machine without a mail server can create
+  accounts; it proves nothing about who owns the address, and the backend says so at
+  startup. A mail that cannot be sent answers `502` and leaves nothing waiting.
+- **Refusals say nothing useful to a guesser**: a wrong email and a wrong password give
+  the same `401` and take the same time. After `AUTH_LOGIN_MAX_ATTEMPTS` (5) failures
+  on one email within `AUTH_LOGIN_WINDOW_MINUTES` (10), further attempts on it answer
+  `429` until the window has passed, right password or not. Asking for an account on
+  an email that has one answers `409`: the form has to tell the person to sign in, so
+  whether an address has an account can be learned from it.
 
 ### 4.1 Google and Facebook
 
@@ -221,9 +238,16 @@ here, and a signed-in person can link one to the account they already have.
   first sign-in with an identity nobody has creates a user; the next ones find it.
 - **Linking is explicit.** A signed-in person starts the same flow from the profile
   page and the identity is attached to their account; afterwards either way of signing
-  in reaches the same user, the same memory, the same persona. Accounts are never
-  merged because two emails look alike: Facebook does not guarantee an email is
-  verified, and merging on it would hand an account to whoever controls the address.
+  in reaches the same user, the same memory, the same persona.
+- **One email, one account, where both sides proved the address.** An identity nobody
+  has yet, whose email the provider says it verified (Google's `email_verified`), and
+  which is the email of a local account, signs that account in and is attached to it:
+  the address was proved here by a code and there by the provider. Nothing else is
+  joined by email: Facebook does not say whether an email is verified, and joining on
+  it would hand an account to whoever claims the address, so a Facebook identity with
+  the same email stays a user of its own. That gap in "one email, one account" is
+  open, as is a person who signs in with a provider first and creates a local account
+  on the same email afterwards.
   An identity that already belongs to another account is refused (`409`).
 - **Unlinking** is allowed while another way of signing in remains.
 - **Coming back from the provider**: the callback does not put the session token in a
@@ -282,7 +306,7 @@ erDiagram
         datetime last_seen_at
     }
     credentials {
-        string username PK "lower case"
+        string email PK "lower case, proved by a code"
         string user_id FK "unique"
         string password_hash "scrypt, with its salt and its parameters"
         int failed_attempts
@@ -316,8 +340,9 @@ A contract between `backend/features/accounts/api.py` and `frontend/src/auth/`.
 
 | Route | Body | Answer |
 |---|---|---|
-| `POST /auth/register` | `{"username", "password", "display_name"?}` | `201 {"token", "user": {"id", "display_name"}, "expires_at"}`; `409` the user name is taken; `422` a name or a password that is not acceptable; `403` registration is switched off |
-| `POST /auth/login` | `{"username", "password"}` | `200`, same shape as register; `401` wrong name or password; `429` too many attempts |
+| `POST /auth/register` | `{"email", "password", "display_name"?}` | `202 {"email", "expires_in_sec", "resend_in_sec"}`: a code was sent, no account exists yet; `409` the email has an account; `422` an email or a password that is not acceptable; `403` registration is switched off; `429` a code was just sent (`Retry-After`); `502` the mail could not be sent |
+| `POST /auth/register/verify` | `{"email", "code"}` | `201 {"token", "user": {"id", "display_name"}, "expires_at"}`: the account is created; `401` a wrong code; `410` no code waits for this email (expired, tried too often, never asked): ask for a new one |
+| `POST /auth/login` | `{"email", "password"}` | `200`, same shape as verify; `401` wrong email or password; `429` too many attempts |
 | `POST /auth/logout` | | `204`, with or without a valid token |
 | `GET /auth/session` | | `200 {"user": {"id", "display_name"}, "expires_at"}`, or `200 {"user": null}` for a guest |
 | `GET /auth/providers` | | `200 {"providers": ["google", ...], "registration": true}`: what the form may offer |
@@ -362,6 +387,11 @@ out in `.env.example`.
 | `AUTH_DEV_USER_ID` (`config.py`, existing) | empty | Set: every connection and request is this user, without sign-in (development, tests) |
 | `AUTH_ALLOW_REGISTRATION` | 1 | 0: accounts cannot be created at the kiosk |
 | `AUTH_PASSWORD_MIN_CHARS` | 8 | Shortest password accepted |
+| `AUTH_OTP_TTL_MINUTES` | 10 | How long the code sent to an email is good for |
+| `AUTH_OTP_MAX_ATTEMPTS` | 5 | Wrong tries before a new code has to be asked for |
+| `AUTH_OTP_RESEND_SEC` | 60 | The wait before another code can be asked for |
+| `MAIL_BACKEND` (`config.py`) | `log` | `smtp` sends the code; `log` writes it to the backend log and sends nothing |
+| `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_SECURITY` (`starttls`) (`config.py`), `SMTP_TIMEOUT_SEC` (10) | | The SMTP server of `MAIL_BACKEND=smtp` |
 | `AUTH_SESSION_IDLE_MINUTES` | 30 | A session without a request or a turn for this long has expired |
 | `AUTH_SESSION_MAX_HOURS` | 12 | A session never lives longer, counted from the sign-in |
 | `AUTH_LOGOUT_ON_LEAVE` | 0 | 1: the session also ends when the person leaves or goes silent |
@@ -372,7 +402,7 @@ out in `.env.example`.
 | `AUTH_PUBLIC_URL` (`config.py`) | empty | The address of the backend as the provider reaches it back, for the callback |
 | `AUTH_PAGE_URL` (`config.py`) | empty | The address of the page the callback returns to |
 | `AUTH_GOOGLE_*_URL`, `AUTH_GOOGLE_SCOPE`, `AUTH_FACEBOOK_*_URL`, `AUTH_FACEBOOK_SCOPE` (`config.py`) | the public endpoints | Where each provider is asked, and for what |
-| `AUTH_LOGIN_MAX_ATTEMPTS` | 5 | Failed sign-ins on one user name before it is held |
+| `AUTH_LOGIN_MAX_ATTEMPTS` | 5 | Failed sign-ins on one email before it is held |
 | `AUTH_LOGIN_WINDOW_MINUTES` | 10 | The window those attempts are counted in, and how long it is held |
 
 The frontend needs no new `VITE_*` value.
@@ -381,9 +411,11 @@ The frontend needs no new `VITE_*` value.
 
 - Beside the "Hồ sơ" button, the mode: "Khách" with "Đăng nhập", or the display name
   with "Đăng xuất".
-- The profile page of a guest shows the sign-in form in place of today's note: user
-  name, password, "Đăng nhập", "Tạo tài khoản" while registration is allowed, and one
-  button per provider that is configured ("Đăng nhập với Google", "… với Facebook").
+- The profile page of a guest shows the sign-in form in place of today's note: email,
+  password, "Đăng nhập", "Tạo tài khoản" while registration is allowed, and one button
+  per provider that is configured ("Đăng nhập với Google", "… với Facebook"). "Tạo tài
+  khoản" leads to a second step: the address the code was sent to, a field for the
+  code, "Xác nhận", "Gửi lại mã" and "Quay lại".
 - The profile page of a signed-in user has a block "Tài khoản liên kết": the providers
   attached to the account, "Liên kết" for those that are not, "Gỡ" for those that are.
 - `frontend/src/auth/`: the session of the page (the token, the user, who to tell when
@@ -394,7 +426,8 @@ The frontend needs no new `VITE_*` value.
 ## 10. What is protected, and what is not
 
 - A password and a token are never written to a log, a span or the capture folder; a
-  span names the user by its opaque id only.
+  span names the user by its opaque id only. The one exception is chosen, not
+  accidental: with `MAIL_BACKEND=log` the mail carrying a code is the log line.
 - Passwords are hashed, tokens are hashed, the comparison of either is constant-time.
 - The provider's flow is protected the usual way: a `state` tied to the browser that
   started it, PKCE, a callback URL fixed in the configuration and never taken from the

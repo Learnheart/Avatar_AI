@@ -204,8 +204,14 @@ planned), `docs/quality-gates.md`, `CHANGELOG.md`, `.env.example`.
       signed out and the browser's kept session gone; signed in again with Google as the
       same user; a wrong password refused with its message. In the backend log the
       connection changes to the user and back to a guest
-- [ ] Accounts by email with a code sent to the address, one account per email, with
-      unit tests; the form in two steps on the page
+- [x] Accounts by email with a code sent to the address, one account per email, with
+      unit tests; the form in two steps on the page. Seen in headless Chrome
+      (2026-10-13, the mails written to the log): a name that is no email refused before
+      any request; the code step shown with the address; a wrong code and a second
+      request at once each refused with its message; the right code, typed with a space,
+      creating the account and signing in; the same email refused afterwards; signing in
+      with the email and the password. Real turn (`tests/e2e/test_real_sign_in.py`, Groq,
+      the code read from the backend log): passed, first audio 1.7 s, end to end 2.4 s
 - [ ] By a human: an SMTP account for `MAIL_BACKEND=smtp`, and one real code received
       by email
 - [ ] Seen while writing, to decide: the knowledge routes are still open to guests;
