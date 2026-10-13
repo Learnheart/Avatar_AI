@@ -187,8 +187,11 @@ class AppConfig(Tuning, Prompts):
                     "CONVERSATION_ABSENCE_SEC and CONVERSATION_IDLE_SEC must be positive "
                     "and finite."
                 )
-        if self.MEMORY_HISTORY_MAX_TURNS < 1:
-            raise ValueError("MEMORY_HISTORY_MAX_TURNS must be at least 1.")
+        if self.MEMORY_HISTORY_MAX_TOKENS < 1:
+            raise ValueError("MEMORY_HISTORY_MAX_TOKENS must be at least 1.")
+        ratio = self.MEMORY_HISTORY_CHARS_PER_TOKEN
+        if not (math.isfinite(ratio) and ratio > 0):
+            raise ValueError("MEMORY_HISTORY_CHARS_PER_TOKEN must be positive and finite.")
         if self.MEMORY_PROMPT_MAX_ITEMS < 1:
             raise ValueError("MEMORY_PROMPT_MAX_ITEMS must be at least 1.")
         if self.MEMORY_ITEM_MAX_CHARS < 1:

@@ -741,8 +741,9 @@ async def test_a_second_turn_sees_the_first(orch, ws):
     assert len(orch._conversation.history) == 2
 
 
-async def test_the_history_is_capped_at_memory_history_max_turns(orch, ws, config):
-    config.MEMORY_HISTORY_MAX_TURNS = 2
+async def test_the_history_is_bounded_by_memory_history_max_tokens(orch, ws, config):
+    # A turn of the fake engine ("xin chào" / "Xin chào.") is estimated at 14 tokens.
+    config.MEMORY_HISTORY_MAX_TOKENS = 28
 
     for _ in range(4):
         await _complete_turn(orch, ws)

@@ -2,9 +2,10 @@
 The conversation and its history — pure: no clock, no I/O, no state machine.
 
 A conversation is the session of one user: its turns live in RAM, the oldest are dropped
-past a cap. The orchestrator owns it (opens, closes, appends); the engine and the LLM
+when the history outgrows its budget of tokens. The orchestrator owns it (opens, closes, appends); the engine and the LLM
 backends only read the turns they are handed.
 """
+import math
 from collections import deque
 from dataclasses import dataclass
 from typing import Mapping, Optional, Sequence
@@ -16,23 +17,60 @@ SYSTEM, USER, ASSISTANT = "system", "user", "assistant"
 # Between two utterances of the person that follow each other without an answer.
 _UTTERANCE_SEPARATOR = "\n"
 
+# What a chat message costs beyond its text: its role and its separators.
+_MESSAGE_OVERHEAD_TOKENS = 4
+
+
+def estimated_tokens(text: str, chars_per_token: float) -> int:
+    """About how many tokens a model reads the text as, at `chars_per_token` characters
+    for one token. An estimate: each backend has its own tokenizer."""
+    return math.ceil(len(text) / chars_per_token)
+
+
+def turn_tokens(turn: ChatTurn, chars_per_token: float) -> int:
+    """About how many tokens a turn costs in a request: the message of the person
+    and, when something was answered, the message of the avatar."""
+    tokens = estimated_tokens(turn.user_text, chars_per_token) + _MESSAGE_OVERHEAD_TOKENS
+    if turn.answer:
+        tokens += estimated_tokens(turn.answer, chars_per_token) + _MESSAGE_OVERHEAD_TOKENS
+    return tokens
+
 
 class Conversation:
-    """One session of one user. `user_id` is None for a guest."""
+    """One session of one user. `user_id` is None for a guest. The turns it keeps
+    never cost more than `max_tokens`, estimated at `chars_per_token` characters for
+    one token."""
 
-    def __init__(self, id: str, user_id: Optional[str], max_turns: int) -> None:
+    def __init__(
+        self, id: str, user_id: Optional[str], max_tokens: int, chars_per_token: float
+    ) -> None:
         self.id = id
         self.user_id = user_id
-        self._turns: deque[ChatTurn] = deque(maxlen=max_turns)
+        self._max_tokens = max_tokens
+        self._chars_per_token = chars_per_token
+        self._turns: deque[tuple[ChatTurn, int]] = deque()  # each with its tokens
+        self._tokens = 0
 
     @property
     def history(self) -> tuple[ChatTurn, ...]:
         """The turns kept, oldest first."""
-        return tuple(self._turns)
+        return tuple(turn for turn, _ in self._turns)
+
+    @property
+    def tokens(self) -> int:
+        """About how many tokens the turns kept cost in a request."""
+        return self._tokens
 
     def append(self, turn: ChatTurn) -> None:
-        """Add a turn; past the cap the oldest one is dropped."""
-        self._turns.append(turn)
+        """Add a turn, then drop the oldest ones, whole, until the history fits its
+        budget: short turns stay longer than long ones. A turn larger than the whole
+        budget is not kept either."""
+        tokens = turn_tokens(turn, self._chars_per_token)
+        self._turns.append((turn, tokens))
+        self._tokens += tokens
+        while self._tokens > self._max_tokens:
+            _, dropped = self._turns.popleft()
+            self._tokens -= dropped
 
 
 @dataclass

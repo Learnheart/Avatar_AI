@@ -47,8 +47,13 @@ class Tuning:
     # connected), or this long after its last turn ended.
     CONVERSATION_ABSENCE_SEC: float = env_float("CONVERSATION_ABSENCE_SEC", 30.0)
     CONVERSATION_IDLE_SEC: float = env_float("CONVERSATION_IDLE_SEC", 120.0)
-    # Turns of the conversation given to the LLM; older ones are dropped.
-    MEMORY_HISTORY_MAX_TURNS: int = env_int("MEMORY_HISTORY_MAX_TURNS", 10)
+    # The earlier turns of the conversation given to the LLM cost at most this many
+    # tokens; past it the oldest turns are dropped, whole.
+    MEMORY_HISTORY_MAX_TOKENS: int = env_int("MEMORY_HISTORY_MAX_TOKENS", 2000)
+    # Tokens are estimated, not counted (each backend has its own tokenizer): this many
+    # characters make one token. Measured with spoken Vietnamese on the Databricks
+    # model: 3.3. Lower = more tokens counted, so less history kept.
+    MEMORY_HISTORY_CHARS_PER_TOKEN: float = env_float("MEMORY_HISTORY_CHARS_PER_TOKEN", 3.0)
 
     # ── Memory (what is kept about a logged-in user) ────────────────────
     # Memory items given to the LLM as the profile of the person; past it the least

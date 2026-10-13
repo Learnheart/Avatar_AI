@@ -579,7 +579,8 @@ class Orchestrator:
             self._conversation = Conversation(
                 id=str(uuid.uuid4()),
                 user_id=self._user_id,
-                max_turns=self.config.MEMORY_HISTORY_MAX_TURNS,
+                max_tokens=self.config.MEMORY_HISTORY_MAX_TOKENS,
+                chars_per_token=self.config.MEMORY_HISTORY_CHARS_PER_TOKEN,
             )
             self._conversation_active_at = self._clock()
             logger.info({

@@ -3,9 +3,11 @@ from backend.core.conversation.history import (
     Conversation,
     TurnRecord,
     chat_messages,
+    estimated_tokens,
     persona_lines,
     search_query,
     system_prompt,
+    turn_tokens,
 )
 from backend.config import AppConfig
 from backend.models import PERSONA_FIELDS, ChatTurn
@@ -19,15 +21,21 @@ def _messages(history, user_text, **kwargs):
 
 # ── Conversation ──────────────────────────────────────────────────────────
 
+def _conversation(
+    id: str = "c1", user_id=None, max_tokens: int = 2000, chars_per_token: float = 3.0
+) -> Conversation:
+    return Conversation(id, user_id, max_tokens=max_tokens, chars_per_token=chars_per_token)
+
+
 def test_a_conversation_carries_its_id_and_its_user():
-    assert Conversation("c1", "user-7", max_turns=3).user_id == "user-7"
-    guest = Conversation("c2", None, max_turns=3)
+    assert _conversation("c1", "user-7").user_id == "user-7"
+    guest = _conversation("c2")
 
     assert (guest.id, guest.user_id, guest.history) == ("c2", None, ())
 
 
 def test_append_keeps_the_order():
-    conversation = Conversation("c1", None, max_turns=3)
+    conversation = _conversation()
 
     conversation.append(ChatTurn("một", ("Một.",)))
     conversation.append(ChatTurn("hai", ("Hai.",)))
@@ -35,13 +43,97 @@ def test_append_keeps_the_order():
     assert [turn.user_text for turn in conversation.history] == ["một", "hai"]
 
 
-def test_past_the_cap_the_oldest_turn_is_dropped():
-    conversation = Conversation("c1", None, max_turns=2)
+# ── The token window ──────────────────────────────────────────────────────
 
-    for text in ("một", "hai", "ba"):
-        conversation.append(ChatTurn(text))
+def test_tokens_are_estimated_from_the_characters_rounded_up():
+    assert estimated_tokens("", 3.0) == 0
+    assert estimated_tokens("ba", 3.0) == 1
+    assert estimated_tokens("x" * 30, 3.0) == 10
+    assert estimated_tokens("x" * 31, 3.0) == 11
+    assert estimated_tokens("x" * 30, 2.0) == 15
 
-    assert [turn.user_text for turn in conversation.history] == ["hai", "ba"]
+
+def test_a_turn_costs_its_two_messages_or_one_when_nothing_was_answered():
+    # 4 tokens per message beyond its text.
+    assert turn_tokens(ChatTurn("x" * 30, ("y" * 14, "z" * 15)), 3.0) == (10 + 4) + (10 + 4)
+    assert turn_tokens(ChatTurn("x" * 30), 3.0) == 10 + 4
+    assert turn_tokens(ChatTurn("x" * 30, interrupted=True), 3.0) == 14
+
+
+def _spoken(name: str, chars: int) -> ChatTurn:
+    """A turn without an answer whose utterance is `chars` long, named by its start."""
+    return ChatTurn(name + "x" * (chars - len(name)))
+
+
+def _names(conversation: Conversation) -> list[str]:
+    return [turn.user_text[0] for turn in conversation.history]
+
+
+def test_turns_are_kept_while_they_fit_the_budget():
+    conversation = _conversation(max_tokens=42)  # three turns of 10 + 4 tokens
+
+    for name in "abc":
+        conversation.append(_spoken(name, 30))
+
+    assert _names(conversation) == ["a", "b", "c"]
+    assert conversation.tokens == 42
+
+
+def test_the_oldest_turns_are_dropped_whole_when_one_more_does_not_fit():
+    conversation = _conversation(max_tokens=42)
+
+    for name in "abcd":
+        conversation.append(_spoken(name, 30))
+
+    assert _names(conversation) == ["b", "c", "d"]
+    assert all(len(turn.user_text) == 30 for turn in conversation.history)
+    assert conversation.tokens == 42
+
+
+def test_a_long_turn_pushes_out_as_many_turns_as_it_needs():
+    conversation = _conversation(max_tokens=42)
+    for name in "abc":
+        conversation.append(_spoken(name, 30))
+
+    conversation.append(_spoken("d", 60))  # 20 + 4 tokens: two of the three must go
+
+    assert _names(conversation) == ["c", "d"]
+    assert conversation.tokens == 14 + 24
+
+
+def test_many_short_turns_stay_where_a_few_long_ones_are_dropped():
+    short, long = _conversation(max_tokens=100), _conversation(max_tokens=100)
+
+    for index in range(30):
+        short.append(ChatTurn("ừ", ("Vâng.",)))            # (1 + 4) + (2 + 4) tokens
+        long.append(ChatTurn("x" * 90, ("y" * 90,)))        # (30 + 4) + (30 + 4) tokens
+
+    assert len(short.history) == 9
+    assert len(long.history) == 1
+    assert short.tokens <= 100 and long.tokens <= 100
+
+
+def test_a_turn_larger_than_the_whole_budget_is_not_kept():
+    conversation = _conversation(max_tokens=42)
+    conversation.append(_spoken("a", 30))
+
+    conversation.append(_spoken("b", 300))
+
+    assert conversation.history == ()
+    assert conversation.tokens == 0
+    conversation.append(_spoken("c", 30))
+    assert _names(conversation) == ["c"]
+
+
+def test_the_estimate_follows_the_characters_per_token():
+    generous, careful = _conversation(max_tokens=42), _conversation(max_tokens=42, chars_per_token=1.5)
+
+    for name in "abc":
+        generous.append(_spoken(name, 30))
+        careful.append(_spoken(name, 30))  # 20 + 4 tokens each at 1.5 characters
+
+    assert _names(generous) == ["a", "b", "c"]
+    assert _names(careful) == ["c"]
 
 
 def test_a_turn_holds_its_sentences_and_its_interrupted_flag():
@@ -53,7 +145,7 @@ def test_a_turn_holds_its_sentences_and_its_interrupted_flag():
 
 
 def test_a_turn_with_an_empty_answer_is_kept():
-    conversation = Conversation("c1", None, max_turns=2)
+    conversation = _conversation()
 
     conversation.append(ChatTurn("tôi muốn hỏi"))
 

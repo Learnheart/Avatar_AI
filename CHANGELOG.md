@@ -9,6 +9,12 @@ the rules are in `CLAUDE.md` / `AGENTS.md` §7.
 
 ### Added
 
+- `[orchestrator]` `[llm]` The earlier turns given to the LLM are bounded by an
+  estimated number of tokens (`MEMORY_HISTORY_MAX_TOKENS`, default 2000) instead of a
+  number of turns: when a new turn does not fit, the oldest ones are dropped whole, so
+  long turns cannot outgrow the budget and short ones stay longer. Tokens are estimated
+  from the text (`MEMORY_HISTORY_CHARS_PER_TOKEN`, default 3.0 characters for one
+  token). `MEMORY_HISTORY_MAX_TURNS`, which was never released, is gone.
 - `[persona]` A signed-in person can give the avatar a personality: a few named fields
   (name, role, way of addressing, personality, answer style, what to avoid), each a
   short line of at most `PERSONA_FIELD_MAX_CHARS` (default 300) characters, kept per
@@ -105,7 +111,8 @@ the rules are in `CLAUDE.md` / `AGENTS.md` §7.
   `uv pip install -r backend/requirements.txt` after updating.
 - `[expression]` A "Cuộc trò chuyện mới" button ends the conversation.
 - `[shared]` New config keys: `CONVERSATION_ABSENCE_SEC` (30), `CONVERSATION_IDLE_SEC`
-  (120), `MEMORY_HISTORY_MAX_TURNS` (10), `KNOWLEDGE_QUERY_HISTORY_TURNS` (1),
+  (120), `MEMORY_HISTORY_MAX_TOKENS` (2000), `MEMORY_HISTORY_CHARS_PER_TOKEN` (3.0),
+  `KNOWLEDGE_QUERY_HISTORY_TURNS` (1),
   `STT_NO_SPEECH_MAX_PROB` (1.0).
 - `[shared]` Traces: the `turn` span names its conversation and user, the `stt` span
   carries the confidence and the no-speech probability, the `llm` span the number of

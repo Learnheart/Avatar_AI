@@ -32,7 +32,8 @@ def test_defaults_load():
     assert config.TRACKING_FPS == 30
     assert config.CONVERSATION_ABSENCE_SEC == 30
     assert config.CONVERSATION_IDLE_SEC == 120
-    assert config.MEMORY_HISTORY_MAX_TURNS == 10
+    assert config.MEMORY_HISTORY_MAX_TOKENS == 2000
+    assert config.MEMORY_HISTORY_CHARS_PER_TOKEN == 3.0
     assert config.KNOWLEDGE_QUERY_HISTORY_TURNS == 1
     assert config.STT_NO_SPEECH_MAX_PROB == 1.0
     assert config.DATABASE_URL == "sqlite:///backend/data/app.db"
@@ -106,7 +107,11 @@ def test_invalid_values_fail_validation(overrides):
         {"CONVERSATION_ABSENCE_SEC": float("inf")},
         {"CONVERSATION_IDLE_SEC": float("nan")},
         {"CONVERSATION_IDLE_SEC": float("inf")},
-        {"MEMORY_HISTORY_MAX_TURNS": 0},
+        {"MEMORY_HISTORY_MAX_TOKENS": 0},
+        {"MEMORY_HISTORY_CHARS_PER_TOKEN": 0},
+        {"MEMORY_HISTORY_CHARS_PER_TOKEN": -1.0},
+        {"MEMORY_HISTORY_CHARS_PER_TOKEN": float("nan")},
+        {"MEMORY_HISTORY_CHARS_PER_TOKEN": float("inf")},
         {"KNOWLEDGE_QUERY_HISTORY_TURNS": -1},
         {"STT_NO_SPEECH_MAX_PROB": 1.5},
         {"STT_NO_SPEECH_MAX_PROB": -0.1},
@@ -152,7 +157,7 @@ def test_invalid_conversation_settings_fail_validation(overrides):
 def test_the_edges_of_the_conversation_settings_are_accepted():
     AppConfig(
         GROQ_API_KEY="test-key",
-        MEMORY_HISTORY_MAX_TURNS=1,
+        MEMORY_HISTORY_MAX_TOKENS=1,
         KNOWLEDGE_QUERY_HISTORY_TURNS=0,
         STT_NO_SPEECH_MAX_PROB=0.0,
         MEMORY_PROMPT_MAX_ITEMS=1,

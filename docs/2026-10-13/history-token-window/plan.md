@@ -70,7 +70,13 @@ them. Unit tests:
 
 ## To-do
 
-- [ ] The token window with unit tests, `.env.example`, `CHANGELOG.md`,
+- [x] The token window with unit tests, `.env.example`, `CHANGELOG.md`,
       `docs/ARCHITECTURE.md`
-- [ ] Real turn after the change (`tests/e2e`), numbers reported
+- [x] Real turn after the change (2026-10-13, `tests/e2e/test_real_persona.py`, Groq
+      answering 503, the Databricks backup taking over): passed, first audio 3.0 s, end
+      to end 3.8 s. The two turns of that test are far below the budget: the window
+      itself is covered by the unit tests, and no real conversation long enough to slide
+      has been run
+- [ ] To decide: the ratio was measured on the Databricks model only; on the Groq
+      model it is assumed
 - [ ] Human verification
