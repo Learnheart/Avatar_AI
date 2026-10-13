@@ -193,4 +193,10 @@ Then the docs: `CLAUDE.md` / `AGENTS.md`, `docs/ARCHITECTURE.md`,
       Databricks backup taking over): passed, first audio 3.4 s, end to end 4.7 s.
       The earlier runs of the same path gave 4.0 to 4.2 s for the first audio, so the
       3.5 s gate is not held with a margin
+- [x] The page shows the default persona: `GET /persona/defaults` gives the default
+      fields (`PERSONA_DEFAULT`), and under each input that is empty the block writes
+      the default the avatar uses for it, so the person sees what an empty field means.
+      Seen in headless Chrome (2026-10-13, scripted LLM): the three defaults shown with
+      nothing set; the line of a field gone as soon as it is typed in or filled by a
+      reading; all three back after "Xoá tính cách"
 - [ ] Human verification

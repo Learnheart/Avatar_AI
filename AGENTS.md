@@ -205,7 +205,7 @@ backend/
       persona.py               # PersonaService: the fields a user gives the avatar, the text given to the LLM and its cache, reading a description (one LLM call)
       extraction.py            # LLM answer (JSON object) → validated persona fields (pure)
       store.py                 # table persona_fields (all the SQL of the persona)
-      api.py                   # HTTP routes /persona, /persona/read
+      api.py                   # HTTP routes /persona, /persona/read, /persona/defaults
   data/                        # knowledge.db, app.db, objects/, capture/ (gitignored, per machine)
   utils/
     env.py                     # dataclass fields read from the environment
@@ -241,7 +241,7 @@ frontend/                      # ── CAPABILITY 3: Expression ──
       format.js                # pure helpers (unit-tested)
     persona/
       persona-client.js        # calls the backend /persona API
-      persona-panel.js         # "Tính cách của avatar" block of the profile page: read a description, edit the fields, save / delete
+      persona-panel.js         # "Tính cách của avatar" block of the profile page: read a description, edit the fields, save / delete; shows the default of an empty field
       format.js                # pure helpers (unit-tested)
     avatar/
       avatar-renderer.js       # VRM render, applies head / mouth values

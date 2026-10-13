@@ -111,6 +111,12 @@ class PersonaService(Persona):
         stored = await self._call(self._store.get, user_id)
         return {name: stored[name] for name in PERSONA_FIELDS if name in stored}
 
+    def defaults(self) -> dict[str, str]:
+        """The default persona, in the order of PERSONA_FIELDS: what the avatar uses
+        for a field the user left empty. A field without a default is not in it."""
+        default = self.config.PERSONA_DEFAULT
+        return {name: default[name] for name in PERSONA_FIELDS if name in default}
+
     async def save(self, user_id: str, fields: Mapping[str, str]) -> dict[str, str]:
         """Make `fields` the whole persona of the user, used from the next turn on: a
         field that is left out or empty is not part of it. The fields as they are

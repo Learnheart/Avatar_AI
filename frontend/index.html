@@ -503,6 +503,9 @@
     #persona-fields { gap: 16px 28px; }
     .persona-field { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
     .persona-field label { font-size: 13px; font-weight: 600; }
+    .persona-field .profile-input { flex: none; }
+    .persona-default { margin-top: 0; line-height: 1.45; overflow-wrap: anywhere; }
+    .persona-default[hidden] { display: none; }
 
     #persona-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 
@@ -674,6 +677,7 @@
           <p class="profile-hint">
             Không bắt buộc. Dán một đoạn mô tả avatar mà bạn muốn rồi bấm "Đọc mô tả" để điền
             các trường bên dưới, hoặc tự nhập từng trường. Avatar chỉ dùng sau khi bạn bấm "Lưu".
+            Trường nào để trống thì avatar dùng giá trị mặc định ghi ngay dưới trường đó.
           </p>
           <div id="persona-read-form">
             <textarea id="persona-description" class="profile-input"

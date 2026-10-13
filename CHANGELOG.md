@@ -27,7 +27,8 @@ the rules are in `CLAUDE.md` / `AGENTS.md` §7.
 - `[persona]` `[expression]` The profile page has a block "Tính cách của avatar": a box
   to paste a description and have it read into the fields, one input per field to type
   or correct, "Lưu" to store them and "Xoá tính cách" to go back to the default
-  character.
+  character. Under a field left empty, the block shows the default the avatar uses for
+  it (`GET /persona/defaults`).
 - `[persona]` `[llm]` The character of the avatar is a part of the system prompt that
   can be filled in: the personality a person gave it replaces, field by field, the
   default one (a friendly personal assistant answering in two or three sentences).

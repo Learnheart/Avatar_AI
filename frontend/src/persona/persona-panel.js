@@ -3,6 +3,7 @@
  * avatar a personality: a box to paste a description written freely, which the backend
  * reads into the fields, and one input per field, typed or corrected by hand. Nothing
  * is used by the avatar until "Lưu"; "Xoá tính cách" brings back the default character.
+ * Under a field that is empty, the block writes the default the avatar uses for it.
  *
  * The frame of the block is in index.html (#persona-block); the fields are built here,
  * one per entry of PERSONA_FIELDS. The profile page opens it (`open`) each time it is
@@ -15,6 +16,7 @@ import { UNAUTHORIZED } from '../memory/format.js'
 import {
   PERSONA_FIELDS,
   clearedMessage,
+  defaultHint,
   formValues,
   mergeRead,
   readMessage,
@@ -32,6 +34,8 @@ export class PersonaPanel {
     this._save = document.getElementById('persona-save')
     this._clear = document.getElementById('persona-clear')
     this._inputs = {}     // key → the input of that field
+    this._hints = {}      // key → the line under it: the default used while it is empty
+    this._defaults = null // the default persona, read once
     this._saved = {}      // the fields the backend holds, as last read from it
     this._busy = false    // one request at a time: a reading, a save or a delete
   }
@@ -69,7 +73,12 @@ export class PersonaPanel {
 
   async refresh() {
     try {
-      this._saved = await this._client.get()
+      // The defaults do not change while the page is open: one read is enough.
+      const [saved, defaults] = await Promise.all([
+        this._client.get(), this._defaults ?? this._client.defaults(),
+      ])
+      this._saved = saved
+      this._defaults = defaults
       this._fill(this._saved)
     } catch (err) {
       // A guest: the profile page says so itself, and hides this block.
@@ -150,7 +159,15 @@ export class PersonaPanel {
       if (event.isComposing) return   // the key belongs to the input method (Telex, VNI)
       if (event.key === 'Enter') this._saveFields()
     })
+    input.addEventListener('input', () => this._showDefault(key))
     this._inputs[key] = input
+
+    const hint = document.createElement('div')
+    hint.id = `persona-default-${key}`
+    hint.className = 'profile-hint persona-default'
+    hint.hidden = true
+    input.setAttribute('aria-describedby', hint.id)
+    this._hints[key] = hint
 
     const title = document.createElement('label')
     title.htmlFor = input.id
@@ -158,8 +175,15 @@ export class PersonaPanel {
 
     const field = document.createElement('div')
     field.className = 'persona-field'
-    field.append(title, input)
+    field.append(title, input, hint)
     return field
+  }
+
+  /** Under an empty field, the default the avatar uses for it; nothing under a filled one. */
+  _showDefault(key) {
+    const text = this._inputs[key].value.trim() ? '' : defaultHint(this._defaults, key)
+    this._hints[key].textContent = text
+    this._hints[key].hidden = !text
   }
 
   /** What the form holds, as typed. */
@@ -170,7 +194,10 @@ export class PersonaPanel {
   }
 
   _fill(fields) {
-    for (const [key, input] of Object.entries(this._inputs)) input.value = fields[key] ?? ''
+    for (const [key, input] of Object.entries(this._inputs)) {
+      input.value = fields[key] ?? ''
+      this._showDefault(key)
+    }
   }
 
   _say(text, isError = false, isBusy = false) {

@@ -45,6 +45,12 @@ export class PersonaClient {
     return (await response.json()).fields
   }
 
+  /** → { key: text }, the default persona: what the avatar uses for an empty field. */
+  async defaults() {
+    const response = await request(`${PERSONA_URL}/defaults`)
+    return (await response.json()).fields
+  }
+
   /** Make `fields` the whole persona; resolves with the fields as they are stored. */
   async save(fields) {
     const response = await request(PERSONA_URL, json('PUT', { fields }))

@@ -48,6 +48,15 @@ export function sameFields(a, b) {
   return PERSONA_FIELDS.every(({ key }) => left[key] === right[key])
 }
 
+/**
+ * What the block writes under an empty field: the default the avatar uses for it
+ * (`defaults` is { key: text }), or '' when the field has none.
+ */
+export function defaultHint(defaults, key) {
+  const text = typeof defaults?.[key] === 'string' ? defaults[key].trim() : ''
+  return text ? `Để trống thì avatar dùng mặc định: ${text}` : ''
+}
+
 /** What the block says after a description was read into `count` fields (at least one). */
 export function readMessage(count) {
   return `Đã điền ${count} trường từ mô tả. Kiểm tra lại rồi bấm "Lưu" để avatar dùng.`

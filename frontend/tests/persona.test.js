@@ -11,6 +11,7 @@ import { NETWORK_FAILURE, UNAUTHORIZED } from '../src/memory/format.js'
 import {
   PERSONA_FIELDS,
   clearedMessage,
+  defaultHint,
   formValues,
   mergeRead,
   personaErrorMessage,
@@ -68,6 +69,15 @@ test('sameFields compares the texts as they would be saved', () => {
   assert.equal(sameFields({}, undefined), true)
   assert.equal(sameFields({ name: 'Mai' }, { name: 'Lan' }), false)
   assert.equal(sameFields({ name: 'Mai' }, { name: 'Mai', avoid: 'x' }), false)
+})
+
+test('defaultHint names the default of a field, and nothing for a field without one', () => {
+  const defaults = { personality: ' Thân thiện ', role: '' }
+
+  assert.equal(defaultHint(defaults, 'personality'), 'Để trống thì avatar dùng mặc định: Thân thiện')
+  assert.equal(defaultHint(defaults, 'role'), '')
+  assert.equal(defaultHint(defaults, 'name'), '')
+  assert.equal(defaultHint(null, 'personality'), '')
 })
 
 test('the messages of the block', () => {

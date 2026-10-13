@@ -159,6 +159,12 @@ async def test_a_stored_field_that_is_no_longer_one_is_left_out(persona, store):
 
 # ── The fields ────────────────────────────────────────────────────────────
 
+def test_the_defaults_are_the_default_persona_in_the_order_of_the_fields(persona, config):
+    config.PERSONA_DEFAULT = {"answer_style": "Ngắn gọn", "role": "Trợ lý", "voice": "trầm"}
+
+    assert list(persona.defaults().items()) == [("role", "Trợ lý"), ("answer_style", "Ngắn gọn")]
+
+
 async def test_the_saved_fields_come_back_in_the_order_of_the_fields(persona):
     saved = await persona.save("linh", {"avoid": "Chính trị", "name": "Mai"})
 

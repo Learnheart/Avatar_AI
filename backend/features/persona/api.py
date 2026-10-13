@@ -5,6 +5,8 @@ HTTP routes of the persona, used by the "Tính cách của avatar" block of the 
   PUT    /persona   {"fields": {name: text}} → {"fields": {...}} as stored; it replaces
                     the whole persona, and an empty text leaves its field out
   DELETE /persona   → 204
+  GET    /persona/defaults   → {"fields": {...}}, the default persona: what the avatar
+                             uses for a field that is not set
   POST   /persona/read   {"text": a description of the avatar} → {"fields": {...}},
                          what the LLM read in it; nothing is stored
 
@@ -87,6 +89,10 @@ def create_persona_router(config: AppConfig) -> APIRouter:
     async def get_persona(request: Request, user_id: str = Depends(user)) -> dict:
         with _answering():
             return {"fields": await persona(request).fields(user_id)}
+
+    @router.get("/defaults")
+    async def get_defaults(request: Request, user_id: str = Depends(user)) -> dict:
+        return {"fields": persona(request).defaults()}
 
     @router.put("")
     async def save_persona(

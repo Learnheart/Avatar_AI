@@ -13,6 +13,7 @@ from tests.unit.memory_fakes import CompletingLLM
 
 URL = "/persona"
 READ = "/persona/read"
+DEFAULTS = "/persona/defaults"
 DESCRIPTION = "Trợ lý tên là Mai, xưng em và gọi tôi là anh."
 MAI = {"name": "Mai", "addressing": "xưng em, gọi anh"}
 
@@ -37,6 +38,16 @@ def test_a_user_starts_without_persona(client):
 
     assert response.status_code == 200
     assert response.json() == {"fields": {}}
+
+
+def test_the_default_persona_is_given_whatever_the_user_set(client, config):
+    before = client.get(DEFAULTS)
+    client.put(URL, json={"fields": MAI})
+
+    assert before.status_code == 200
+    assert before.json() == {"fields": config.PERSONA_DEFAULT}
+    assert list(before.json()["fields"]) == ["role", "personality", "answer_style"]
+    assert client.get(DEFAULTS).json() == before.json()
 
 
 def test_a_saved_persona_is_returned_and_read_back(client):
@@ -147,10 +158,11 @@ def test_a_guest_gets_401_on_every_route(config):
             client.put(URL, json={}),
             client.delete(URL),
             client.post(READ, json={"text": DESCRIPTION}),
+            client.get(DEFAULTS),
         ]
         users = client.app.state.users.count()
 
-    assert [response.status_code for response in responses] == [401] * 5
+    assert [response.status_code for response in responses] == [401] * 6
     assert users == 0
 
 
