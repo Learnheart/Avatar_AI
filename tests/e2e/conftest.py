@@ -8,20 +8,20 @@ import numpy as np
 import pytest
 
 UTTERANCE_TEXT = "Xin chào, cho tôi hỏi lãi suất tiết kiệm kỳ hạn sáu tháng là bao nhiêu?"
+NAME_QUESTION_TEXT = "Xin chào, bạn tên là gì?"
 _VOICE = "Linh"
 _SILENCE_LEVEL = 200  # Int16 amplitude below which the tail counts as silence
 
 
-@pytest.fixture(scope="session")
-def utterance_pcm(tmp_path_factory: pytest.TempPathFactory) -> bytes:
-    """A real Vietnamese utterance as 16 kHz mono Int16 PCM, generated with macOS `say`."""
+def _spoken(text: str, out_dir: Path) -> bytes:
+    """`text` said by a real Vietnamese voice, as 16 kHz mono Int16 PCM, generated with
+    macOS `say`."""
     if not (shutil.which("say") and shutil.which("afconvert")):
         pytest.skip("macOS `say` and `afconvert` are required to generate the utterance")
 
-    out_dir: Path = tmp_path_factory.mktemp("utterance")
     aiff, wav_path = out_dir / "utterance.aiff", out_dir / "utterance.wav"
     spoken = subprocess.run(
-        ["say", "-v", _VOICE, "-o", str(aiff), UTTERANCE_TEXT], capture_output=True, text=True
+        ["say", "-v", _VOICE, "-o", str(aiff), text], capture_output=True, text=True
     )
     if spoken.returncode != 0 or not aiff.exists():
         pytest.skip(f"macOS voice '{_VOICE}' is not available: {spoken.stderr.strip()}")
@@ -39,3 +39,15 @@ def utterance_pcm(tmp_path_factory: pytest.TempPathFactory) -> bytes:
     if voiced.size == 0:
         pytest.skip("`say` produced silent audio")
     return samples[: voiced[-1] + 1].tobytes()
+
+
+@pytest.fixture(scope="session")
+def utterance_pcm(tmp_path_factory: pytest.TempPathFactory) -> bytes:
+    """A question about an interest rate."""
+    return _spoken(UTTERANCE_TEXT, tmp_path_factory.mktemp("utterance"))
+
+
+@pytest.fixture(scope="session")
+def name_question_pcm(tmp_path_factory: pytest.TempPathFactory) -> bytes:
+    """The avatar asked for its name."""
+    return _spoken(NAME_QUESTION_TEXT, tmp_path_factory.mktemp("name-question"))
